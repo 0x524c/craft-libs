@@ -1,11 +1,11 @@
 [package]
-name = "craft-ui-icons"
+name = "craft-ui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Prepared SVG icon catalogs for Craft egui frontends"
+description = "Reusable egui controls and icon catalogs for Craft frontends"
 
 [lints]
 workspace = true

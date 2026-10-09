@@ -23,8 +23,8 @@ craft-<name> = { git = "https://github.com/storytold/craft-libs", rev = "<commit
 
 ## Libraries
 
-- [`craft-ui-icons`](crates/ui-icons/README.md): prepared embedded SVG catalogs for egui frontends;
-  assets, themes and interactions stay in each app. Requires Rust 1.95 or later.
+- [`craft-ui`](crates/ui/README.md): SVG catalogs and icon buttons for egui frontends;
+  assets, themes, localization and command handling stay in each app. Requires Rust 1.95 or later.
 - [Shared UI component audit](docs/ui-components-audit.md): source inventory, extraction priorities
   and compatibility boundaries across the Craft suite.
 

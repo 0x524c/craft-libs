@@ -12,11 +12,15 @@ None: every bundled asset is original to craft-libs.
 
 Source provenance
 
-The SVG icon preparation in crates/ui-icons is adapted from:
+The SVG icon preparation in crates/ui is adapted from:
 - PhotoCraft, crates/ui-egui/src/icons.rs, revision e7a83ca342cdff568254f85f442b9cc8afb08066.
   https://github.com/storytold/photocraft
   Copyright (c) 2026 ArtCraft Team and the PhotoCraft contributors.
 - VectorCraft, crates/ui-egui/src/icons.rs, revision 825d4fdb8b527c597855d273fb4bcc1971855b6a.
   https://github.com/storytold/vectorcraft
   Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
-Both sources are licensed MIT OR Apache-2.0. No icon artwork is copied here.
+The icon-button interaction/style boundary is adapted from PhotoCraft (above) and:
+- PdfCraft, crates/ui-egui/src/icons.rs, revision f626db25cca2c89f8fa3f7e30d22bf59faea65ec.
+  https://github.com/storytold/pdfcraft
+  Copyright (c) 2026 ArtCraft Team and the PdfCraft contributors.
+All three sources are licensed MIT OR Apache-2.0. No icon artwork is copied here.

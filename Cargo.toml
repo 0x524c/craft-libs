@@ -11,7 +11,7 @@ repository = "https://github.com/storytold/craft-libs"
 
 [workspace.dependencies]
 # internal: add each crate here as `craft-<name> = { path = "crates/<name>" }`
-craft-ui-icons = { path = "crates/ui-icons" }
+craft-ui = { path = "crates/ui" }
 egui = { version = "0.36", default-features = false }
 
 [workspace.lints.rust]

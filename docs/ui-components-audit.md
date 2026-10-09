@@ -1,6 +1,6 @@
 # Shared UI component audit
 
-The best first extraction is the embedded SVG icon catalog used by PhotoCraft, VectorCraft and PdfCraft. It has a small boundary, real consumers and little dependence on application behavior. The pilot in this change puts that machinery in `craft-ui-icons` and adopts it in PhotoCraft and VectorCraft.
+The best first extraction is the embedded SVG icon catalog used by PhotoCraft, VectorCraft and PdfCraft. It has a small boundary, real consumers and little dependence on application behavior. The pilot puts that machinery in `craft-ui::icons` and adopts it in all three apps. A second component, `craft-ui::buttons::IconButton`, is adopted by PhotoCraft and PdfCraft.
 
 The broader opportunity is a collection of reusable UI components. All twelve Rust Craft apps use egui 0.36, but their themes, document models, numeric fields and docking behavior have evolved differently. Shared components should accept small style values and return interactions; each app should continue to choose its layout, command, localization and document semantics.
 
@@ -27,7 +27,7 @@ The inventory covers the twelve Rust editor apps plus ArtCraft and ArtCraftX. Ar
 | ArtCraft | React 18.3.1/Tauri; [frontend dependencies][ac-package], [component packages][ac-components], [Tailwind theme][ac-theme] | DOM focus and portals, draggable/resizable dialogs, media and generation state, hotkey ownership and service boundaries. |
 | ArtCraftX | React 18.3.1/Tauri; [frontend dependencies][ax-package], [component packages][ax-components], [Tailwind theme][ax-theme] | A related component family with different visual tokens and icon wrappers; Rust egui components are not a direct adoption path. |
 
-The Rust applications keep egui at the frontend layer. The pilot follows that rule: only their UI crates depend on `craft-ui-icons`; engine, document and rendering crates do not. Both apps' layer checkers reject a direct dependency on the shared crate below L6. The crate depends on egui without enabling its default features. Apps retain their existing `egui_extras` SVG loader and renderer setup.
+The Rust applications keep egui at the frontend layer. The pilot follows that rule: only their UI crates depend on `craft-ui`; engine, document and rendering crates do not. Their layer checkers reject a direct dependency on the shared crate below the UI layer: L6 in PhotoCraft/VectorCraft and L7 in PdfCraft. The crate depends on egui without enabling its default features. Apps retain their existing `egui_extras` SVG loader and renderer setup.
 
 ArtCraft and ArtCraftX already use Headless UI, Radix Dialog/Tooltip, Lucide React and resizable panels. Their component reuse should be evaluated within that stack. A shared visual vocabulary can cross the two toolkit families; Rust widget types cannot.
 
@@ -37,15 +37,15 @@ These are proposed boundaries and adoption pairs, not a commitment to build a fr
 
 | Order | Component | Type of sharing | Initial consumers | Reference and reason |
 | --- | --- | --- | --- | --- |
-| 1 | Embedded SVG catalog | Extract with two small style policies | PhotoCraft, VectorCraft; then PdfCraft | PhotoCraft's owned `Arc` bytes avoid leaked allocations; the existing loaders already have almost the same responsibilities. Implemented in the pilot. |
-| 2 | Small controls and component styles | Share components | PdfCraft and PhotoCraft for buttons; GridCraft and DeckCraft for ribbon pieces | PdfCraft exposes accessibility metadata on its painted controls. Keep the caller's label, geometry, colors, enabled state and command handling. |
+| 1 | Embedded SVG catalog | Extract with two small style policies | PhotoCraft, VectorCraft, PdfCraft | PhotoCraft's owned `Arc` bytes avoid leaked allocations; the existing loaders already have almost the same responsibilities. Implemented in the pilot. |
+| 2 | Small controls and component styles | Share components | PdfCraft and PhotoCraft for buttons; GridCraft and DeckCraft for ribbon pieces | PdfCraft exposes accessibility metadata on its painted controls. Keep the caller's label, geometry, colors, enabled state and command handling. Icon buttons implemented; ribbon pieces remain proposed. |
 | 3 | Numeric editing state | Consolidate selected behavior | FilmCraft and EffectCraft, then LightCraft | EffectCraft adds finite-value checks and panel-local Tab behavior; LightCraft has explicit cancel/reset and step semantics. These are useful references, not interchangeable implementations. |
 | 4 | Swatch grid and color-field painting | Share components | WordCraft/GridCraft/DeckCraft for grids; PhotoCraft/VectorCraft for fields | The visual primitives overlap, while the values returned and color-management requirements differ. |
 | 5 | Menu viewport and navigation helpers | Consolidate selected behavior | PhotoCraft, LightCraft, VectorCraft | Scrolling, overflow and focus are reusable. Menu catalogs, native menus, shortcut resolution and dispatch remain app-owned. |
 | 6 | Ruler tick layout and painting | Standardize a primitive API | VectorCraft and DesignCraft, then PhotoCraft/WordCraft/DeckCraft | Share bounded tick placement and painting with caller-supplied labels and coordinates. Keep units, guide commands and paragraph markers outside. |
 | 7 | Dock layout operations | Compare an external library before extracting | FilmCraft, EffectCraft | Split/tab trees overlap substantially, but stacks, floating state and persisted schemas make this a migration project. |
 
-Theme roles belong beside the components that consume them. A button might need a `ButtonStyle` containing its fills, border, text and focus colors. That does not require all apps to replace their `Tokens` structs or serialize the same theme enum. Panels, inspectors and dialogs can then reuse those controls while retaining their application-specific contents.
+Theme roles belong beside the components that consume them. `IconButtonStyle` contains fills, borders, icon and focus colors for the implemented button. That does not require all apps to replace their `Tokens` structs or serialize the same theme enum. Panels, inspectors and dialogs can then reuse those controls while retaining their application-specific contents.
 
 ## Icons and the first extraction
 
@@ -60,13 +60,13 @@ PhotoCraft embeds 118 SVGs, VectorCraft 259, and PdfCraft 184 through their `ico
 | Name used in fallback URI | Requested name | Requested name | Resolved fallback name |
 | Existing prepared storage | Shared `Arc` | Leaked static slice | Shared `Arc` |
 
-`SvgIconSet` owns prepared bytes and returns egui image sources. Each app supplies its embedded catalog, literal SVG substitutions, URI prefix and fallback. Tool aliases, tint, size, hover/selected/pressed behavior, labels and tool cursors remain in the app. SVG parsing and rasterization stay with `egui_extras`.
+`SvgIconSet` owns prepared bytes and returns egui image sources. Each app supplies its embedded catalog, literal SVG substitutions, URI prefix and fallback. Tool aliases, tint, size, labels and tool cursors remain in the app; the button component accepts the app's hover/selected/pressed style policy. SVG parsing and rasterization stay with `egui_extras`.
 
-The pilot retains the two consumers' cache keys and exact SVG bytes. Its characterization tests cover all 377 catalog entries, tool aliases and missing-name fallbacks. Shared-crate tests cover both style policies, repeated shared-byte lookups, an absent fallback, duplicate names, lossy UTF-8 compatibility and actual SVG rasterization at 16, 24 and 48 pixels. See the [crate guide](../crates/ui-icons/README.md) for the API and limits.
+The pilot retains all three consumers' cache keys and exact SVG bytes. Its characterization tests cover all 561 catalog entries, tool aliases and missing-name fallbacks. Shared-crate tests cover both style policies, repeated shared-byte lookups, an absent fallback, duplicate names, lossy UTF-8 compatibility and actual SVG rasterization at 16, 24 and 48 pixels. See the [crate guide](../crates/ui/README.md) for the API and limits.
 
 The SVG substitution is deliberately narrow: it preserves the existing literal replacements rather than becoming a general SVG/CSS processor. The catalog is trusted compiled-in data. A new set in the same egui context must use a distinct URI prefix, because egui caches by URI. The existing app prefixes remain appropriate when each app owns its context.
 
-PdfCraft can adopt the same crate in a later change by resolving the fallback name before requesting a source. That preserves its existing URI policy. Its current fallback uses indexed lookup; an adoption should also cover a catalog without the expected fallback, with a regression test. No icon assets need to move to make this useful.
+PdfCraft resolves the fallback name before requesting a source, preserving its existing URI policy. This replaces its indexed fallback lookup with the shared non-panicking lookup; the shared absent-fallback test covers a catalog without that entry. No icon assets move.
 
 Most other Rust apps draw icons with egui's painter. Converting them all to SVG would be a separate visual change with different cost and fidelity questions. Common icon assets are a future candidate after checking file hashes, ownership and each app's asset manifest; ArtCraft trademarks remain outside such a library.
 
@@ -74,9 +74,9 @@ Most other Rust apps draw icons with egui's painter. Converting them all to SVG 
 
 The `Tokens` name does not imply a common schema. PhotoCraft combines palette, layout radii, layer-label colors and histogram styling. DesignCraft includes high contrast and page-layout chrome. FilmCraft and EffectCraft include timeline/panel colors; GridCraft's theme also covers grid headers and selection. CADCraft and SoundCraft use domain-specific colors for drafting or transport states. The [theme sources above](#scope-and-current-libraries) show why replacing them with a union of every field would increase coupling.
 
-For the next control extraction, start with an explicit style struct and a supplied icon painter. Return `egui::Response` or distinct main/arrow responses so the app owns dispatch. Prefer stable IDs supplied by the caller to IDs derived from translated labels. Keep dimensions configurable where they already differ. Use PdfCraft's [button and split-pill accessibility metadata][pdf-widgets] and LightCraft's [control descriptions and tests][lc-widgets] as references; appearance alone is insufficient.
+The implemented icon button uses an explicit style struct and a supplied icon painter. It returns `egui::Response` so the app owns dispatch. A future split button should return distinct main/arrow responses. Prefer stable IDs supplied by the caller to IDs derived from translated labels. Keep dimensions configurable where they already differ. Use PdfCraft's [button and split-pill accessibility metadata][pdf-widgets] and LightCraft's [control descriptions and tests][lc-widgets] as references; appearance alone is insufficient.
 
-An icon button or ribbon split button should be accepted only after mouse, keyboard activation, disabled behavior, focus indication, accessible label and main-versus-arrow hit regions are covered. Characterize existing behavior before deciding which accessibility improvements belong in a separate change. The first icon-catalog extraction does not alter button interaction.
+An icon button or ribbon split button should be accepted only after mouse, keyboard activation, disabled behavior, focus indication, accessible label and main-versus-arrow hit regions are covered. The icon button deliberately adds a visible keyboard-focus outline in PhotoCraft and PdfCraft, and an accessible label/selection state in PhotoCraft. Existing hover, selected and pressed treatments remain app-specific. Tests cover click cancellation, keyboard activation, disabled state, label translation without losing identity, duplicate labels and Tab order, focus painting, and invalid geometry. Ribbon split buttons remain proposed.
 
 Inspectors remain app-owned. A layer inspector, a CAD property palette, a spreadsheet format panel and an audio mixer describe different document data and editing transactions. They can share labels, rows, numeric fields, sections and color chips without sharing a panel enum or pulling an engine into a UI utility crate. Similarly, common dialog framing can be separated from save confirmation, color sampling, export settings and progress/cancellation semantics.
 

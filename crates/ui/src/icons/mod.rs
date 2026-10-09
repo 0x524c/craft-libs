@@ -1,5 +1,3 @@
-#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
-
 //! Prepare an application's embedded SVG icons once, then share their bytes with egui.
 //!
 //! The application owns its assets, tool-name mapping, theme, sizing and button behavior.
