@@ -2,7 +2,7 @@
 
 `craft-ui` provides small egui components with application-supplied styles. `icons` prepares
 embedded SVG catalogs; `buttons` paints accessible icon buttons; `tabs` handles tab fitting and
-interaction; `layout` provides split geometry and resize handles. Components have adapters in
+interaction; `layout` provides split geometry and resize handles; `theme` shares widget-state styling. Components have adapters in
 PhotoCraft, VectorCraft, PdfCraft, DesignCraft, FilmCraft and EffectCraft. Assets, complete themes, localization and command
 handling remain in each application. No icons, fonts or application engines are bundled.
 
@@ -147,6 +147,29 @@ Apply the delta through `SplitLayout::resized(size, delta, minimum)` to retain f
 or use an application-specific adapter. The library does not persist geometry, dispatch commands
 or create panes. Apps keep their existing dock trees, stacked panels, layout files, pane contents,
 cameras, document focus and native windows. Shared controls do not constitute a dock-tree migration.
+
+## Theme mechanisms
+
+`theme::WidgetPalette` applies background colors to egui's five widget states, with a supplied
+corner radius and foreground stroke. VectorCraft and DesignCraft construct it from their existing
+local tokens. It updates each state's strong/weak background fill, radius and foreground; borders,
+expansion and all other visual settings are retained.
+
+```rust
+use craft_ui::theme::WidgetPalette;
+use egui::{Color32, CornerRadius, Stroke};
+
+fn style_widgets(visuals: &mut egui::Visuals, palette: WidgetPalette, text: Color32) {
+    palette.apply_to(&mut visuals.widgets, CornerRadius::same(4), Stroke::new(1.0, text));
+    // Optional app-specific exceptions belong after the shared operation.
+    visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+}
+```
+
+This is a mechanism for coloring widgets, not a shared theme schema. Fonts, complete palettes,
+selection colors, shadows, spacing, context storage and preference serialization remain in each
+application. See the [eight-app comparison](../../docs/theme-infrastructure.md) for the exact
+common operation and the differences preserved by the adapters.
 
 ## Compatibility and checks
 

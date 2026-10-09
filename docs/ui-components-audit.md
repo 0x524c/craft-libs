@@ -45,6 +45,8 @@ These are proposed boundaries and adoption pairs, not a commitment to build a fr
 | 6 | Ruler tick layout and painting | Standardize a primitive API | VectorCraft and DesignCraft, then PhotoCraft/WordCraft/DeckCraft | Share bounded tick placement and painting with caller-supplied labels and coordinates. Keep units, guide commands and paragraph markers outside. |
 | 7 | Pane controls | Share geometry and interactions; keep layout models in apps | PhotoCraft, VectorCraft, DesignCraft, FilmCraft, EffectCraft | Tabs, bounded splits and resize handles are implemented. A shared dock tree or persisted-layout migration remains separate work. |
 
+The [theme comparison](theme-infrastructure.md) verifies all eight principal theme modules and extracts their first common mechanism: `theme::WidgetPalette`, used by VectorCraft and DesignCraft to style egui widget states while retaining their full palettes.
+
 Theme roles belong beside the components that consume them. `IconButtonStyle` contains fills, borders, icon and focus colors for the implemented button. That does not require all apps to replace their `Tokens` structs or serialize the same theme enum. Panels, inspectors and dialogs can then reuse those controls while retaining their application-specific contents.
 
 ## Icons and the first extraction

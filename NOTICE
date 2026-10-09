@@ -32,4 +32,9 @@ The pane sizing and resize boundaries in crates/ui/src/layout draw on:
 - EffectCraft, crates/ui-egui/src/dock.rs, revision 2a460986ee7a4b32656a3d434849693904b486bc.
   https://github.com/storytold/effectcraft
   Copyright (c) 2026 ArtCraft Team and the EffectCraft contributors.
+The widget-state styling in crates/ui/src/theme is adapted from VectorCraft (above),
+crates/ui-egui/src/theme.rs, and:
+- DesignCraft, crates/ui-egui/src/theme.rs, revision 66c7ce7e96ec286a091878cc2541ee8369aa79d6.
+  https://github.com/storytold/designcraft
+  Copyright (c) 2026 ArtCraft Team and the DesignCraft contributors.
 All sources listed above are licensed MIT OR Apache-2.0. No icon artwork is copied here.
