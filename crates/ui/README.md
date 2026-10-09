@@ -88,6 +88,10 @@ AccessKit and draws the supplied inset focus outline. Mouse, Enter and Space act
 egui. The caller reads `clicked()`, runs its command and updates selection; the component neither
 dispatches nor toggles state. Attach tooltips to the returned response.
 
+Controls previously painted with one `egui::Painter::rect` can opt into `.single_shape_frame()`.
+This keeps their fill/border edge tessellation, especially for translucent disabled borders.
+The default paints fill and border separately, preserving existing consumers' rendering.
+
 IDs come from the surrounding UI scope/position, independent of the translated label. Use
 `ui.push_id(stable_id, ...)` when items reorder. Dimensions must be finite, positive and no larger
 than 4096 points; other sizes produce an inert zero-size response. Invalid stroke widths are

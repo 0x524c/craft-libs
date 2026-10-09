@@ -50,15 +50,25 @@ pub struct IconButton<'a> {
     size: Vec2,
     selected: bool,
     style: &'a IconButtonStyle,
+    single_shape_frame: bool,
 }
 
 impl<'a> IconButton<'a> {
     pub fn new(label: &'a str, size: Vec2, style: &'a IconButtonStyle) -> Self {
-        Self { label, size, selected: false, style }
+        Self { label, size, selected: false, style, single_shape_frame: false }
     }
 
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Paint fill and border as one egui rectangle instead of separate shapes.
+    ///
+    /// This preserves the edge tessellation of controls previously painted with `Painter::rect`,
+    /// including translucent disabled borders. The default retains separate fill/stroke painting.
+    pub fn single_shape_frame(mut self) -> Self {
+        self.single_shape_frame = true;
         self
     }
 
@@ -77,13 +87,16 @@ impl<'a> IconButton<'a> {
         }
 
         let visuals = self.style.visuals(self.selected, response.hovered(), response.is_pointer_button_down_on());
-        // Separate fill/stroke shapes preserve the consumers' existing rendering at the edges.
-        if visuals.fill != Color32::TRANSPARENT {
-            ui.painter().rect_filled(rect, self.style.corner_radius, visuals.fill);
-        }
         let stroke = bounded_stroke(visuals.stroke, rect);
-        if !stroke.is_empty() {
-            ui.painter().rect_stroke(rect, self.style.corner_radius, stroke, StrokeKind::Inside);
+        if self.single_shape_frame {
+            ui.painter().rect(rect, self.style.corner_radius, visuals.fill, stroke, StrokeKind::Inside);
+        } else {
+            if visuals.fill != Color32::TRANSPARENT {
+                ui.painter().rect_filled(rect, self.style.corner_radius, visuals.fill);
+            }
+            if !stroke.is_empty() {
+                ui.painter().rect_stroke(rect, self.style.corner_radius, stroke, StrokeKind::Inside);
+            }
         }
         paint_icon(ui, rect, visuals.icon);
         if response.has_focus() && rect.width() > 4.0 && rect.height() > 4.0 {
