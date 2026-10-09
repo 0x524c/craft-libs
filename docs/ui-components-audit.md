@@ -27,7 +27,7 @@ The inventory covers the twelve Rust editor apps plus ArtCraft and ArtCraftX. Ar
 | ArtCraft | React 18.3.1/Tauri; [frontend dependencies][ac-package], [component packages][ac-components], [Tailwind theme][ac-theme] | DOM focus and portals, draggable/resizable dialogs, media and generation state, hotkey ownership and service boundaries. |
 | ArtCraftX | React 18.3.1/Tauri; [frontend dependencies][ax-package], [component packages][ax-components], [Tailwind theme][ax-theme] | A related component family with different visual tokens and icon wrappers; Rust egui components are not a direct adoption path. |
 
-The Rust applications keep egui at the frontend layer. The pilot follows that rule: only their UI crates depend on `craft-ui`; engine, document and rendering crates do not. Their layer checkers reject a direct dependency on the shared crate below the UI layer: L6 in PhotoCraft/VectorCraft/DesignCraft, L5 in FilmCraft/EffectCraft and L7 in PdfCraft. The crate depends on egui without enabling its default features. Apps retain their existing `egui_extras` SVG loader and renderer setup.
+The Rust applications keep egui at the frontend layer. The pilot follows that rule: only their UI crates depend on `craft-ui`; engine, document and rendering crates do not. Their layer checkers reject a direct dependency on the shared crate below the UI layer: L6 in PhotoCraft/VectorCraft/DesignCraft/WordCraft/GridCraft/DeckCraft/SoundCraft, L5 in FilmCraft/EffectCraft/LightCraft/CADCraft and L7 in PdfCraft. The crate depends on egui without enabling its default features. Apps retain their existing `egui_extras` SVG loader and renderer setup.
 
 ArtCraft and ArtCraftX already use Headless UI, Radix Dialog/Tooltip, Lucide React and resizable panels. Their component reuse should be evaluated within that stack. A shared visual vocabulary can cross the two toolkit families; Rust widget types cannot.
 
@@ -38,14 +38,14 @@ These are proposed boundaries and adoption pairs, not a commitment to build a fr
 | Order | Component | Type of sharing | Initial consumers | Reference and reason |
 | --- | --- | --- | --- | --- |
 | 1 | Embedded SVG catalog | Extract with two small style policies | PhotoCraft, VectorCraft, PdfCraft | PhotoCraft's owned `Arc` bytes avoid leaked allocations; the existing loaders already have almost the same responsibilities. Implemented in the pilot. |
-| 2 | Small controls and component styles | Share components | PdfCraft and PhotoCraft for buttons; GridCraft and DeckCraft for ribbon pieces | PdfCraft exposes accessibility metadata on its painted controls. Keep the caller's label, geometry, colors, enabled state and command handling. Icon buttons implemented; ribbon pieces remain proposed. |
+| 2 | Small controls and component styles | Share components | PdfCraft and PhotoCraft for buttons; GridCraft and DeckCraft for ribbon pieces | PdfCraft exposes accessibility metadata on its painted controls. Keep the caller's label, geometry, colors, enabled state and command handling. Icon buttons and ribbon-tab interaction are implemented; split buttons and galleries remain proposed. |
 | 3 | Numeric editing state | Consolidate selected behavior | FilmCraft and EffectCraft, then LightCraft | EffectCraft adds finite-value checks and panel-local Tab behavior; LightCraft has explicit cancel/reset and step semantics. These are useful references, not interchangeable implementations. |
 | 4 | Swatch grid and color-field painting | Share components | WordCraft/GridCraft/DeckCraft for grids; PhotoCraft/VectorCraft for fields | The visual primitives overlap, while the values returned and color-management requirements differ. |
 | 5 | Menu viewport and navigation helpers | Consolidate selected behavior | PhotoCraft, LightCraft, VectorCraft | Scrolling, overflow and focus are reusable. Menu catalogs, native menus, shortcut resolution and dispatch remain app-owned. |
 | 6 | Ruler tick layout and painting | Standardize a primitive API | VectorCraft and DesignCraft, then PhotoCraft/WordCraft/DeckCraft | Share bounded tick placement and painting with caller-supplied labels and coordinates. Keep units, guide commands and paragraph markers outside. |
 | 7 | Pane controls | Share geometry and interactions; keep layout models in apps | PhotoCraft, VectorCraft, DesignCraft, FilmCraft, EffectCraft | Tabs, bounded splits and resize handles are implemented. A shared dock tree or persisted-layout migration remains separate work. |
 
-The [theme comparison](theme-infrastructure.md) verifies all eight principal theme modules and extracts their first common mechanism: `theme::WidgetPalette`, used by VectorCraft and DesignCraft to style egui widget states while retaining their full palettes.
+The [theme comparison](theme-infrastructure.md) verifies all eight principal theme modules and extracts their first common mechanism: `theme::WidgetPalette`, used by VectorCraft, DesignCraft and LightCraft to style egui widget states while retaining their full palettes.
 
 Theme roles belong beside the components that consume them. `IconButtonStyle` contains fills, borders, icon and focus colors for the implemented button. That does not require all apps to replace their `Tokens` structs or serialize the same theme enum. Panels, inspectors and dialogs can then reuse those controls while retaining their application-specific contents.
 
@@ -130,14 +130,56 @@ Their licensing also needs separate treatment. ArtCraft's [root license][ac-lice
 
 ## Adoption and acceptance
 
-`craft-ui` exposes focused components; each app adopts them independently through its UI crate and pins an immutable shared revision. Icon catalogs serve PhotoCraft, VectorCraft and PdfCraft; icon buttons serve PhotoCraft and PdfCraft. Tabs serve PhotoCraft and VectorCraft. Split geometry serves DesignCraft, PhotoCraft, FilmCraft and EffectCraft, with resize handles in FilmCraft and EffectCraft.
+`craft-ui` exposes focused components; each app adopts them independently through its UI crate and pins an immutable shared revision. The suite trial extends the existing adapters to all twelve Rust apps:
+
+| App | Shared mechanisms | Preserved application responsibilities |
+| --- | --- | --- |
+| PhotoCraft | SVG catalogs, icon buttons, tabs, split geometry | Five themes, Classic bevels, dock groups, canvas state and commands |
+| VectorCraft | SVG catalogs, tabs, widget-state theme application | Theme presets, dock/floating models and tool aliases |
+| DesignCraft | Split geometry, widget-state theme application | High Contrast, input exceptions, taskbars and document focus |
+| PdfCraft | SVG catalogs, icon buttons, document/Combine tab interaction | Horizontal scrolling, stable document IDs, dirty/RTL labels and close requests |
+| FilmCraft | Split geometry and resize handles | Fixed/relative pane sizing, workspace state and timeline focus |
+| EffectCraft | Split geometry and resize handles | Accordion stacks, floating layouts and composition identity |
+| LightCraft | Widget-state theme application | Full dark palette, label colors, fonts and catalog state |
+| WordCraft | Ribbon-tab interaction | File/backstage state, contextual tabs, double-click collapse and commands |
+| GridCraft | Ribbon-tab interaction and icon/toggle buttons | Formula/cell focus, command dispatch, undo and contextual tabs |
+| DeckCraft | Ribbon-tab interaction | Active-tab collapse, contextual selection, galleries and split buttons |
+| CADCraft | Icon buttons | Multicolor icon painting, disabled tint and drafting commands |
+| SoundCraft | Icon and record-enable buttons | Transport-specific colors, track arming and audio commands |
+
+The trials reuse existing APIs except for an opt-in `IconButton::single_shape_frame()` method.
+SoundCraft paints fill and border with one `Painter::rect`; splitting them changes translucent
+edges. The option preserves that tessellation while the default retains existing consumers'
+separate fill/stroke behavior. A shared regression compares the original and adapted meshes at
+three display scales, enabled and disabled.
+
+WordCraft's pressed/selected button precedence and DeckCraft's disabled hover behavior differ
+from the shared button contract, so those controls stay local. PdfCraft preserves inherited
+foreground-stroke widths; FilmCraft/EffectCraft use different foregrounds by widget state. Those
+themes retain their own application functions. ArtCraft and ArtCraftX remain separate React
+toolkit candidates as described above.
+
+Acceptance is recorded per application. The suite trial compares native offscreen renders at
+normal and narrow widths and exercises keyboard, pointer, disabled and accessible-selection
+behavior through the real adapters. Matching renders preserve each application's current layout;
+they do not certify whole-app usability or physical-control behavior on every platform.
+
+Six candidates remain held by existing application checks: CADCraft's renderer has a tautological
+test assertion rejected by Clippy; GridCraft has date-conversion and frontend boolean-expression
+lints; SoundCraft's CLI argument filter and WordCraft's hit-testing expression trigger
+`nonminimal_bool`; LightCraft has two GPU neural-network numerical failures; EffectCraft retains
+its earlier Audio Spectrum golden mismatch. The lint diagnostics occur in unchanged source with
+Rust 1.96. LightCraft's numerical failures also reproduce individually and together on its original
+commit with GPU denoising enabled. Their focused adapter checks pass, but the full application
+gates remain blocked. These candidates remain separate from the adapters whose complete local
+checks pass.
 
 Run the shared crate's fmt, strict Clippy, tests and wasm check, followed by each adopting app's own gates. Compare actual UI renders at normal and narrow sizes, verify pointer and keyboard interactions, and distinguish passing focused checks from full application acceptance. Local path overrides are development tools; dependency manifests use immutable Git pins.
 
 A shared UI dependency stays above the engine boundary, compiles for wasm, preserves source notices and avoids panic paths. An app can roll back adoption independently by reverting its adapter and dependency pin. Dock trees, layout persistence, document identity, command catalogs and platform windows remain app-owned.
 ## Source revisions
 
-Snapshot date: 2026-10-09. The links throughout this report resolve to these exact revisions, not moving branch heads. The audit covers the listed source areas. The component consumers are listed above; the remaining apps are reference candidates.
+Snapshot date: 2026-10-09. The source-audit links throughout this report resolve to the original revisions below. The later adapter scope is recorded above; source-audit revisions are not adapter release revisions.
 
 | Repository | Revision |
 | --- | --- |

@@ -2,9 +2,10 @@
 
 `craft-ui` provides small egui components with application-supplied styles. `icons` prepares
 embedded SVG catalogs; `buttons` paints accessible icon buttons; `tabs` handles tab fitting and
-interaction; `layout` provides split geometry and resize handles; `theme` shares widget-state styling. Components have adapters in
-PhotoCraft, VectorCraft, PdfCraft, DesignCraft, FilmCraft and EffectCraft. Assets, complete themes, localization and command
-handling remain in each application. No icons, fonts or application engines are bundled.
+interaction; `layout` provides split geometry and resize handles; `theme` shares widget-state styling.
+Adapters cover all twelve Rust Craft apps; the [suite audit](../../docs/ui-components-audit.md#adoption-and-acceptance)
+records their scope and acceptance limits. Assets, complete themes, localization and command handling
+remain in each application. No icons, fonts or application engines are bundled.
 
 ## SVG catalogs
 
@@ -155,7 +156,7 @@ cameras, document focus and native windows. Shared controls do not constitute a 
 ## Theme mechanisms
 
 `theme::WidgetPalette` applies background colors to egui's five widget states, with a supplied
-corner radius and foreground stroke. VectorCraft and DesignCraft construct it from their existing
+corner radius and foreground stroke. VectorCraft, DesignCraft and LightCraft construct it from their existing
 local tokens. It updates each state's strong/weak background fill, radius and foreground; borders,
 expansion and all other visual settings are retained.
 

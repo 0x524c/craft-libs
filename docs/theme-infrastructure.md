@@ -1,9 +1,9 @@
 # Shared theme infrastructure
 
 The first shared mechanism is `craft-ui::theme::WidgetPalette`: it applies colors to egui's five
-widget states, with a supplied foreground stroke and corner radius. VectorCraft and DesignCraft
-use the same operation today. Their complete palettes, theme choices, fonts and preferences
-remain in their frontends. This boundary also has a compatible future consumer in LightCraft.
+widget states, with a supplied foreground stroke and corner radius. VectorCraft, DesignCraft and
+LightCraft use the same operation. Their complete palettes, theme choices, fonts and preferences
+remain in their frontends.
 
 This follows the reusable-UI workstream of [craft-libs issue 2](https://github.com/storytold/craft-libs/issues/2).
 The [cross-app architecture discussion](https://github.com/storytold/vectorcraft/issues/647) and
@@ -151,9 +151,11 @@ application. Exact style comparison plus visual checks covers the first two; kee
 unchanged limits the third. Shared code depends only on egui, and layer checks keep it above
 engines and document models.
 
-Next candidates are LightCraft's identical loop, FilmCraft/EffectCraft's widget-state matrix,
-app-owned theme adapters for shared tabs/buttons/resize handles, and consistent focused numeric
-fields. Each should have two real consumers and its own visual/interaction checks before adoption.
+The suite trial also adopts LightCraft's identical loop. FilmCraft/EffectCraft's widget-state matrix
+and consistent focused numeric fields remain candidates for separate work. Theme adapters for the
+shared tabs and buttons now also serve PdfCraft, WordCraft, GridCraft, DeckCraft, CADCraft and
+SoundCraft; their full palettes stay local. Further extractions need two real consumers and their
+own visual and interaction checks.
 
 [vector-loop]: https://github.com/storytold/vectorcraft/blob/825d4fdb8b527c597855d273fb4bcc1971855b6a/crates/ui-egui/src/theme.rs#L299-L312
 
