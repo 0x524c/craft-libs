@@ -1,8 +1,9 @@
 # Craft UI
 
 `craft-ui` provides small egui components with application-supplied styles. `icons` prepares
-embedded SVG catalogs; `buttons` paints accessible icon buttons. PhotoCraft and PdfCraft use both
-modules, and VectorCraft uses the catalog. Assets, complete themes, localization and command
+embedded SVG catalogs; `buttons` paints accessible icon buttons; `tabs` handles tab fitting and
+interaction; `layout` provides split geometry and resize handles. Components have adapters in
+PhotoCraft, VectorCraft, PdfCraft, DesignCraft, FilmCraft and EffectCraft. Assets, complete themes, localization and command
 handling remain in each application. No icons, fonts or application engines are bundled.
 
 ## SVG catalogs
@@ -91,6 +92,61 @@ IDs come from the surrounding UI scope/position, independent of the translated l
 `ui.push_id(stable_id, ...)` when items reorder. Dimensions must be finite, positive and no larger
 than 4096 points; other sizes produce an inert zero-size response. Invalid stroke widths are
 ignored and large strokes are bounded to half the smaller button dimension.
+
+## Tabs
+
+`tabs::fit(natural_widths, selected, available, minimum, overflow_width)` returns visible tab
+indices and widths, overflow indices, and the actual reserved overflow width. It shrinks wide
+tabs before hiding them, keeps input order and retains the selected tab. Tiny strips may reduce
+its width to zero. Negative/non-finite dimensions become zero and large dimensions are bounded.
+The work is linear in tab count with at most 32 fitting passes; the caller caps its own tab count.
+
+`tabs::Tab` registers a tab at a supplied rectangle and invokes the application's painter:
+
+```rust
+fn tab(ui: &mut egui::Ui, rect: egui::Rect, selected: bool) -> egui::Response {
+    craft_ui::tabs::Tab::new(ui.id().with("layers-tab"), "Layers", selected)
+        .sense(egui::Sense::click_and_drag())
+        .show_at(ui, rect, |ui, response| {
+            let fill = if response.hovered() { egui::Color32::GRAY } else { egui::Color32::DARK_GRAY };
+            ui.painter().rect_filled(response.rect, 0.0, fill);
+        })
+}
+```
+
+Supply a stable ID independent of the translated label. The component reports the accessible
+Tab role, label and selection, handles egui keyboard activation, and paints a focus outline from
+the caller's theme. The caller keeps selection, labels, overflow menus, painting and drag actions;
+close buttons and tab context menus stay separate. Dock and floating-panel adapters use the same
+component without sharing window or workspace state.
+
+## Splits and resize handles
+
+`layout::split_rect` divides a rectangle along `SplitAxis::Horizontal` (left/right children) or
+`Vertical` (top/bottom). `SplitSize` accepts a ratio, fixed first pane, or fixed second pane in
+logical points. The result contains `first`, `divider` and `second` rectangles. Gap and minimum
+are supplied by the application. Tiny areas relax the minimum to half the space available;
+non-finite or inverted input returns `None` instead of panicking.
+
+```rust
+use craft_ui::layout::{split_rect, SplitAxis, SplitSize};
+
+fn two_panes(rect: egui::Rect) -> Option<(egui::Rect, egui::Rect)> {
+    let split = split_rect(rect, SplitAxis::Horizontal, SplitSize::Ratio(0.5), 4.0, 20.0)?;
+    Some((split.first, split.second))
+}
+```
+
+`layout::ResizeHandle` receives a stable ID, axis, divider rectangle, localized label and
+`ResizeHandleStyle` colors. `show` returns an egui response and a movement delta for that frame.
+Pointer drags, focused axis-arrow keys and AccessKit increment/decrement actions all produce
+that delta. `value(current, range)` adds accessible numeric bounds and SetValue support. Tab
+continues normal focus traversal. Invalid geometry or numeric parameters make the handle inert.
+
+Apply the delta through `SplitLayout::resized(size, delta, minimum)` to retain fixed/ratio sizing,
+or use an application-specific adapter. The library does not persist geometry, dispatch commands
+or create panes. Apps keep their existing dock trees, stacked panels, layout files, pane contents,
+cameras, document focus and native windows. Shared controls do not constitute a dock-tree migration.
 
 ## Compatibility and checks
 

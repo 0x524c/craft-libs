@@ -1,6 +1,6 @@
 # Shared UI component audit
 
-The best first extraction is the embedded SVG icon catalog used by PhotoCraft, VectorCraft and PdfCraft. It has a small boundary, real consumers and little dependence on application behavior. The pilot puts that machinery in `craft-ui::icons` and adopts it in all three apps. A second component, `craft-ui::buttons::IconButton`, is adopted by PhotoCraft and PdfCraft.
+The best first extraction is the embedded SVG icon catalog used by PhotoCraft, VectorCraft and PdfCraft. It has a small boundary, real consumers and little dependence on application behavior. The pilot puts that machinery in `craft-ui::icons` and adopts it in all three apps. A second component, `craft-ui::buttons::IconButton`, is adopted by PhotoCraft and PdfCraft. The pane extension adds tab fitting and interaction in PhotoCraft/VectorCraft, split geometry in DesignCraft/PhotoCraft, and split geometry plus resize handles in FilmCraft/EffectCraft.
 
 The broader opportunity is a collection of reusable UI components. All twelve Rust Craft apps use egui 0.36, but their themes, document models, numeric fields and docking behavior have evolved differently. Shared components should accept small style values and return interactions; each app should continue to choose its layout, command, localization and document semantics.
 
@@ -27,7 +27,7 @@ The inventory covers the twelve Rust editor apps plus ArtCraft and ArtCraftX. Ar
 | ArtCraft | React 18.3.1/Tauri; [frontend dependencies][ac-package], [component packages][ac-components], [Tailwind theme][ac-theme] | DOM focus and portals, draggable/resizable dialogs, media and generation state, hotkey ownership and service boundaries. |
 | ArtCraftX | React 18.3.1/Tauri; [frontend dependencies][ax-package], [component packages][ax-components], [Tailwind theme][ax-theme] | A related component family with different visual tokens and icon wrappers; Rust egui components are not a direct adoption path. |
 
-The Rust applications keep egui at the frontend layer. The pilot follows that rule: only their UI crates depend on `craft-ui`; engine, document and rendering crates do not. Their layer checkers reject a direct dependency on the shared crate below the UI layer: L6 in PhotoCraft/VectorCraft and L7 in PdfCraft. The crate depends on egui without enabling its default features. Apps retain their existing `egui_extras` SVG loader and renderer setup.
+The Rust applications keep egui at the frontend layer. The pilot follows that rule: only their UI crates depend on `craft-ui`; engine, document and rendering crates do not. Their layer checkers reject a direct dependency on the shared crate below the UI layer: L6 in PhotoCraft/VectorCraft/DesignCraft, L5 in FilmCraft/EffectCraft and L7 in PdfCraft. The crate depends on egui without enabling its default features. Apps retain their existing `egui_extras` SVG loader and renderer setup.
 
 ArtCraft and ArtCraftX already use Headless UI, Radix Dialog/Tooltip, Lucide React and resizable panels. Their component reuse should be evaluated within that stack. A shared visual vocabulary can cross the two toolkit families; Rust widget types cannot.
 
@@ -43,7 +43,7 @@ These are proposed boundaries and adoption pairs, not a commitment to build a fr
 | 4 | Swatch grid and color-field painting | Share components | WordCraft/GridCraft/DeckCraft for grids; PhotoCraft/VectorCraft for fields | The visual primitives overlap, while the values returned and color-management requirements differ. |
 | 5 | Menu viewport and navigation helpers | Consolidate selected behavior | PhotoCraft, LightCraft, VectorCraft | Scrolling, overflow and focus are reusable. Menu catalogs, native menus, shortcut resolution and dispatch remain app-owned. |
 | 6 | Ruler tick layout and painting | Standardize a primitive API | VectorCraft and DesignCraft, then PhotoCraft/WordCraft/DeckCraft | Share bounded tick placement and painting with caller-supplied labels and coordinates. Keep units, guide commands and paragraph markers outside. |
-| 7 | Dock layout operations | Compare an external library before extracting | FilmCraft, EffectCraft | Split/tab trees overlap substantially, but stacks, floating state and persisted schemas make this a migration project. |
+| 7 | Pane controls | Share geometry and interactions; keep layout models in apps | PhotoCraft, VectorCraft, DesignCraft, FilmCraft, EffectCraft | Tabs, bounded splits and resize handles are implemented. A shared dock tree or persisted-layout migration remains separate work. |
 
 Theme roles belong beside the components that consume them. `IconButtonStyle` contains fills, borders, icon and focus colors for the implemented button. That does not require all apps to replace their `Tokens` structs or serialize the same theme enum. Panels, inspectors and dialogs can then reuse those controls while retaining their application-specific contents.
 
@@ -112,9 +112,11 @@ Start with an axis range, screen transform, tick budget and caller-produced labe
 
 FilmCraft's [dock tree][fc-dock] has splits, fixed/relative sizes and tab groups. EffectCraft's [dock tree][ec-dock] adds stacks, floating layouts and additional panel/viewer identities. PhotoCraft's [dock][pc-dock] allocates vertical groups with preferred/minimum/fill heights and has [interaction/persistence tests][pc-dock-tests]. VectorCraft and DesignCraft also have icon rails and flyouts. These are related capabilities, not a single interchangeable serialized model.
 
-Evaluate [egui_dock](https://docs.rs/egui_dock/0.21.1/egui_dock/) and [egui_tiles](https://docs.rs/egui_tiles/0.17.1/egui_tiles/) against a real FilmCraft/EffectCraft workspace before starting a Craft dock crate. The former supplies tab trees and floating egui windows; the latter supplies tabs, horizontal/vertical/grid containers and customizable behavior. Match actual egui dependency versions and test stack behavior, fixed-size panels, floating-window meaning and persisted-layout migration. Neither API description establishes acceptance for the Craft apps.
+The pane extraction compared [egui_dock 0.21.1](https://docs.rs/egui_dock/0.21.1/egui_dock/) and [egui_tiles 0.17.1](https://docs.rs/egui_tiles/0.17.1/egui_tiles/) at their egui 0.36 APIs. `egui_dock` offers binary fraction splits and floating egui windows within one OS window. `egui_tiles` offers tab, linear and grid containers with relative shares. Neither directly represents EffectCraft's accordion stack plus FilmCraft/EffectCraft's fixed-first/fixed-second sizing. Migrating either would require adapters for saved layouts, panel IDs and commands, as well as bounds on untrusted layout traversal. This source comparison does not establish runtime acceptance of either library.
 
-If an external library cannot preserve the needed behavior, extract only generic tree operations first, parameterized by a panel ID. Keep default workspaces, panel contents and schema migration in each app. Bound traversal of saved layouts and test corrupt/empty layouts, panel uniqueness, drop targets, collapsed rails, tiny windows and restoration of older preferences.
+The implemented boundary therefore stays small: `craft-ui::tabs` fits labels and registers accessible tab interactions; `craft-ui::layout` computes one bounded split and reports resize movement. Apps keep dock trees, panel contents, stacks, floating state and serialization. PhotoCraft and VectorCraft retain their existing overflow/drag policies in adapters; VectorCraft gains fitted tabs and an overflow menu. FilmCraft and EffectCraft retain fixed and relative sizing, with focusable resize handles. DesignCraft and PhotoCraft reuse geometry for their existing split document views. No native multi-monitor or dock-tree migration is implied.
+
+The shared geometry relaxes minima in tiny areas and rejects non-finite or inverted inputs. EffectCraft's former inverted-clamp case receives a synthetic regression test. Interaction tests cover pointer deltas, arrow keys, focus indication and AccessKit identity/value/actions; application tests retain responsibility for docking, pane focus, document cameras and saved layouts.
 
 ## ArtCraft and ArtCraftX
 
@@ -124,19 +126,16 @@ Their [button implementations][ac-button] also have [different styling and icon 
 
 Their licensing also needs separate treatment. ArtCraft's [root license][ac-license] states usage restrictions; ArtCraftX's root tree has no corresponding license file at this revision. A `license` string in an individual frontend package is not enough evidence to relicense copied application code into this MIT/Apache workspace. The pilot copies no code or assets from either React app. Any later extraction needs a clear license/provenance decision from the owners.
 
-## Adoption sequence and acceptance
+## Adoption and acceptance
 
-1. Land the small shared icon crate with its provenance, no app dependencies and no bundled icon/font assets. Keep its API limited to the two real consumers.
-2. Publish an immutable shared commit, then pin that exact revision separately in PhotoCraft and VectorCraft. Each app keeps its own lockfile, release and rollback. Local path overrides are for development only.
-3. Run the shared crate's fmt, strict clippy, tests and wasm check, then the adopting apps' own gates. Compare before/after UI renders across their themes and pixel scales; record failures separately from passing focused checks.
-4. Add PdfCraft only after preserving its distinct fallback URI policy and running its own tests. Do not infer acceptance from PhotoCraft's similar code.
-5. Choose one next component from the table with two named consumers, behavior tests and an explicit adapter boundary. Keep behavior improvements separate from extraction wherever possible.
+`craft-ui` exposes focused components; each app adopts them independently through its UI crate and pins an immutable shared revision. Icon catalogs serve PhotoCraft, VectorCraft and PdfCraft; icon buttons serve PhotoCraft and PdfCraft. Tabs serve PhotoCraft and VectorCraft. Split geometry serves DesignCraft, PhotoCraft, FilmCraft and EffectCraft, with resize handles in FilmCraft and EffectCraft.
 
-A shared UI dependency must remain above the engine boundary, compile for wasm, preserve asset notices and avoid panic paths. An app can roll back its adoption independently; later shared-library upgrades can be rolled back by reverting that app's dependency pin. No layout, command catalog, document model or toolkit migration is required by the pilot.
+Run the shared crate's fmt, strict Clippy, tests and wasm check, followed by each adopting app's own gates. Compare actual UI renders at normal and narrow sizes, verify pointer and keyboard interactions, and distinguish passing focused checks from full application acceptance. Local path overrides are development tools; dependency manifests use immutable Git pins.
 
+A shared UI dependency stays above the engine boundary, compiles for wasm, preserves source notices and avoids panic paths. An app can roll back adoption independently by reverting its adapter and dependency pin. Dock trees, layout persistence, document identity, command catalogs and platform windows remain app-owned.
 ## Source revisions
 
-Snapshot date: 2026-10-09. The links throughout this report resolve to these exact revisions, not moving branch heads. The audit covers the listed source areas; only the two pilot consumers receive implementation changes.
+Snapshot date: 2026-10-09. The links throughout this report resolve to these exact revisions, not moving branch heads. The audit covers the listed source areas. The component consumers are listed above; the remaining apps are reference candidates.
 
 | Repository | Revision |
 | --- | --- |

@@ -23,4 +23,13 @@ The icon-button interaction/style boundary is adapted from PhotoCraft (above) an
 - PdfCraft, crates/ui-egui/src/icons.rs, revision f626db25cca2c89f8fa3f7e30d22bf59faea65ec.
   https://github.com/storytold/pdfcraft
   Copyright (c) 2026 ArtCraft Team and the PdfCraft contributors.
-All three sources are licensed MIT OR Apache-2.0. No icon artwork is copied here.
+The tab fitting in crates/ui/src/tabs is adapted from PhotoCraft's tab_strip.rs (above).
+Tab interaction adapters also use VectorCraft's dock.rs and floating.rs (above).
+The pane sizing and resize boundaries in crates/ui/src/layout draw on:
+- FilmCraft, crates/ui-egui/src/dock.rs, revision 7b6c134472287db4367fca80bcb498240ba36567.
+  https://github.com/storytold/filmcraft
+  Copyright (c) 2026 ArtCraft Team and the FilmCraft contributors.
+- EffectCraft, crates/ui-egui/src/dock.rs, revision 2a460986ee7a4b32656a3d434849693904b486bc.
+  https://github.com/storytold/effectcraft
+  Copyright (c) 2026 ArtCraft Team and the EffectCraft contributors.
+All sources listed above are licensed MIT OR Apache-2.0. No icon artwork is copied here.
