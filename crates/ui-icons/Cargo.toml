@@ -1,0 +1,17 @@
+[package]
+name = "craft-ui-icons"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Prepared SVG icon catalogs for Craft egui frontends"
+
+[lints]
+workspace = true
+
+[dependencies]
+egui = { workspace = true }
+
+[dev-dependencies]
+egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
