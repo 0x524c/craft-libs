@@ -265,61 +265,6 @@
       "repository": "storytold/soundcraft",
       "revision": "eac0edd896cd6bdf27c0cdd0f9f9158c8956248a",
       "path": "crates/ui-egui/src/edit_window.rs"
-    },
-    {
-      "repository": "storytold/artcraft",
-      "revision": "3e5793b6934b51536606720e5d56bcfd1fe7cc2d",
-      "path": "frontend/package.json"
-    },
-    {
-      "repository": "storytold/artcraft",
-      "revision": "3e5793b6934b51536606720e5d56bcfd1fe7cc2d",
-      "path": "frontend/libs/components"
-    },
-    {
-      "repository": "storytold/artcraft",
-      "revision": "3e5793b6934b51536606720e5d56bcfd1fe7cc2d",
-      "path": "frontend/apps/artcraft/tailwind.config.ts"
-    },
-    {
-      "repository": "storytold/artcraft",
-      "revision": "3e5793b6934b51536606720e5d56bcfd1fe7cc2d",
-      "path": "frontend/libs/components/modal/src/lib/modal.tsx"
-    },
-    {
-      "repository": "storytold/artcraft",
-      "revision": "3e5793b6934b51536606720e5d56bcfd1fe7cc2d",
-      "path": "frontend/libs/components/button/src/lib/button.tsx"
-    },
-    {
-      "repository": "storytold/artcraft",
-      "revision": "3e5793b6934b51536606720e5d56bcfd1fe7cc2d",
-      "path": "LICENSE.md"
-    },
-    {
-      "repository": "storytold/artcraftx",
-      "revision": "98c2a48940aa0a54604637f665ee539c122fa707",
-      "path": "frontend/package.json"
-    },
-    {
-      "repository": "storytold/artcraftx",
-      "revision": "98c2a48940aa0a54604637f665ee539c122fa707",
-      "path": "frontend/libs/components"
-    },
-    {
-      "repository": "storytold/artcraftx",
-      "revision": "98c2a48940aa0a54604637f665ee539c122fa707",
-      "path": "frontend/apps/artcraft/tailwind.config.ts"
-    },
-    {
-      "repository": "storytold/artcraftx",
-      "revision": "98c2a48940aa0a54604637f665ee539c122fa707",
-      "path": "frontend/libs/components/modal/src/lib/modal.tsx"
-    },
-    {
-      "repository": "storytold/artcraftx",
-      "revision": "98c2a48940aa0a54604637f665ee539c122fa707",
-      "path": "frontend/libs/components/button/src/lib/button.tsx"
     }
   ]
 }

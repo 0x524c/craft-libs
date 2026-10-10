@@ -8,7 +8,7 @@ This covers item 3 of [craft-libs issue 2](https://github.com/storytold/craft-li
 
 ## Scope and current libraries
 
-The inventory covers the twelve Rust editor apps plus ArtCraft and ArtCraftX. ArtCraft's service repository, fonts, test corpora, archived predecessors and unrelated organization repositories are outside the UI scope.
+The inventory covers the twelve Rust editor apps. The current docking migration covers nine creative editors: PhotoCraft, VectorCraft, DesignCraft, LightCraft, FilmCraft, EffectCraft, SoundCraft, CADCraft and PdfCraft. The WordCraft, GridCraft and DeckCraft pilots remain supporting evidence for earlier component reuse and are outside that migration. Service repositories, fonts, test corpora, archived predecessors and unrelated organization repositories are outside the UI scope.
 
 | App | Current UI and useful source | Behavior a shared component must preserve |
 | --- | --- | --- |
@@ -24,12 +24,8 @@ The inventory covers the twelve Rust editor apps plus ArtCraft and ArtCraftX. Ar
 | DeckCraft | egui/eframe 0.36; [tokens][deck-theme], [ribbon widgets][deck-widgets], [canvas rulers][deck-canvas] | Light/dark appearance, split buttons and galleries, slide theme references, contextual ribbon tabs and shape editing. |
 | CADCraft | egui/eframe 0.36; [tokens][cad-theme], [chrome][cad-chrome], [palettes][cad-palettes], [dialogs][cad-dialogs] | Drafting toggles, command-line state, model/layout tabs, CAD property types and multicolor painter icons. |
 | SoundCraft | egui/eframe 0.36; [tokens][sc-theme], [widgets][sc-widgets], [toolbar][sc-toolbar], [edit window][sc-edit] | Edit/mix controls, nonlinear dB meters, pan/fader interaction, record state and selectable audio rulers. |
-| ArtCraft | React 18.3.1/Tauri; [frontend dependencies][ac-package], [component packages][ac-components], [Tailwind theme][ac-theme] | DOM focus and portals, draggable/resizable dialogs, media and generation state, hotkey ownership and service boundaries. |
-| ArtCraftX | React 18.3.1/Tauri; [frontend dependencies][ax-package], [component packages][ax-components], [Tailwind theme][ax-theme] | A related component family with different visual tokens and icon wrappers; Rust egui components are not a direct adoption path. |
 
 The Rust applications keep egui at the frontend layer. The pilot follows that rule: only their UI crates depend on `craft-ui`; engine, document and rendering crates do not. Their layer checkers reject a direct dependency on the shared crate below the UI layer: L6 in PhotoCraft/VectorCraft/DesignCraft/WordCraft/GridCraft/DeckCraft/SoundCraft, L5 in FilmCraft/EffectCraft/LightCraft/CADCraft and L7 in PdfCraft. The crate depends on egui without enabling its default features. Apps retain their existing `egui_extras` SVG loader and renderer setup.
-
-ArtCraft and ArtCraftX already use Headless UI, Radix Dialog/Tooltip, Lucide React and resizable panels. Their component reuse should be evaluated within that stack. A shared visual vocabulary can cross the two toolkit families; Rust widget types cannot.
 
 ## Extraction priorities
 
@@ -43,7 +39,7 @@ These are proposed boundaries and adoption pairs, not a commitment to build a fr
 | 4 | Swatch grid and color-field painting | Share components | WordCraft/GridCraft/DeckCraft for grids; PhotoCraft/VectorCraft for fields | The visual primitives overlap, while the values returned and color-management requirements differ. |
 | 5 | Menu viewport and navigation helpers | Consolidate selected behavior | PhotoCraft, LightCraft, VectorCraft | Scrolling, overflow and focus are reusable. Menu catalogs, native menus, shortcut resolution and dispatch remain app-owned. |
 | 6 | Ruler tick layout and painting | Standardize a primitive API | VectorCraft and DesignCraft, then PhotoCraft/WordCraft/DeckCraft | Share bounded tick placement and painting with caller-supplied labels and coordinates. Keep units, guide commands and paragraph markers outside. |
-| 7 | Pane controls | Share geometry and interactions; keep layout models in apps | PhotoCraft, VectorCraft, DesignCraft, FilmCraft, EffectCraft | Tabs, bounded splits and resize handles are implemented. A shared dock tree or persisted-layout migration remains separate work. |
+| 7 | Pane controls | Share geometry and interactions; keep application policy in apps | PhotoCraft, VectorCraft, DesignCraft, FilmCraft, EffectCraft | Tabs, bounded splits and resize handles are implemented. The subsequent optional [docking model and renderer](ui-docking.md) have separate consumer migration and acceptance requirements. |
 
 The [theme comparison](theme-infrastructure.md) verifies all eight principal theme modules and extracts their first common mechanism: `theme::WidgetPalette`, used by VectorCraft, DesignCraft and LightCraft to style egui widget states while retaining their full palettes.
 
@@ -116,21 +112,15 @@ FilmCraft's [dock tree][fc-dock] has splits, fixed/relative sizes and tab groups
 
 The pane extraction compared [egui_dock 0.21.1](https://docs.rs/egui_dock/0.21.1/egui_dock/) and [egui_tiles 0.17.1](https://docs.rs/egui_tiles/0.17.1/egui_tiles/) at their egui 0.36 APIs. `egui_dock` offers binary fraction splits and floating egui windows within one OS window. `egui_tiles` offers tab, linear and grid containers with relative shares. Neither directly represents EffectCraft's accordion stack plus FilmCraft/EffectCraft's fixed-first/fixed-second sizing. Migrating either would require adapters for saved layouts, panel IDs and commands, as well as bounds on untrusted layout traversal. This source comparison does not establish runtime acceptance of either library.
 
-The implemented boundary therefore stays small: `craft-ui::tabs` fits labels and registers accessible tab interactions; `craft-ui::layout` computes one bounded split and reports resize movement. Apps keep dock trees, panel contents, stacks, floating state and serialization. PhotoCraft and VectorCraft retain their existing overflow/drag policies in adapters; VectorCraft gains fitted tabs and an overflow menu. FilmCraft and EffectCraft retain fixed and relative sizing, with focusable resize handles. DesignCraft and PhotoCraft reuse geometry for their existing split document views. No native multi-monitor or dock-tree migration is implied.
+The initial extraction kept a small boundary: `craft-ui::tabs` fits labels and registers accessible tab interactions; `craft-ui::layout` computes one bounded split and reports resize movement. At that stage, apps retained dock trees, panel contents, stacks, floating state and serialization. PhotoCraft and VectorCraft retained their existing overflow/drag policies in adapters; VectorCraft gained fitted tabs and an overflow menu. FilmCraft and EffectCraft retained fixed and relative sizing, with focusable resize handles. DesignCraft and PhotoCraft reused geometry for their existing split document views.
+
+The subsequent optional `craft-ui::docking` module adds validated layout transactions, saved locations and an optional customizable renderer. Its [contract and host boundary](ui-docking.md) supersede the primitive-only boundary for consumers that adopt it. Panel registries, document state, commands, application menus and native window ownership remain in each app. Primitive-adapter checks do not establish acceptance of a later docking migration.
 
 The shared geometry relaxes minima in tiny areas and rejects non-finite or inverted inputs. EffectCraft's former inverted-clamp case receives a synthetic regression test. Interaction tests cover pointer deltas, arrow keys, focus indication and AccessKit identity/value/actions; application tests retain responsibility for docking, pane focus, document cameras and saved layouts.
 
-## ArtCraft and ArtCraftX
-
-The React apps are worth including in the inventory, but they need a separate package decision. Their component directories contain shared ancestry and later divergence. For example, the [ArtCraft modal][ac-modal] contains delayed recovery of a stranded body pointer-events lock, while the [ArtCraftX modal][ax-modal] at this snapshot lacks that block. Both have similar portal, animation, dragging and Escape-stack machinery. This is a concrete comparison target; the source difference alone does not prove an ArtCraftX runtime bug.
-
-Their [button implementations][ac-button] also have [different styling and icon wrappers][ax-button]. Extracting behavior beneath theme adapters is more plausible than copying one app's full presentation into the other. Preserve keyboard/focus and portal behavior, and test rapid open/close, stacked dialogs and nested menus in a real browser.
-
-Their licensing also needs separate treatment. ArtCraft's [root license][ac-license] states usage restrictions; ArtCraftX's root tree has no corresponding license file at this revision. A `license` string in an individual frontend package is not enough evidence to relicense copied application code into this MIT/Apache workspace. The pilot copies no code or assets from either React app. Any later extraction needs a clear license/provenance decision from the owners.
-
 ## Adoption and acceptance
 
-`craft-ui` exposes focused components; each app adopts them independently through its UI crate and pins an immutable shared revision. The suite trial extends the existing adapters to all twelve Rust apps:
+`craft-ui` exposes focused components; each app adopts them independently through its UI crate and pins an immutable shared revision. The original primitive-adapter trial covered all twelve Rust apps; its evidence below is separate from the current nine-app docking integration:
 
 | App | Shared mechanisms | Preserved application responsibilities |
 | --- | --- | --- |
@@ -156,8 +146,7 @@ three display scales, enabled and disabled.
 WordCraft's pressed/selected button precedence and DeckCraft's disabled hover behavior differ
 from the shared button contract, so those controls stay local. PdfCraft preserves inherited
 foreground-stroke widths; FilmCraft/EffectCraft use different foregrounds by widget state. Those
-themes retain their own application functions. ArtCraft and ArtCraftX remain separate React
-toolkit candidates as described above.
+themes retain their own application functions.
 
 Acceptance is recorded per application. The suite trial compares native offscreen renders at
 normal and narrow widths and exercises keyboard, pointer, disabled and accessible-selection
@@ -183,8 +172,6 @@ Snapshot date: 2026-10-09. The source-audit links throughout this report resolve
 
 | Repository | Revision |
 | --- | --- |
-| `storytold/artcraft` | [`3e5793b6934b`](https://github.com/storytold/artcraft/tree/3e5793b6934b51536606720e5d56bcfd1fe7cc2d) |
-| `storytold/artcraftx` | [`98c2a48940aa`](https://github.com/storytold/artcraftx/tree/98c2a48940aa0a54604637f665ee539c122fa707) |
 | `storytold/cadcraft` | [`86f3199b400c`](https://github.com/storytold/cadcraft/tree/86f3199b400c271a1166103519b3785e4ac88e72) |
 | `storytold/deckcraft` | [`4b09f35c1d6f`](https://github.com/storytold/deckcraft/tree/4b09f35c1d6fa50e2d94243a5d65d98fe49558e0) |
 | `storytold/designcraft` | [`66c7ce7e96ec`](https://github.com/storytold/designcraft/tree/66c7ce7e96ec286a091878cc2541ee8369aa79d6) |
@@ -251,14 +238,3 @@ Snapshot date: 2026-10-09. The source-audit links throughout this report resolve
 [sc-widgets]: https://github.com/storytold/soundcraft/blob/eac0edd896cd6bdf27c0cdd0f9f9158c8956248a/crates/ui-egui/src/widgets.rs
 [sc-toolbar]: https://github.com/storytold/soundcraft/blob/eac0edd896cd6bdf27c0cdd0f9f9158c8956248a/crates/ui-egui/src/toolbar.rs
 [sc-edit]: https://github.com/storytold/soundcraft/blob/eac0edd896cd6bdf27c0cdd0f9f9158c8956248a/crates/ui-egui/src/edit_window.rs
-[ac-package]: https://github.com/storytold/artcraft/blob/3e5793b6934b51536606720e5d56bcfd1fe7cc2d/frontend/package.json
-[ac-components]: https://github.com/storytold/artcraft/tree/3e5793b6934b51536606720e5d56bcfd1fe7cc2d/frontend/libs/components
-[ac-theme]: https://github.com/storytold/artcraft/blob/3e5793b6934b51536606720e5d56bcfd1fe7cc2d/frontend/apps/artcraft/tailwind.config.ts
-[ac-modal]: https://github.com/storytold/artcraft/blob/3e5793b6934b51536606720e5d56bcfd1fe7cc2d/frontend/libs/components/modal/src/lib/modal.tsx
-[ac-button]: https://github.com/storytold/artcraft/blob/3e5793b6934b51536606720e5d56bcfd1fe7cc2d/frontend/libs/components/button/src/lib/button.tsx
-[ac-license]: https://github.com/storytold/artcraft/blob/3e5793b6934b51536606720e5d56bcfd1fe7cc2d/LICENSE.md
-[ax-package]: https://github.com/storytold/artcraftx/blob/98c2a48940aa0a54604637f665ee539c122fa707/frontend/package.json
-[ax-components]: https://github.com/storytold/artcraftx/tree/98c2a48940aa0a54604637f665ee539c122fa707/frontend/libs/components
-[ax-theme]: https://github.com/storytold/artcraftx/blob/98c2a48940aa0a54604637f665ee539c122fa707/frontend/apps/artcraft/tailwind.config.ts
-[ax-modal]: https://github.com/storytold/artcraftx/blob/98c2a48940aa0a54604637f665ee539c122fa707/frontend/libs/components/modal/src/lib/modal.tsx
-[ax-button]: https://github.com/storytold/artcraftx/blob/98c2a48940aa0a54604637f665ee539c122fa707/frontend/libs/components/button/src/lib/button.tsx
