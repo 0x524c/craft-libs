@@ -120,7 +120,11 @@ Collapsed accordion entries still have panel menus; collapsing tab groups is hos
 
 `label` returns `WidgetText`, including an application-shaped galley, used for tab width,
 painting and menu labels. The separate logical label callback supplies tab accessibility
-text. Original `show` and `show_with_limits` call sites remain supported.
+text. `action_label` independently shapes the localized stock Float/Move/Close menu
+text without receiving a panel identity. Its default returns unchanged logical `WidgetText`;
+custom visual text never replaces the action's logical accessibility label. Panel targets
+and overflow entries continue to use `label`. Original `show` and `show_with_limits` call
+sites remain supported.
 
 Apply `Action::Activate` in the host, then use `DockArea::raise_panel(panel)` on the next
 frame to raise the owning in-viewport floating layer and focus the panel tab. This request

@@ -683,6 +683,9 @@ impl DockContent<u32> for CustomContent {
         self.labels.push(logical.to_owned());
         ui.painter().layout_no_wrap("Custom visual label".into(), font.clone(), color).into()
     }
+    fn action_label(&mut self, ui: &egui::Ui, logical: &str, font: &egui::FontId, color: egui::Color32) -> egui::WidgetText {
+        ui.painter().layout_no_wrap(format!("Action visual: {logical}"), font.clone(), color).into()
+    }
     fn panel_menu(&mut self, ui: &mut egui::Ui, _: &u32) {
         self.menus += 1;
         ui.button("App menu").clicked();
@@ -1033,5 +1036,57 @@ fn workspace_cancel_preserves_other_area_and_body_drag_ownership() {
         } else {
             assert!(!outputs[1].actions.is_empty());
         }
+    }
+}
+
+#[test]
+fn popup_action_labels_use_custom_visual_text_and_logical_accessibility() {
+    use egui_kittest::{Harness, kittest::Queryable};
+    fn paints(shape: &egui::Shape, text: &str) -> bool {
+        match shape {
+            egui::Shape::Text(shape) => shape.galley.text() == text,
+            egui::Shape::Vec(shapes) => shapes.iter().any(|shape| paints(shape, text)),
+            _ => false,
+        }
+    }
+    let layout = sample();
+    let mut h = Harness::builder().with_size(vec2(800.0, 600.0)).build_ui_state(
+        move |ui, content: &mut CustomContent| {
+            DockArea::new(Id::new("action-label-test")).show_customized(
+                ui,
+                &layout,
+                &DockStyle::from_ui(ui),
+                |p| format!("Logical {p}"),
+                |_| Permissions::default(),
+                |_| PanelLimits::default(),
+                content,
+            );
+        },
+        CustomContent { labels: vec![], headers: 0, menus: 0, bodies: 0 },
+    );
+    h.run_steps(2);
+    let tab = Id::new("action-label-test").with(("tab", &5_u32));
+    let at = h.ctx.read_response(tab).unwrap().rect.center();
+    h.input_mut().events.extend([
+        Event::PointerMoved(at),
+        Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: true, modifiers: Modifiers::NONE },
+    ]);
+    h.run_steps(1);
+    h.input_mut().events.push(Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    assert!(egui::Popup::is_any_open(&h.ctx));
+    for logical in ["Float panel", "Move to group", "Close panel"] {
+        assert!(
+            h.output().shapes.iter().any(|shape| paints(&shape.shape, &format!("Action visual: {logical}"))),
+            "custom action must paint: {logical}"
+        );
+        // This sample also has a floating-group grip labeled Move to group.
+        let expected = if logical == "Move to group" { 2 } else { 1 };
+        assert_eq!(h.query_all_by_label(logical).count(), expected, "popup action must retain its own logical accessibility: {logical}");
+        assert_eq!(
+            h.query_all_by_label(&format!("Action visual: {logical}")).count(),
+            0,
+            "visual substitution must not replace logical accessibility"
+        );
     }
 }

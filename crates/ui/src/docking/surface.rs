@@ -158,6 +158,11 @@ pub trait DockContent<P> {
     fn label(&mut self, _ui: &Ui, _panel: &P, logical: &str, _font: &FontId, _color: Color32) -> egui::WidgetText {
         logical.into()
     }
+    /// Shape stock Float/Move/Close action text independently of panel identity.
+    /// The renderer preserves `logical` for accessibility, even when the visual text differs.
+    fn action_label(&mut self, _ui: &Ui, logical: &str, _font: &FontId, _color: Color32) -> egui::WidgetText {
+        logical.into()
+    }
     fn panel_menu(&mut self, _ui: &mut Ui, _panel: &P) {}
     fn group_header_width(&self, _panels: &[P], _active: &P, _floating: bool) -> f32 {
         0.0
@@ -690,13 +695,19 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         response.context_menu(|ui| {
             self.content.panel_menu(ui, panel);
-            if policy.movable && policy.floatable && ui.button(&self.style.float_label).clicked() {
-                let rect = clamp_float(group.translate(vec2(24.0, 24.0)), ui.ctx().content_rect());
-                self.output.actions.push(Action::Float { panel: panel.clone(), rect: [rect.left(), rect.top(), rect.width(), rect.height()] });
-                ui.close();
+            if policy.movable && policy.floatable {
+                let text = self.content.action_label(ui, &self.style.float_label, &self.style.font, self.style.text);
+                let response = ui.button(text);
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.float_label));
+                if response.clicked() {
+                    let rect = clamp_float(group.translate(vec2(24.0, 24.0)), ui.ctx().content_rect());
+                    self.output.actions.push(Action::Float { panel: panel.clone(), rect: [rect.left(), rect.top(), rect.width(), rect.height()] });
+                    ui.close();
+                }
             }
             if policy.movable {
-                ui.menu_button(&self.style.move_label, |ui| {
+                let text = self.content.action_label(ui, &self.style.move_label, &self.style.font, self.style.text);
+                let response = ui.menu_button(text, |ui| {
                     egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                         for target in self.layout.panels() {
                             if target != panel && (self.permissions)(target).accepts_tabs && self.menu_label(ui, target).clicked() {
@@ -710,10 +721,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                         }
                     });
                 });
+                response.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.move_label));
             }
-            if policy.closable && ui.button(&self.style.close_label).clicked() {
-                self.output.actions.push(Action::Close { panel: panel.clone() });
-                ui.close();
+            if policy.closable {
+                let text = self.content.action_label(ui, &self.style.close_label, &self.style.font, self.style.text);
+                let response = ui.button(text);
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.close_label));
+                if response.clicked() {
+                    self.output.actions.push(Action::Close { panel: panel.clone() });
+                    ui.close();
+                }
             }
         });
     }
