@@ -924,3 +924,114 @@ fn chrome_focus_classifies_rendered_accordion_and_split_and_floating_resizers() 
         assert!(DockArea::new(area).chrome_has_focus(&ctx, &layout));
     }
 }
+
+#[test]
+fn workspace_cancel_stops_owned_resize_controls_until_new_press() {
+    let area = Id::new("test-area");
+    let fixtures = [
+        (sample(), area.with(("split", Vec::<bool>::new())), vec2(24.0, 0.0)),
+        (
+            Layout {
+                root: Some(Node::Stack {
+                    entries: vec![StackEntry { panel: 1, open: true, height: Some(150.0) }, StackEntry { panel: 2, open: true, height: Some(150.0) }],
+                }),
+                floating: vec![],
+            },
+            area.with(("stack-resize", &1u32)),
+            vec2(0.0, 24.0),
+        ),
+        (sample(), area.with(("floating", &5u32)).with("resize"), vec2(24.0, 24.0)),
+    ];
+    for (mut layout, id, delta) in fixtures {
+        let ctx = Context::default();
+        for _ in 0..3 {
+            step(&ctx, &mut layout, vec![]);
+        }
+        let start = ctx.read_response(id).unwrap().rect.center();
+        step(&ctx, &mut layout, vec![Event::PointerMoved(start), pointer_button(start, true)]);
+        let actions = step(&ctx, &mut layout, vec![Event::PointerMoved(start + delta)]);
+        assert!(!actions.is_empty(), "gesture fixture must actually resize: {id:?}");
+        assert_eq!(ctx.dragged_id(), Some(id));
+        // Keep all identities present in a replacement snapshot.
+        let replacement = layout.clone();
+        cancel_drag::<u32>(&ctx, area);
+        assert_eq!(ctx.dragged_id(), None);
+        for multiplier in [2.0, 3.0] {
+            let actions = step(&ctx, &mut layout, vec![Event::PointerMoved(start + delta * multiplier)]);
+            assert!(actions.is_empty(), "held old gesture produced {actions:?}");
+            assert_eq!(layout, replacement);
+        }
+        step(&ctx, &mut layout, vec![pointer_button(start + delta * 3.0, false)]);
+        for _ in 0..2 {
+            step(&ctx, &mut layout, vec![]);
+        }
+        let start = ctx.read_response(id).unwrap().rect.center();
+        step(&ctx, &mut layout, vec![Event::PointerMoved(start), pointer_button(start, true)]);
+        assert!(!step(&ctx, &mut layout, vec![Event::PointerMoved(start + delta)]).is_empty());
+    }
+}
+
+#[test]
+fn workspace_cancel_preserves_other_area_and_body_drag_ownership() {
+    for body_drag in [false, true] {
+        let ctx = Context::default();
+        let area = Id::new("cancel-area");
+        let other = Id::new("other-area");
+        let layout = Layout {
+            root: Some(Node::Split {
+                axis: SplitAxis::Horizontal,
+                size: SplitSize::FixedFirst(180.0),
+                first: Box::new(tabs(&[1], 0)),
+                second: Box::new(tabs(&[2], 0)),
+            }),
+            floating: vec![],
+        };
+        let body_id = Id::new("application-body-drag");
+        let mut value = 0.0;
+        let mut run = |events: Vec<Event>| {
+            let mut outputs = Vec::new();
+            ctx.run_ui(RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), events, ..Default::default() }, |ui| {
+                let style = DockStyle::from_ui(ui);
+                for (id, x) in [(area, 0.0), (other, 400.0)] {
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(pos2(x, 0.0), vec2(390.0, 580.0))));
+                    outputs.push(DockArea::new(id).show(
+                        &mut child,
+                        &layout,
+                        &style,
+                        |p| format!("Panel {p}"),
+                        |_| Permissions::default(),
+                        |ui, p| {
+                            if body_drag && id == area && *p == 1 {
+                                let rect = Rect::from_min_size(ui.max_rect().min + vec2(10.0, 10.0), vec2(100.0, 40.0));
+                                let response = ui.interact(rect, body_id, egui::Sense::drag());
+                                if response.dragged() {
+                                    value += response.drag_delta().x;
+                                }
+                            }
+                        },
+                    ));
+                }
+            })
+            .textures_delta
+            .clear();
+            outputs
+        };
+        for _ in 0..3 {
+            run(vec![]);
+        }
+        let owned = if body_drag { body_id } else { other.with(("split", Vec::<bool>::new())) };
+        let start = ctx.read_response(owned).unwrap().rect.center();
+        run(vec![Event::PointerMoved(start), pointer_button(start, true)]);
+        run(vec![Event::PointerMoved(start + vec2(20.0, 0.0))]);
+        assert_eq!(ctx.dragged_id(), Some(owned));
+        cancel_drag::<u32>(&ctx, area);
+        assert_eq!(ctx.dragged_id(), Some(owned));
+        let outputs = run(vec![Event::PointerMoved(start + vec2(40.0, 0.0))]);
+        assert_eq!(ctx.dragged_id(), Some(owned));
+        if body_drag {
+            assert!(value >= 40.0);
+        } else {
+            assert!(!outputs[1].actions.is_empty());
+        }
+    }
+}

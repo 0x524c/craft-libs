@@ -133,13 +133,22 @@ pub fn begin_drag<P: Clone + Send + Sync + 'static>(ctx: &Context, area_id: Id, 
     true
 }
 
-/// Discard all pending gestures before replacing a workspace or its layout. The host owns
-/// the replacement snapshot, so this does not restore a group's previous rectangle.
+/// Discard pending tab/group gestures and an actively dragged renderer-owned control before
+/// replacing a workspace. Body/custom-header/menu gestures and other areas are untouched.
+/// Ownership is recorded as controls render; before an initial render or drag threshold there
+/// may be no active egui drag to cancel. Keyboard focus is unchanged. The host owns the
+/// replacement snapshot, so this does not restore a group's previous rectangle.
 pub fn cancel_drag<P: Clone + Send + Sync + 'static>(ctx: &Context, area_id: Id) {
-    ctx.data_mut(|d| {
+    let dragged = ctx.dragged_id();
+    let owned = ctx.data_mut(|d| {
         d.remove::<Drag<P>>(area_id.with("drag"));
         d.remove::<GroupDrag<P>>(area_id.with("group-drag"));
+        let ids = d.remove_temp::<Vec<Id>>(area_id.with("owned-interactions"));
+        dragged.is_some_and(|id| ids.is_some_and(|ids| ids.contains(&id)))
     });
+    if owned {
+        ctx.stop_dragging();
+    }
 }
 
 /// One mutable application adapter owns bodies, menus and shaped text, avoiding competing
@@ -301,6 +310,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
             blockers: self.blockers,
             layout,
             targets: Vec::new(),
+            owned_interactions: Vec::new(),
             output: DockOutput::default(),
         };
         if let Some(root) = &layout.root {
@@ -310,6 +320,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
         renderer.floating(ui.ctx());
         renderer.finish_group_drag(ui.ctx());
         renderer.finish_drag(ui.ctx());
+        ui.ctx().data_mut(|d| d.insert_temp(self.id.with("owned-interactions"), renderer.owned_interactions));
         renderer.output
     }
 }
@@ -325,10 +336,28 @@ struct Renderer<'a, P> {
     blockers: Vec<Rect>,
     layout: &'a Layout<P>,
     targets: Vec<DropTarget<P>>,
+    owned_interactions: Vec<Id>,
     output: DockOutput<P>,
 }
 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
+    fn register_interaction(&mut self, ctx: &Context, id: Id) {
+        // A validated tree has at most 2*MAX_PANELS nodes. Tabs, stack dividers,
+        // floating grips/corners and splits fit comfortably inside this fixed bound.
+        const CAP: usize = 8 * super::MAX_PANELS;
+        if self.owned_interactions.len() < CAP && !self.owned_interactions.contains(&id) {
+            self.owned_interactions.push(id);
+        }
+        // Retain prior-frame controls until return, and publish current controls before
+        // app callbacks. No Context lock spans a callback or a stop_dragging call.
+        ctx.data_mut(|d| {
+            let ids = d.get_temp_mut_or_default::<Vec<Id>>(self.id.with("owned-interactions"));
+            if ids.len() < CAP && !ids.contains(&id) {
+                ids.push(id);
+            }
+        });
+    }
+
     fn node(&mut self, ui: &mut Ui, node: &Node<P>, rect: Rect, path: &mut Vec<bool>) {
         if !super::targets::usable(rect) {
             return;
@@ -356,6 +385,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 )
                 .value(split.first_size(), lo..=hi)
                 .show(ui);
+                self.register_interaction(ui.ctx(), response.response.id);
                 if response.delta != 0.0
                     && let Some(size) = split.resized(*size, (split.first_size() + response.delta).clamp(lo, hi) - split.first_size(), 0.0)
                 {
@@ -437,6 +467,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     )
                     .value(first_size, lo..=hi)
                     .show(ui);
+                    self.register_interaction(ui.ctx(), response.response.id);
                     if response.delta != 0.0 && scale > 0.0 {
                         let delta = f64::from((first_size + response.delta).clamp(lo, hi) - first_size) / scale;
                         let next_a = (a + delta).clamp((a + b - 1_000_000.0).max(1.0), (a + b - 1.0).min(1_000_000.0));
@@ -529,6 +560,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if floating {
             let grip = Rect::from_min_max(strip.min, pos2((strip.left() + 12.0).min(strip.right()), strip.bottom()));
             let response = ui.interact(grip, self.id.with(("move-group", panels.first())), Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+            self.register_interaction(ui.ctx(), response.id);
             response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.move_label));
             if panels.iter().all(|p| (self.permissions)(p).movable)
                 && response.drag_started()
@@ -648,6 +680,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 painter.rect_filled(rect, 0.0, if active || response.hovered() { self.style.active_background } else { self.style.tab_background });
                 painter.galley(rect.center() - galley.size() * 0.5, galley.clone(), color);
             });
+        self.register_interaction(ui.ctx(), response.id);
         if response.clicked() {
             self.output.actions.push(Action::Activate { panel: panel.clone() });
             self.output.focused = Some(panel.clone());
@@ -715,6 +748,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 self.group(ui, &group.panels, group.active, rect, true);
                 let corner = Rect::from_min_max((rect.max - vec2(12.0, 12.0)).max(rect.min), rect.max);
                 let response = ui.interact(corner, id.with("resize"), Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeNwSe);
+                self.register_interaction(ui.ctx(), response.id);
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.resize_window_label));
                 if response.drag_started() {
                     response.request_focus();
