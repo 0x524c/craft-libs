@@ -133,8 +133,13 @@ pub fn begin_drag<P: Clone + Send + Sync + 'static>(ctx: &Context, area_id: Id, 
     true
 }
 
+/// Discard all pending gestures before replacing a workspace or its layout. The host owns
+/// the replacement snapshot, so this does not restore a group's previous rectangle.
 pub fn cancel_drag<P: Clone + Send + Sync + 'static>(ctx: &Context, area_id: Id) {
-    ctx.data_mut(|d| d.remove::<Drag<P>>(area_id.with("drag")));
+    ctx.data_mut(|d| {
+        d.remove::<Drag<P>>(area_id.with("drag"));
+        d.remove::<GroupDrag<P>>(area_id.with("group-drag"));
+    });
 }
 
 /// One mutable application adapter owns bodies, menus and shaped text, avoiding competing

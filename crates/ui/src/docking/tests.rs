@@ -649,6 +649,31 @@ struct CustomContent {
     menus: usize,
     bodies: usize,
 }
+
+#[test]
+fn host_cancel_discards_group_drag_before_workspace_replacement() {
+    let ctx = Context::default();
+    let mut layout = sample();
+    for _ in 0..2 {
+        step(&ctx, &mut layout, vec![]);
+    }
+    let start = pos2(86.0, 82.0);
+    step(&ctx, &mut layout, vec![Event::PointerMoved(start), pointer_button(start, true)]);
+    let moved = start + vec2(50.0, 40.0);
+    let actions = step(&ctx, &mut layout, vec![Event::PointerMoved(moved)]);
+    assert!(actions.iter().any(|action| matches!(action, Action::MoveFloating { .. })));
+
+    cancel_drag::<u32>(&ctx, Id::new("test-area"));
+    layout = sample();
+    let replacement = layout.clone();
+    let actions = step(&ctx, &mut layout, vec![Event::PointerMoved(moved + vec2(20.0, 10.0))]);
+    assert!(actions.is_empty());
+    assert_eq!(layout, replacement);
+    let mut content = CustomContent { labels: vec![], headers: 0, menus: 0, bodies: 0 };
+    let output = custom_frame(&ctx, &layout, &mut content, vec![pointer_button(moved + vec2(20.0, 10.0), false)], &[], false);
+    assert!(output.group_drag.is_none());
+    assert!(output.group_drop.is_none());
+}
 impl DockContent<u32> for CustomContent {
     fn body(&mut self, ui: &mut egui::Ui, _: &u32) {
         self.bodies += 1;
