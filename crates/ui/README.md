@@ -2,7 +2,7 @@
 
 `craft-ui` provides small egui components with application-supplied styles. `icons` prepares
 embedded SVG catalogs; `buttons` paints accessible icon buttons; `tabs` handles tab fitting and
-interaction; `layout` provides split geometry and resize handles; `theme` shares widget-state styling.
+interaction; `layout` provides toolbar fitting, split geometry and resize handles; `theme` shares widget-state styling.
 Adapters cover all twelve Rust Craft apps; the [suite audit](../../docs/ui-components-audit.md#adoption-and-acceptance)
 records their scope and acceptance limits. Assets, complete themes, localization and command handling
 remain in each application. No icons, fonts or application engines are bundled.
@@ -153,6 +153,20 @@ or use an application-specific adapter. The library does not persist geometry, d
 or create panes. Apps keep their existing dock trees, stacked panels, layout files, pane contents,
 cameras, document focus and native windows. Shared controls do not constitute a dock-tree migration.
 
+## Toolbar overflow
+
+`layout::fit_toolbar(natural_widths, available, spacing, overflow_width)` keeps an ordered
+prefix of indivisible groups at their natural widths. When groups do not fit, it reserves the
+full overflow-control width and the preceding gap. `ToolbarFit` contains visible `(index, width)`
+pairs, overflow indices and the reserved width. It does not skip wide groups or compress controls.
+
+The application paints an enabled, focusable overflow control and makes every overflow index
+available in its menu through existing commands. Group identity, labels, selection and command
+dispatch remain local. An empty input produces an empty fit. Invalid dimensions, more than 4096
+groups, or an available width too small for the overflow control return `None`; the caller must
+then provide a scrollable row, wrapping or an existing application menu. Never turn that result
+into silently missing commands. See the API documentation for the accepted numeric bounds.
+
 ## Theme mechanisms
 
 `theme::WidgetPalette` applies background colors to egui's five widget states, with a supplied
@@ -189,4 +203,12 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo check --target wasm32-unknown-unknown -p craft-ui
+```
+
+The [visual regression suite](../../docs/ui-visual-regressions.md) compares the actual controls
+against independent reference painters, including exact mesh and RGBA checks, and proves that
+color, spacing and stroke changes fail those comparisons. To retain reviewable PNG pairs:
+
+```sh
+CRAFT_UI_VISUAL_DIR=/absolute/path/to/visuals cargo test -p craft-ui --test visual_regression
 ```

@@ -15,3 +15,5 @@ egui = { workspace = true }
 
 [dev-dependencies]
 egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
+egui_kittest = { version = "0.36", features = ["wgpu"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
