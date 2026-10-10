@@ -59,6 +59,8 @@ The frontmost containing group blocks targets underneath even when it rejects a 
 The optional `DockArea` renderer handles tab fitting and overflow, drag/drop previews,
 Escape/focus-loss cancellation, split dividers and floating-group resize grips. It renders a
 snapshot and returns `DockOutput.actions`; apply them through the application's command path.
+With `serde` enabled, `Action` also serializes so pointer, keyboard and control-channel requests
+can share that command path, including splitter changes, tab reorder and floating bounds.
 Panel body callbacks receive stable global egui IDs, so moving a panel does not reset its widget
 memory. The application should still keep durable panel/document data outside transient egui
 widget memory.
