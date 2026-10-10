@@ -246,7 +246,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 let total_wanted: f64 = entries.iter().filter(|e| e.open).map(|e| f64::from(e.height.unwrap_or(self.style.min_pane).max(1.0))).sum();
                 let header = self.style.tab_height.min(rect.height() / entries.len().max(1) as f32);
                 let mut top = rect.top();
-                for entry in entries {
+                let mut dividers = Vec::new();
+                for (index, entry) in entries.iter().enumerate() {
                     let share = if entry.open && total_wanted > 0.0 {
                         (f64::from(remaining) * f64::from(entry.height.unwrap_or(self.style.min_pane).max(1.0)) / total_wanted) as f32
                     } else {
@@ -283,6 +284,42 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                         accepts_tabs: (self.permissions)(&entry.panel).accepts_tabs,
                     });
                     top = panel_rect.bottom();
+                    if entry.open && remaining > 0.0 {
+                        dividers.push((index, Rect::from_min_max(pos2(rect.left(), top - 1.0), pos2(rect.right(), top + 1.0)).intersect(rect)));
+                    }
+                }
+                // Register dividers after the headers so their narrow hit regions win at the
+                // shared boundary. Closed entries retain their saved sizes and are skipped.
+                for (index, divider) in dividers {
+                    let Some(first) = entries.get(index) else { continue };
+                    let Some(second) = entries.iter().skip(index.saturating_add(1)).find(|entry| entry.open) else { continue };
+                    let a = f64::from(first.height.unwrap_or(self.style.min_pane).max(1.0));
+                    let b = f64::from(second.height.unwrap_or(self.style.min_pane).max(1.0));
+                    let scale = f64::from(remaining) / total_wanted;
+                    let first_size = (a * scale) as f32;
+                    let pair_size = ((a + b) * scale) as f32;
+                    let body_limits = |panel: &P| {
+                        let mut limits = (self.limits)(panel);
+                        limits.min.y = limits.min.y.max(self.style.min_pane);
+                        limits.max = limits.max.max(limits.min);
+                        limits
+                    };
+                    let (lo, hi) = split_bounds(pair_size, SplitAxis::Vertical, body_limits(&first.panel), body_limits(&second.panel));
+                    let response = ResizeHandle::new(
+                        self.id.with(("stack-resize", &first.panel)),
+                        SplitAxis::Vertical,
+                        divider,
+                        &self.style.resize_label,
+                        ResizeHandleStyle { hovered: self.style.accent, dragged: self.style.accent, focused: self.style.accent },
+                    )
+                    .value(first_size, lo..=hi)
+                    .show(ui);
+                    if response.delta != 0.0 && scale > 0.0 {
+                        let delta = f64::from((first_size + response.delta).clamp(lo, hi) - first_size) / scale;
+                        let next_a = (a + delta).clamp((a + b - 1_000_000.0).max(1.0), (a + b - 1.0).min(1_000_000.0));
+                        self.output.actions.push(Action::ResizeStack { panel: first.panel.clone(), height: Some(next_a as f32) });
+                        self.output.actions.push(Action::ResizeStack { panel: second.panel.clone(), height: Some((a + b - next_a) as f32) });
+                    }
                 }
             }
         }

@@ -57,7 +57,7 @@ accepts tabs or splits. Supply targets back-to-front, including floating-window 
 The frontmost containing group blocks targets underneath even when it rejects a drop.
 
 The optional `DockArea` renderer handles tab fitting and overflow, drag/drop previews,
-Escape/focus-loss cancellation, split dividers and floating-group resize grips. It renders a
+Escape/focus-loss cancellation, split/accordion dividers and floating-group resize grips. It renders a
 snapshot and returns `DockOutput.actions`; apply them through the application's command path.
 With `serde` enabled, `Action` also serializes so pointer, keyboard and control-channel requests
 can share that command path, including splitter changes, tab reorder and floating bounds.

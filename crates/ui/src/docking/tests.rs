@@ -470,6 +470,46 @@ fn focused_floating_resize_grip_accepts_both_arrow_axes_and_releases_tab() {
 }
 
 #[test]
+fn stack_dividers_resize_adjacent_open_bodies_by_pointer_and_keyboard() {
+    let ctx = Context::default();
+    let mut layout = Layout {
+        root: Some(Node::Stack {
+            entries: vec![
+                StackEntry { panel: 1, open: true, height: Some(150.0) },
+                StackEntry { panel: 2, open: false, height: Some(91.0) },
+                StackEntry { panel: 3, open: true, height: Some(150.0) },
+                StackEntry { panel: 4, open: true, height: Some(120.0) },
+            ],
+        }),
+        floating: Vec::new(),
+    };
+    for _ in 0..3 {
+        step(&ctx, &mut layout, Vec::new());
+    }
+    let id = Id::new("test-area").with(("stack-resize", &1u32));
+    let start = ctx.read_response(id).unwrap().rect.center();
+    step(&ctx, &mut layout, vec![Event::PointerMoved(start), pointer_button(start, true)]);
+    step(&ctx, &mut layout, vec![Event::PointerMoved(start + vec2(0.0, 24.0))]);
+    step(&ctx, &mut layout, vec![pointer_button(start + vec2(0.0, 24.0), false)]);
+    let Node::Stack { entries } = layout.root.as_ref().unwrap() else { panic!() };
+    let after_pointer = entries[0].height.unwrap();
+    assert!(after_pointer > 150.0);
+    assert!((entries[0].height.unwrap() + entries[2].height.unwrap() - 300.0).abs() < 0.001);
+    assert_eq!(entries[1].height, Some(91.0));
+    assert!(!entries[1].open);
+    assert_eq!(entries[3].height, Some(120.0));
+    ctx.memory_mut(|memory| memory.request_focus(id));
+    step(
+        &ctx,
+        &mut layout,
+        vec![Event::Key { key: egui::Key::ArrowDown, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }],
+    );
+    let Node::Stack { entries } = layout.root.as_ref().unwrap() else { panic!() };
+    assert!(entries[0].height.unwrap() > after_pointer);
+    assert!((entries[0].height.unwrap() + entries[2].height.unwrap() - 300.0).abs() < 0.001);
+}
+
+#[test]
 fn restoring_a_panel_beside_a_nested_subtree_preserves_the_complete_workspace() {
     let mut layout = Layout {
         root: Some(Node::Split {
