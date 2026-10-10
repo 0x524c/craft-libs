@@ -510,6 +510,65 @@ fn stack_dividers_resize_adjacent_open_bodies_by_pointer_and_keyboard() {
 }
 
 #[test]
+fn split_inner_edge_remains_draggable_beside_a_scrollbar() {
+    let ctx = Context::default();
+    let mut layout = Layout {
+        root: Some(Node::Split {
+            axis: SplitAxis::Horizontal,
+            size: SplitSize::FixedFirst(220.0),
+            first: Box::new(tabs(&[1], 0)),
+            second: Box::new(tabs(&[2], 0)),
+        }),
+        floating: Vec::new(),
+    };
+    let frame = |layout: &mut Layout<u32>, events| {
+        let mut output = DockOutput::default();
+        let mut sidebar = Rect::NOTHING;
+        ctx.run_ui(RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), events, ..Default::default() }, |ui| {
+            output = DockArea::new(Id::new("scrolling-dock")).show(
+                ui,
+                layout,
+                &DockStyle::from_ui(ui),
+                |p| format!("Panel {p}"),
+                |_| Permissions::default(),
+                |ui, panel| {
+                    if *panel == 1 {
+                        sidebar = ui.max_rect();
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                            .show(ui, |ui| {
+                                for row in 0..100 {
+                                    ui.label(format!("Library item {row}"));
+                                }
+                            });
+                    } else {
+                        ui.label("Document");
+                    }
+                },
+            );
+        })
+        .textures_delta
+        .clear();
+        assert!(output.error.is_none());
+        for action in output.actions {
+            layout.apply(action).unwrap();
+        }
+        sidebar
+    };
+    for _ in 0..3 {
+        frame(&mut layout, Vec::new());
+    }
+    let sidebar = frame(&mut layout, Vec::new());
+    let start = pos2(sidebar.right() - 2.0, sidebar.center().y);
+    frame(&mut layout, vec![Event::PointerMoved(start), pointer_button(start, true)]);
+    frame(&mut layout, vec![Event::PointerMoved(start + vec2(40.0, 0.0))]);
+    frame(&mut layout, vec![pointer_button(start + vec2(40.0, 0.0), false)]);
+    let Node::Split { size: SplitSize::FixedFirst(width), .. } = layout.root.unwrap() else { panic!() };
+    assert!((width - 260.0).abs() < 0.001, "sidebar width after inner-edge drag: {width}");
+}
+
+#[test]
 fn restoring_a_panel_beside_a_nested_subtree_preserves_the_complete_workspace() {
     let mut layout = Layout {
         root: Some(Node::Split {

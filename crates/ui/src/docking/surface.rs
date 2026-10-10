@@ -218,6 +218,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 let (lo, hi) = split_bounds(wanted.available(), *axis, self.node_limits(first), self.node_limits(second));
                 let first_size = wanted.first_size().clamp(lo, hi);
                 let Some(split) = split_rect(rect, *axis, SplitSize::FixedFirst(first_size), self.style.gap, 0.0) else { return };
+                path.push(false);
+                self.node(ui, first, split.first, path);
+                path.pop();
+                path.push(true);
+                self.node(ui, second, split.second, path);
+                path.pop();
+                // The divider's inner-edge hit margin must win over child scrollbars, just
+                // as accordion dividers win over the adjacent panel's content.
                 let response = ResizeHandle::new(
                     self.id.with(("split", &*path)),
                     *axis,
@@ -232,12 +240,6 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 {
                     self.output.actions.push(Action::ResizeSplit { path: path.clone(), size });
                 }
-                path.push(false);
-                self.node(ui, first, split.first, path);
-                path.pop();
-                path.push(true);
-                self.node(ui, second, split.second, path);
-                path.pop();
             }
             Node::Tabs { panels, active } => self.group(ui, panels, *active, rect, false),
             Node::Stack { entries } => {
