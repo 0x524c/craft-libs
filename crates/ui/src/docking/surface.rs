@@ -176,6 +176,55 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
         Self { id, activation: None, blockers: Vec::new() }
     }
 
+    /// Whether keyboard focus belongs to a rendered docking control in this layout.
+    /// Panel bodies and application-provided header/menu widgets are excluded. Hosts may
+    /// route nonconflicting global shortcuts through chrome while retaining widget ownership
+    /// of activation, traversal, resize and cancellation keys. Invalid layouts return false.
+    pub fn chrome_has_focus(&self, ctx: &egui::Context, layout: &Layout<P>) -> bool {
+        let Some(focused) = ctx.memory(|memory| memory.focused()) else { return false };
+        if layout.validate().is_err() || ctx.read_response(focused).is_none() {
+            return false;
+        }
+        let matches = |id: Id| id == focused;
+        let group = |panels: &[P]| {
+            panels.iter().any(|panel| matches(self.id.with(("tab", panel))) || matches(self.id.with(("overflow", panel))))
+                || matches(self.id.with(("move-group", panels.first())))
+        };
+        for floating in &layout.floating {
+            if group(&floating.panels) || floating.panels.first().is_some_and(|first| matches(self.id.with(("floating", first)).with("resize"))) {
+                return true;
+            }
+        }
+        let mut nodes = layout.root.as_ref().map(|root| vec![(root, Vec::<bool>::new())]).unwrap_or_default();
+        while let Some((node, path)) = nodes.pop() {
+            match node {
+                Node::Tabs { panels, .. } if group(panels) => return true,
+                Node::Stack { entries } => {
+                    if entries.iter().any(|entry| {
+                        matches(self.id.with(("tab", &entry.panel)))
+                            || matches(self.id.with(("collapse", &entry.panel)))
+                            || matches(self.id.with(("stack-resize", &entry.panel)))
+                    }) {
+                        return true;
+                    }
+                }
+                Node::Split { first, second, .. } => {
+                    if matches(self.id.with(("split", &path))) {
+                        return true;
+                    }
+                    let mut second_path = path.clone();
+                    second_path.push(true);
+                    let mut first_path = path;
+                    first_path.push(false);
+                    nodes.push((second, second_path));
+                    nodes.push((first, first_path));
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Raise and focus a panel's owning floating area on this frame. Apply Activate through
     /// the application's command path as well to select its tab.
     pub fn raise_panel(mut self, panel: P) -> Self {

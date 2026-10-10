@@ -848,3 +848,79 @@ fn protected_group_member_blocks_whole_group_gesture_and_host_drop() {
         assert!(!out.actions.iter().any(|a| matches!(a, Action::MoveFloating { .. })));
     }
 }
+
+#[test]
+fn chrome_focus_classifies_rendered_tab_but_excludes_body_text_field_and_invalid_layout() {
+    let ctx = Context::default();
+    let layout = sample();
+    let tab = Id::new("focus-area").with(("tab", 3u32));
+    let text = Id::new("body-text");
+    let mut value = String::new();
+    let mut paint = |focus: Id| {
+        let mut output =
+            ctx.run_ui(RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), ..Default::default() }, |ui| {
+                DockArea::new(Id::new("focus-area")).show(
+                    ui,
+                    &layout,
+                    &DockStyle::from_ui(ui),
+                    |p| format!("Panel {p}"),
+                    |_| Permissions::default(),
+                    |ui, p| {
+                        if *p == 3 {
+                            ui.add(egui::TextEdit::singleline(&mut value).id(text));
+                        }
+                    },
+                );
+                ui.memory_mut(|memory| memory.request_focus(focus));
+            });
+        output.textures_delta.clear();
+    };
+    paint(tab);
+    assert!(DockArea::new(Id::new("focus-area")).chrome_has_focus(&ctx, &layout));
+    paint(text);
+    assert!(!DockArea::new(Id::new("focus-area")).chrome_has_focus(&ctx, &layout));
+    paint(tab);
+    let mut invalid = layout.clone();
+    invalid.floating.push(Floating { panels: vec![3], active: 0, rect: [10.0, 10.0, 100.0, 100.0] });
+    assert!(!DockArea::new(Id::new("focus-area")).chrome_has_focus(&ctx, &invalid));
+    assert!(!DockArea::<u32>::new(Id::new("focus-area")).chrome_has_focus(&ctx, &Layout::default()));
+    ctx.memory_mut(|memory| memory.request_focus(Id::new("unrendered")));
+    assert!(!DockArea::new(Id::new("focus-area")).chrome_has_focus(&ctx, &layout));
+}
+
+#[test]
+fn chrome_focus_classifies_rendered_accordion_and_split_and_floating_resizers() {
+    let ctx = Context::default();
+    let area = Id::new("focus-chrome-controls");
+    let accordion = Layout {
+        root: Some(Node::Stack {
+            entries: vec![StackEntry { panel: 1u32, open: true, height: Some(150.0) }, StackEntry { panel: 2u32, open: true, height: Some(150.0) }],
+        }),
+        floating: Vec::new(),
+    };
+    for (layout, id) in [
+        (accordion.clone(), area.with(("tab", 1u32))),
+        (accordion.clone(), area.with(("collapse", 1u32))),
+        (accordion, area.with(("stack-resize", 1u32))),
+        (sample(), area.with(("split", Vec::<bool>::new()))),
+        (sample(), area.with(("floating", 5u32)).with("resize")),
+    ] {
+        let mut output =
+            ctx.run_ui(RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), ..Default::default() }, |ui| {
+                DockArea::new(area).show(
+                    ui,
+                    &layout,
+                    &DockStyle::from_ui(ui),
+                    |p| format!("Panel {p}"),
+                    |_| Permissions::default(),
+                    |ui, _| {
+                        ui.label("Body");
+                    },
+                );
+                ui.memory_mut(|memory| memory.request_focus(id));
+            });
+        output.textures_delta.clear();
+        assert!(ctx.read_response(id).is_some(), "the fixture must render the control");
+        assert!(DockArea::new(area).chrome_has_focus(&ctx, &layout));
+    }
+}

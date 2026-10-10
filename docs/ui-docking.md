@@ -137,3 +137,11 @@ Hosts supply overlay rectangles via `blocked_rects` before showing the surface. 
 block drop previews, release actions and float fallback at the pointer, including overlays
 appearing mid-drag. Hosts must provide current overlay geometry or cancel docking when
 modal state prevents interaction; later-drawn overlays cannot be discovered retroactively.
+
+`DockArea::chrome_has_focus(ctx, layout)` classifies focus on rendered dock tabs,
+collapse buttons, overflow, split/stack dividers, floating resize corners and group
+grips. It excludes panel content and custom header/menu widgets and rejects invalid
+layouts. Hosts can permit global commands from chrome while reserving Enter, Space,
+Tab, Escape and arrow keys for activation, traversal, cancellation and resizing.
+Content widgets retain their usual keyboard ownership. The renderer owns the IDs;
+hosts do not need to reconstruct them.
