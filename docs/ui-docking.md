@@ -109,3 +109,31 @@ CRAFT_UI_DOCK_VISUAL_DIR=/absolute/output/path cargo test -p craft-ui --test doc
 
 These are offscreen egui checks. An adopting application still needs command, content, workspace
 reload, theme and input tests using its own renderer and persistence adapter.
+
+## Application chrome and activation
+
+`DockArea::show_customized` accepts one mutable `DockContent<P>` adapter, with body,
+panel-menu, group-header and label methods. Apps queue commands in these callbacks and
+apply them after rendering the readonly snapshot. `group_header_width` reserves a bounded
+trailing portion of the existing tab strip; its child UI is clipped to that region.
+Collapsed accordion entries still have panel menus; collapsing tab groups is host policy.
+
+`label` returns `WidgetText`, including an application-shaped galley, used for tab width,
+painting and menu labels. The separate logical label callback supplies tab accessibility
+text. Original `show` and `show_with_limits` call sites remain supported.
+
+Apply `Action::Activate` in the host, then use `DockArea::raise_panel(panel)` on the next
+frame to raise the owning in-viewport floating layer and focus the panel tab. This request
+does not mutate the serialized layout or persist z-order. Floating area identity still
+derives from the first panel; native-window identity remains host-owned.
+
+Floating groups have a distinct 12-point grip in the existing tab strip. Moving it emits
+`MoveFloating` for the whole group; dragging an individual tab detaches just that panel.
+`DockOutput::group_drag` and `group_drop` expose the group identity and release position
+for app-owned atomic group docking policies. Escape/lost focus restores the group's
+starting rectangle. No generic group docking or app command registry is inferred.
+
+Hosts supply overlay rectangles via `blocked_rects` before showing the surface. These
+block drop previews, release actions and float fallback at the pointer, including overlays
+appearing mid-drag. Hosts must provide current overlay geometry or cancel docking when
+modal state prevents interaction; later-drawn overlays cannot be discovered retroactively.

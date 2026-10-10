@@ -4,7 +4,7 @@
 embedded SVG catalogs; `buttons` paints accessible icon buttons; `tabs` handles tab fitting and
 interaction; `layout` provides toolbar fitting, split geometry and resize handles; `theme` shares widget-state styling.
 `docking` supplies transactional panel moves and an optional docking surface.
-Adapters cover all twelve Rust Craft apps; the [suite audit](../../docs/ui-components-audit.md#adoption-and-acceptance)
+The current delivery covers nine creative apps (DesignCraft, VectorCraft, PhotoCraft, FilmCraft, EffectCraft, CADCraft, PDFCraft, LightCraft and SoundCraft); prior basic and office adapters are separate. The [suite audit](../../docs/ui-components-audit.md#adoption-and-acceptance)
 records their scope and acceptance limits. Assets, complete themes, localization and command handling
 remain in each application. No icons, fonts or application engines are bundled.
 
