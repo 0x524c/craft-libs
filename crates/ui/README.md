@@ -3,6 +3,7 @@
 `craft-ui` provides small egui components with application-supplied styles. `icons` prepares
 embedded SVG catalogs; `buttons` paints accessible icon buttons; `tabs` handles tab fitting and
 interaction; `layout` provides toolbar fitting, split geometry and resize handles; `theme` shares widget-state styling.
+`docking` supplies transactional panel moves and an optional docking surface.
 Adapters cover all twelve Rust Craft apps; the [suite audit](../../docs/ui-components-audit.md#adoption-and-acceptance)
 records their scope and acceptance limits. Assets, complete themes, localization and command handling
 remain in each application. No icons, fonts or application engines are bundled.
@@ -152,6 +153,26 @@ Apply the delta through `SplitLayout::resized(size, delta, minimum)` to retain f
 or use an application-specific adapter. The library does not persist geometry, dispatch commands
 or create panes. Apps keep their existing dock trees, stacked panels, layout files, pane contents,
 cameras, document focus and native windows. Shared controls do not constitute a dock-tree migration.
+
+## Panel docking
+
+`docking::Layout<P>` owns panel placement independently of application content: a tree of split,
+tab and accordion nodes plus floating tab groups. `apply(Action)` validates the complete layout,
+applies a proposed change to a copy and commits only a valid result. Moves, tab insertion/reorder,
+side splits, detach, activate, close, reveal and resizing use this one transaction path. Panel IDs
+must be unique, stable values; labels and document state are supplied by the app.
+
+`Layout::location` captures a panel's placement before hiding it; `restore` returns it there if
+the remembered destination still exists. Apps choose an explicit fallback when it does not.
+Enable the optional `serde` feature to persist the shared layout, or convert to/from an existing
+workspace schema. Validate loaded input before rendering or recursively converting it.
+
+`DockArea` is an optional renderer. It takes a layout snapshot, styles, labels, panel permissions
+and body callbacks, then returns actions for the app's command handler. Its floating groups stay
+inside the current egui viewport. Protected document canvases have no tab header. Per-panel size
+limits constrain geometry without overwriting saved preferred widths when the window shrinks.
+Applications with established chrome can use the shared transaction model and `resolve_drop`
+without changing their renderer. See [the docking guide](../../docs/ui-docking.md) for details.
 
 ## Toolbar overflow
 

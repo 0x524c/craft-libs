@@ -37,4 +37,8 @@ crates/ui-egui/src/theme.rs, and:
 - DesignCraft, crates/ui-egui/src/theme.rs, revision 66c7ce7e96ec286a091878cc2541ee8369aa79d6.
   https://github.com/storytold/designcraft
   Copyright (c) 2026 ArtCraft Team and the DesignCraft contributors.
+The transactional panel model and drop-zone semantics in crates/ui/src/docking draw on the
+FilmCraft/EffectCraft split, tab and accordion layouts and VectorCraft floating groups listed
+above. The generic transaction validation, optional renderer and workspace-location helpers
+are implemented here without dependencies on application engines or native window helpers.
 All sources listed above are licensed MIT OR Apache-2.0. No icon artwork is copied here.
