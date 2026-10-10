@@ -282,6 +282,23 @@ fn saved_layout_and_hidden_location_round_trip() {
     assert_eq!(serde_json::from_str::<Location<u32>>(&encoded).unwrap(), location);
 }
 
+#[cfg(feature = "serde")]
+#[test]
+fn old_hidden_locations_accept_panel_ids_without_a_default_identity() {
+    #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    enum Panel {
+        Layers,
+        Brushes,
+    }
+    let location: Location<Panel> = serde_json::from_value(serde_json::json!({
+        "floating": null, "anchor": "Layers", "placement": {"Tab": {"before": null}},
+        "size": null, "stack": null
+    }))
+    .unwrap();
+    assert!(location.sibling.is_empty());
+    assert_eq!(location.anchor, Some(Panel::Layers));
+}
+
 fn frame(ctx: &Context, layout: &Layout<u32>, events: Vec<Event>, focused: bool) -> (DockOutput<u32>, Vec<Id>) {
     let mut output = DockOutput::default();
     let mut ids = Vec::new();

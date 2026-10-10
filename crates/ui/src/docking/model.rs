@@ -80,6 +80,7 @@ pub enum Placement<P> {
 /// Anchors are stable panel identities rather than mutable tree indices.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(bound(deserialize = "P: serde::Deserialize<'de>")))]
 pub struct Location<P> {
     pub floating: Option<[f32; 4]>,
     pub anchor: Option<P>,
