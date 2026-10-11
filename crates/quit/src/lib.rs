@@ -66,16 +66,17 @@ pub use close::{QUIT_MENU_ID, on_close_request, on_menu_event};
 /// process-wide menu-event handler, so an app that builds its own muda menu should not call it:
 /// give that menu's Quit item [`QUIT_MENU_ID`] and pass its events to [`on_menu_event`] instead.
 ///
-/// Other platforms: does nothing.
+/// On error winit's menu stays: the app still runs, but ⌘Q quits without asking. The app decides
+/// whether that is fatal; `?` passes it out of the eframe app creator.
+///
+/// Other platforms: does nothing and returns `Ok`.
 #[cfg(feature = "menu")]
-pub fn install_app_menu(ctx: &egui::Context, app_name: &str) {
+pub fn install_app_menu(ctx: &egui::Context, app_name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     #[cfg(target_os = "macos")]
-    if let Err(e) = menu::install(ctx, app_name) {
-        // winit's menu stays; the app still runs, but ⌘Q quits without asking.
-        eprintln!("craft-quit: app menu not installed: {e}");
-    }
+    menu::install(ctx, app_name)?;
     #[cfg(not(target_os = "macos"))]
     let _ = (ctx, app_name);
+    Ok(())
 }
 
 /// Quit through the platform's own path, where leaving by closing the window is not safe.
