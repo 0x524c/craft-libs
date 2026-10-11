@@ -410,7 +410,18 @@ fn windows_preserves_sheet_size_orientation_and_binding_edge() {
     assert_eq!(r["DefaultDuplex"], "Vertical");
     assert_eq!(r["ForcedSimplex"], "Simplex");
     assert_eq!(r["FallbackPaper"], "Driver Letter");
-    assert_eq!(r["ShrinkBoxes"], serde_json::json!([[0.0, 20.0, 800.0, 1000.0], [200.0, 270.0, 400.0, 500.0]]));
+    // Windows PowerShell serializes whole-valued floats as JSON integers. Compare their
+    // numeric values rather than requiring one particular JSON number representation.
+    let boxes = r["ShrinkBoxes"].as_array().unwrap();
+    let expected = [[0.0, 20.0, 800.0, 1000.0], [200.0, 270.0, 400.0, 500.0]];
+    assert_eq!(boxes.len(), expected.len());
+    for (actual, expected) in boxes.iter().zip(expected) {
+        let actual = actual.as_array().unwrap();
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert_eq!(actual.as_f64(), Some(expected));
+        }
+    }
     let sheets = r["Sheets"].as_array().unwrap();
     assert_eq!((sheets[0]["Width"].as_u64(), sheets[0]["Height"].as_u64()), (Some(850), Some(1100)));
     assert_eq!(sheets[0]["Name"], "Driver Letter");
