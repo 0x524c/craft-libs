@@ -350,7 +350,7 @@ fn fixture() -> Vec<u8> {
         "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 5 0 R >>",
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 792 612] /Resources << >> /Contents 5 0 R >>",
-        "<< /Length 25 >>\nstream\n0 0 0 rg 36 36 72 72 re f\nendstream",
+        "<< /Length 26 >>\nstream\n0 0 0 rg 36 36 72 72 re f\nendstream",
     ];
     let mut pdf = String::from("%PDF-1.4\n");
     let mut offsets = vec![0];

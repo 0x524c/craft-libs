@@ -28,9 +28,10 @@ function Get-Duplex($edge) {
 function Get-SheetGeometry($width, $height) {
     if ([double]::IsNaN($width) -or [double]::IsNaN($height) -or
         [double]::IsInfinity($width) -or [double]::IsInfinity($height) -or
-        $width -le 0 -or $height -le 0 -or $width -gt 19200 -or $height -gt 19200) {
-        throw 'the PDF sheet dimensions are invalid or exceed 200 inches'
+        $width -le 0 -or $height -le 0 -or $width -gt 12288 -or $height -gt 12288) {
+        throw 'the PDF sheet dimensions are invalid or exceed 128 inches'
     }
+    # DEVMODE paper lengths use signed 16-bit tenths of a millimetre (128 inches fits).
     $drawW = $width * 100.0 / 96.0
     $drawH = $height * 100.0 / 96.0
     [pscustomobject]@{
@@ -84,7 +85,7 @@ if ($env:CRAFT_PRINT_TEST_SETTINGS -eq '1') {
             X = $box.X; Y = $box.Y; DrawWidth = $box.Width; DrawHeight = $box.Height;
             Pixels = @($pixels.Width, $pixels.Height) }
     }
-    $large = Get-RenderSize (Get-SheetGeometry 19200 19200) 600
+    $large = Get-RenderSize (Get-SheetGeometry 12288 12288) 600
     $invalidRejected = $false
     try { $null = Get-SheetGeometry ([double]::NaN) 100 } catch { $invalidRejected = $true }
     [pscustomobject]@{ Sheets = @($results); LongEdge = (Get-Duplex 'long-edge').ToString();

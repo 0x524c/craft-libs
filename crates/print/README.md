@@ -28,7 +28,7 @@ on both success and failure. CUPS jobs never use a PDF temporary file. Printing 
 UI callers should submit on a worker. Receipts are backend messages, not portable job IDs.
 Windows raster allocation is bounded to 64 million pixels per sheet and 32768 per dimension;
 large sheets use lower raster resolution while retaining physical size. The backend supports
-sheets up to 200 inches and reports invalid sizes. It does not provide PostScript output,
+sheets up to 128 inches and reports invalid sizes. It does not provide PostScript output,
 separations, trapping, colour-managed device rasterization or PDF passthrough on Windows.
 
 `cargo test -p craft-print` tests CUPS transport (including pipe-sized jobs and refusal),
