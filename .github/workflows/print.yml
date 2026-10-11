@@ -30,5 +30,6 @@ jobs:
           Start-Service Spooler
           Add-PrinterDriver -Name 'Generic / Text Only'
       - run: cargo test -p craft-print --locked -- --nocapture
+        timeout-minutes: 10
         env:
           CRAFT_PRINT_REQUIRE_QUEUE: ${{ runner.os == 'Windows' && '1' || '0' }}

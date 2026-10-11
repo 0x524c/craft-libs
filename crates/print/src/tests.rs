@@ -246,15 +246,25 @@ fn the_print_script_renders_the_job_and_reaches_the_spooler() {
     let added = windows_powershell(
         r#"
         $name = $env:CRAFT_TEST_PRINTER
+        $port = Join-Path $env:TEMP ($name + '.prn')
         if (Get-Printer -Name $name -ErrorAction SilentlyContinue) { throw 'test queue already exists' }
+        if ((Get-PrinterPort -Name $port -ErrorAction SilentlyContinue) -or (Test-Path -LiteralPath $port)) {
+            throw 'test port already exists'
+        }
+        $portCreated = $false
         try {
-            Add-Printer -Name $name -DriverName 'Generic / Text Only' -PortName 'FILE:'
+            # FILE: can ask GDI for an output filename even for a paused queue. A local port
+            # with its own path has no prompt; the paused job is removed before it can write.
+            Add-PrinterPort -Name $port
+            $portCreated = $true
+            Add-Printer -Name $name -DriverName 'Generic / Text Only' -PortName $port
             $queue = Get-CimInstance Win32_Printer | Where-Object Name -eq $name
             if (-not $queue) { throw 'test queue could not be found' }
             $paused = Invoke-CimMethod -InputObject $queue -MethodName Pause
             if ($paused.ReturnValue -ne 0) { throw 'test queue could not be paused' }
         } catch {
             Remove-Printer -Name $name -ErrorAction SilentlyContinue
+            if ($portCreated) { Remove-PrinterPort -Name $port -ErrorAction SilentlyContinue }
             throw
         }
         "#,
@@ -269,7 +279,17 @@ fn the_print_script_renders_the_job_and_reaches_the_spooler() {
     let sent = spool::submit(&pdf, &job);
     let queued =
         windows_powershell(&format!("if (Get-PrintJob -Name '{name}') {{ (Get-PrintJob -Name '{name}' | Measure-Object).Count }} else {{ 0 }}"), &[]);
-    let cleaned = windows_powershell(&format!("Get-PrintJob -Name '{name}' | Remove-PrintJob; Remove-Printer -Name '{name}'"), &[]);
+    let cleaned = windows_powershell(
+        r#"
+        $name = $env:CRAFT_TEST_PRINTER
+        $port = Join-Path $env:TEMP ($name + '.prn')
+        Get-PrintJob -Name $name | Remove-PrintJob
+        Remove-Printer -Name $name
+        Remove-PrinterPort -Name $port
+        Remove-Item -LiteralPath $port -ErrorAction SilentlyContinue
+        "#,
+        &[("CRAFT_TEST_PRINTER", name)],
+    );
     assert!(sent.is_ok(), "{sent:?}");
     assert_eq!(queued.as_deref().map(str::trim), Ok("1"), "the job is in the paused printer's queue: {queued:?}");
     assert!(cleaned.is_ok(), "the test printer is removed again: {cleaned:?}");
