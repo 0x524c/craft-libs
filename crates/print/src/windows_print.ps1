@@ -23,6 +23,10 @@ function Get-Duplex($edge) {
     }
 }
 
+function Set-JobDuplex($settings, $edge) {
+    if ($edge) { $settings.Duplex = Get-Duplex $edge }
+}
+
 # WinRT dimensions are DIPs (96/inch), printing dimensions are hundredths of an inch.
 # The PDF is already composed: preserve physical size, even if the printer clips its edges.
 function Get-SheetGeometry($width, $height) {
@@ -41,12 +45,16 @@ function Get-SheetGeometry($width, $height) {
     }
 }
 
-function Set-SheetSettings($settings, $papers, $sheet) {
+function Set-SheetSettings($settings, $papers, $sheet, $scaling = 'exact', $fallbackPaper = $null) {
     # Prefer the driver's paper identifier over a custom form when the dimensions match.
     $paper = $papers | Where-Object {
         [Math]::Abs($_.Width - $sheet.PaperWidth) -le 1 -and
         [Math]::Abs($_.Height - $sheet.PaperHeight) -le 1
     } | Select-Object -First 1
+    if (-not $paper -and $scaling -eq 'shrink-to-fit') {
+        if (-not $fallbackPaper) { throw 'the printer has no default paper for shrink-to-fit' }
+        $paper = $fallbackPaper
+    }
     if (-not $paper) {
         $paper = [System.Drawing.Printing.PaperSize]::new('PDF sheet', $sheet.PaperWidth, $sheet.PaperHeight)
     }
@@ -58,6 +66,22 @@ function Set-SheetSettings($settings, $papers, $sheet) {
 function Get-DrawBox($sheet, $hardMarginX, $hardMarginY) {
     # GDI's origin is the printable area's corner. Offset to the physical paper's corner.
     [System.Drawing.RectangleF]::new(-$hardMarginX, -$hardMarginY, $sheet.Width, $sheet.Height)
+}
+
+function Get-ShrinkDrawBox($sheet, $area, $hardMarginX, $hardMarginY) {
+    foreach ($value in @($area.X, $area.Y, $area.Width, $area.Height, $hardMarginX, $hardMarginY)) {
+        if ([double]::IsNaN($value) -or [double]::IsInfinity($value)) {
+            throw 'the printer reported an invalid printable area'
+        }
+    }
+    if ($area.Width -le 0 -or $area.Height -le 0) { throw 'the printer has no printable area' }
+    $scale = [Math]::Min(1.0, [Math]::Min($area.Width / $sheet.Width, $area.Height / $sheet.Height))
+    $width = $sheet.Width * $scale
+    $height = $sheet.Height * $scale
+    [System.Drawing.RectangleF]::new(
+        $area.X + ($area.Width - $width) / 2.0 - $hardMarginX,
+        $area.Y + ($area.Height - $height) / 2.0 - $hardMarginY,
+        $width, $height)
 }
 
 function Get-RenderSize($sheet, $dpi) {
@@ -88,8 +112,21 @@ if ($env:CRAFT_PRINT_TEST_SETTINGS -eq '1') {
     $large = Get-RenderSize (Get-SheetGeometry 12288 12288) 600
     $invalidRejected = $false
     try { $null = Get-SheetGeometry ([double]::NaN) 100 } catch { $invalidRejected = $true }
+    $fallback = [System.Drawing.Printing.PageSettings]::new()
+    Set-SheetSettings $fallback $papers (Get-SheetGeometry 1536 1920) 'shrink-to-fit' $papers[0]
+    $area = [System.Drawing.RectangleF]::new(25, 30, 800, 1040)
+    $shrinkBoxes = foreach ($size in @(@(1536, 1920), @(384, 480))) {
+        $box = Get-ShrinkDrawBox (Get-SheetGeometry $size[0] $size[1]) $area 25 30
+        ,@($box.X, $box.Y, $box.Width, $box.Height)
+    }
+    $defaultDuplex = [pscustomobject]@{ Duplex = [System.Drawing.Printing.Duplex]::Vertical }
+    Set-JobDuplex $defaultDuplex ''
+    $preservedDuplex = $defaultDuplex.Duplex.ToString()
+    Set-JobDuplex $defaultDuplex 'off'
     [pscustomobject]@{ Sheets = @($results); LongEdge = (Get-Duplex 'long-edge').ToString();
         ShortEdge = (Get-Duplex 'short-edge').ToString(); Off = (Get-Duplex 'off').ToString();
+        DefaultDuplex = $preservedDuplex; ForcedSimplex = $defaultDuplex.Duplex.ToString();
+        FallbackPaper = $fallback.PaperSize.PaperName; ShrinkBoxes = @($shrinkBoxes);
         LargePixels = @($large.Width, $large.Height); InvalidRejected = $invalidRejected } | ConvertTo-Json -Depth 5 -Compress
     return
 }
@@ -173,8 +210,9 @@ if ($env:CRAFT_PRINT_PRINTER) {
 }
 $settings.Copies = [Math]::Min(32767, [Math]::Max(1, [int]$env:CRAFT_PRINT_COPIES))
 $settings.Collate = ($env:CRAFT_PRINT_COLLATE -eq '1')
-$settings.Duplex = Get-Duplex $env:CRAFT_PRINT_DUPLEX
+Set-JobDuplex $settings $env:CRAFT_PRINT_DUPLEX
 if ($env:CRAFT_PRINT_GRAYSCALE -eq '1') { $printer.DefaultPageSettings.Color = $false }
+$fallbackPaper = $printer.DefaultPageSettings.PaperSize
 
 # QueryPageSettings runs before each PrintPage, allowing mixed sizes/orientations in one job.
 # https://learn.microsoft.com/en-us/dotnet/api/system.drawing.printing.printdocument.querypagesettings
@@ -186,7 +224,7 @@ $printer.add_QueryPageSettings({
     $page = $document.GetPage($script:sheets)
     try {
         $sheet = Get-SheetGeometry $page.Size.Width $page.Size.Height
-        Set-SheetSettings $e.PageSettings $sender.PrinterSettings.PaperSizes $sheet
+        Set-SheetSettings $e.PageSettings $sender.PrinterSettings.PaperSizes $sheet $env:CRAFT_PRINT_SCALING $fallbackPaper
     } finally { $page.Dispose() }
 })
 $printer.add_PrintPage({
@@ -195,12 +233,17 @@ $printer.add_PrintPage({
     $bitmap = $null
     try {
         $sheet = Get-SheetGeometry $page.Size.Width $page.Size.Height
-        if ([Math]::Abs($e.PageBounds.Width - $sheet.Width) -gt 2 -or
-            [Math]::Abs($e.PageBounds.Height - $sheet.Height) -gt 2) {
+        if ($env:CRAFT_PRINT_SCALING -ne 'shrink-to-fit' -and
+            ([Math]::Abs($e.PageBounds.Width - $sheet.Width) -gt 2 -or
+             [Math]::Abs($e.PageBounds.Height - $sheet.Height) -gt 2)) {
             throw 'the printer cannot use the PDF sheet size; select matching paper and try again'
         }
         $bitmap = Render-Sheet $page $sheet $e.Graphics.DpiX
-        $box = Get-DrawBox $sheet $e.PageSettings.HardMarginX $e.PageSettings.HardMarginY
+        if ($env:CRAFT_PRINT_SCALING -eq 'shrink-to-fit') {
+            $box = Get-ShrinkDrawBox $sheet $e.PageSettings.PrintableArea $e.PageSettings.HardMarginX $e.PageSettings.HardMarginY
+        } else {
+            $box = Get-DrawBox $sheet $e.PageSettings.HardMarginX $e.PageSettings.HardMarginY
+        }
         $e.Graphics.DrawImage($bitmap, $box)
     } finally {
         if ($bitmap) { $bitmap.Dispose() }

@@ -13,10 +13,11 @@ fn spooler_arguments_and_printer_list() {
         printer: Some("Office_Laser".into()),
         copies: 3,
         collate: false,
-        duplex: Duplex::LongEdge,
+        duplex: Some(Duplex::LongEdge),
         grayscale: true,
         title: "memo.pdf".into(),
         options: Vec::new(),
+        ..Job::default()
     };
     assert_eq!(
         lp_args(&job).join(" "),
@@ -109,11 +110,7 @@ fn print_jobs_reach_lp_on_stdin_never_through_a_shared_temp_folder() {
     let stdin = std::fs::read(record.join("stdin"));
     let _ = std::fs::remove_dir_all(&record);
     assert!(sent.is_ok(), "{sent:?}");
-    assert_eq!(
-        args.unwrap(),
-        "-n 1 -t memo.pdf -o collate=true -o sides=one-sided -o fit-to-page=false",
-        "no file argument: lp reads the job from stdin"
-    );
+    assert_eq!(args.unwrap(), "-n 1 -t memo.pdf -o collate=true -o fit-to-page=false", "no file argument: lp reads the job from stdin");
     assert!(stdin.unwrap() == pdf, "lp receives the whole job on stdin");
     let predictable = std::env::temp_dir().join(format!("craft-print-{}", std::process::id()));
     assert!(!predictable.exists(), "nothing is created at {predictable:?}, a name other local users can predict");
@@ -165,7 +162,7 @@ fn the_windows_job_is_the_environment_of_the_print_script() {
     let job = Job {
         printer: Some("HP \"Laser\" Jet".into()),
         copies: 3,
-        duplex: Duplex::ShortEdge,
+        duplex: Some(Duplex::ShortEdge),
         grayscale: true,
         title: "Angebot.pdf".into(),
         ..Job::default()
@@ -178,13 +175,16 @@ fn the_windows_job_is_the_environment_of_the_print_script() {
     assert_eq!(env("CRAFT_PRINT_COPIES"), "3");
     assert_eq!(env("CRAFT_PRINT_COLLATE"), "1");
     assert_eq!(env("CRAFT_PRINT_DUPLEX"), "short-edge");
+    assert_eq!(env("CRAFT_PRINT_SCALING"), "exact");
     assert_eq!(env("CRAFT_PRINT_GRAYSCALE"), "1");
     assert_eq!(env("CRAFT_PRINT_TITLE"), "Angebot.pdf");
     // No printer chosen means the system default: an empty name, not the word "default".
     let one = |j: &Job, key: &str| windows_env_vars(path, j).into_iter().find(|(k, _)| k == key).unwrap().1;
     assert_eq!(one(&Job::default(), "CRAFT_PRINT_PRINTER"), "");
-    assert_eq!(one(&Job { duplex: Duplex::Off, ..Job::default() }, "CRAFT_PRINT_DUPLEX"), "off");
-    assert_eq!(one(&Job { duplex: Duplex::LongEdge, ..Job::default() }, "CRAFT_PRINT_DUPLEX"), "long-edge");
+    assert_eq!(one(&Job::default(), "CRAFT_PRINT_DUPLEX"), "");
+    assert_eq!(one(&Job { scaling: Scaling::ShrinkToFit, ..Job::default() }, "CRAFT_PRINT_SCALING"), "shrink-to-fit");
+    assert_eq!(one(&Job { duplex: Some(Duplex::Off), ..Job::default() }, "CRAFT_PRINT_DUPLEX"), "off");
+    assert_eq!(one(&Job { duplex: Some(Duplex::LongEdge), ..Job::default() }, "CRAFT_PRINT_DUPLEX"), "long-edge");
 }
 
 /// Run a PowerShell script for the Windows-only tests: its stdout, or everything it said when
@@ -386,6 +386,10 @@ fn windows_preserves_sheet_size_orientation_and_binding_edge() {
     assert_eq!(r["LongEdge"], "Vertical");
     assert_eq!(r["ShortEdge"], "Horizontal");
     assert_eq!(r["Off"], "Simplex");
+    assert_eq!(r["DefaultDuplex"], "Vertical");
+    assert_eq!(r["ForcedSimplex"], "Simplex");
+    assert_eq!(r["FallbackPaper"], "Driver Letter");
+    assert_eq!(r["ShrinkBoxes"], serde_json::json!([[0.0, 20.0, 800.0, 1000.0], [200.0, 270.0, 400.0, 500.0]]));
     let sheets = r["Sheets"].as_array().unwrap();
     assert_eq!((sheets[0]["Width"].as_u64(), sheets[0]["Height"].as_u64()), (Some(850), Some(1100)));
     assert_eq!(sheets[0]["Name"], "Driver Letter");
@@ -429,4 +433,15 @@ fn command_previews_do_not_require_pdf_files() {
         assert_eq!(preview[0], "powershell");
         assert!(!preview.join(" ").contains(".pdf"));
     }
+}
+
+#[test]
+fn queue_duplex_defaults_and_explicit_scaling_reach_the_spooler() {
+    let default_args = lp_args(&Job::default());
+    assert!(!default_args.iter().any(|a| a.starts_with("sides=")));
+    let simplex = lp_args(&Job { duplex: Some(Duplex::Off), ..Job::default() });
+    assert!(simplex.iter().any(|a| a == "sides=one-sided"));
+    let shrink = lp_args(&Job { scaling: Scaling::ShrinkToFit, ..Job::default() });
+    assert!(shrink.iter().any(|a| a == "print-scaling=auto-fit"));
+    assert!(!shrink.iter().any(|a| a.starts_with("fit-to-page=")));
 }

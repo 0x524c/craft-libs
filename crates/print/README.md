@@ -13,12 +13,13 @@ imposition, marks and bleed. This crate discovers printers, exposes CUPS driver 
 opens Windows printer preferences and submits jobs with copies, collation, duplex and colour.
 `command_preview` returns diagnostics without creating files or starting a process.
 
-- **macOS/Linux:** CUPS `lpstat`, `lpoptions` and `lp`. Jobs stream through stdin. Sheets
-  already have their final size; the spooler receives `fit-to-page=false`.
+- **macOS/Linux:** CUPS `lpstat`, `lpoptions` and `lp`. Jobs stream through stdin. Exact-size
+  sheets use `fit-to-page=false`; shrink-to-fit uses IPP `print-scaling=auto-fit`.
 - **Windows:** inbox Windows PowerShell, `Windows.Data.Pdf` and `System.Drawing.Printing`.
-  Each sheet is rasterized and spooled at its physical PDF size, with paper and orientation
-  selected per page. There is no second fit to default one-inch margins. Hardware margins
-  clip content rather than shrink it. Long-edge duplex uses `Vertical`; short-edge uses
+  Each sheet is rasterized, with paper and orientation selected per page. Exact-size mode
+  preserves physical size and clips hardware margins. Shrink-to-fit uses matching driver
+  paper or its default, centers in the printable area and never enlarges smaller sheets.
+  Long-edge duplex uses `Vertical`; short-edge uses
   `Horizontal`. Driver-specific defaults remain in Windows printer preferences.
 - **Browser/other targets:** discovery is empty and submission reports an unsupported
   platform; callers can offer PDF export instead.
@@ -26,6 +27,9 @@ opens Windows printer preferences and submits jobs with copies, collation, duple
 Windows jobs briefly use a random, exclusively created temporary file, removed on drop
 on both success and failure. CUPS jobs never use a PDF temporary file. Printing is synchronous;
 UI callers should submit on a worker. Receipts are backend messages, not portable job IDs.
+`Job::duplex = None` preserves the queue's duplex default; `Some(Duplex::Off)` forces
+simplex. `Job::scaling` defaults to `Scaling::Exact`; callers exporting arbitrary document
+sizes can choose `Scaling::ShrinkToFit`. Exact mode reports a driver paper-size mismatch.
 Windows raster allocation is bounded to 64 million pixels per sheet and 32768 per dimension;
 large sheets use lower raster resolution while retaining physical size. The backend supports
 sheets up to 128 inches and reports invalid sizes. It does not provide PostScript output,

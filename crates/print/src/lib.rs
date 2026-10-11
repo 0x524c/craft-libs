@@ -39,13 +39,25 @@ pub enum Duplex {
     ShortEdge,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Scaling {
+    /// Preserve the PDF's physical sheet size, even when hardware margins clip it.
+    #[default]
+    Exact,
+    /// Use matching driver paper or its default and shrink oversized sheets to fit.
+    /// Smaller sheets retain their size; the printable area centers the result.
+    ShrinkToFit,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Job {
     /// `None` = the system default printer.
     pub printer: Option<String>,
     pub copies: u32,
     pub collate: bool,
-    pub duplex: Duplex,
+    /// `None` preserves the printer's duplex default; `Some(Off)` forces simplex.
+    pub duplex: Option<Duplex>,
+    pub scaling: Scaling,
     pub grayscale: bool,
     pub title: String,
     /// The printer driver's own job options (a PPD keyword and the chosen value), such as the
@@ -55,7 +67,16 @@ pub struct Job {
 
 impl Default for Job {
     fn default() -> Self {
-        Job { printer: None, copies: 1, collate: true, duplex: Duplex::Off, grayscale: false, title: "Craft".into(), options: Vec::new() }
+        Job {
+            printer: None,
+            copies: 1,
+            collate: true,
+            duplex: None,
+            scaling: Scaling::Exact,
+            grayscale: false,
+            title: "Craft".into(),
+            options: Vec::new(),
+        }
     }
 }
 
@@ -89,16 +110,21 @@ pub fn lp_args(job: &Job) -> Vec<String> {
     a.extend(["-t".to_string(), job.title.clone()]);
     let mut opt = |o: &str| a.extend(["-o".to_string(), o.to_string()]);
     opt(if job.collate { "collate=true" } else { "collate=false" });
-    opt(match job.duplex {
-        Duplex::Off => "sides=one-sided",
-        Duplex::LongEdge => "sides=two-sided-long-edge",
-        Duplex::ShortEdge => "sides=two-sided-short-edge",
-    });
+    if let Some(duplex) = job.duplex {
+        opt(match duplex {
+            Duplex::Off => "sides=one-sided",
+            Duplex::LongEdge => "sides=two-sided-long-edge",
+            Duplex::ShortEdge => "sides=two-sided-short-edge",
+        });
+    }
     if job.grayscale {
         opt("print-color-mode=monochrome");
     }
-    // The sheets are already laid out at their final size.
-    opt("fit-to-page=false");
+    opt(match job.scaling {
+        Scaling::Exact => "fit-to-page=false",
+        // PWG 5100.13 §6.2.5: auto-fit fits oversized pages and leaves smaller pages unscaled.
+        Scaling::ShrinkToFit => "print-scaling=auto-fit",
+    });
     for (key, value) in &job.options {
         // Driver options are PPD keywords; anything else is not something lp can be given.
         if is_ppd_keyword(key) && is_ppd_keyword(value) && !HANDLED_OPTIONS.contains(&key.as_str()) {
@@ -473,9 +499,18 @@ pub(crate) fn windows_env_vars(path: &std::path::Path, job: &Job) -> Vec<(String
         (
             "CRAFT_PRINT_DUPLEX".into(),
             match job.duplex {
-                Duplex::Off => "off",
-                Duplex::LongEdge => "long-edge",
-                Duplex::ShortEdge => "short-edge",
+                None => "",
+                Some(Duplex::Off) => "off",
+                Some(Duplex::LongEdge) => "long-edge",
+                Some(Duplex::ShortEdge) => "short-edge",
+            }
+            .into(),
+        ),
+        (
+            "CRAFT_PRINT_SCALING".into(),
+            match job.scaling {
+                Scaling::Exact => "exact",
+                Scaling::ShrinkToFit => "shrink-to-fit",
             }
             .into(),
         ),
