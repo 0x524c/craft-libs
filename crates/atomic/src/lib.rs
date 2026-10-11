@@ -156,7 +156,6 @@ pub fn atomic_write_custom(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, b
 fn replace(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
     let target = resolve_symlink(path);
     let (dir, name) = split(&target, path)?;
-    std::fs::create_dir_all(&dir).map_err(|e| context(e, format!("cannot create the folder {}", dir.display())))?;
     let existed = target.exists();
 
     let tmp = stage(fs, &dir, &name, path, existed, fill)?;
@@ -242,7 +241,6 @@ fn create(fs: &dyn AtomicFs, path: &Path, fill: impl FnOnce(&mut File) -> io::Re
     if target.exists() {
         return Err(write_error(io::Error::from(io::ErrorKind::AlreadyExists), path, &dir, true));
     }
-    std::fs::create_dir_all(&dir).map_err(|e| context(e, format!("cannot create the folder {}", dir.display())))?;
 
     let tmp = stage(fs, &dir, &name, path, false, fill)?;
 
@@ -313,10 +311,6 @@ pub fn temp_name(file: &str) -> String {
     format!(".{stem}.{}-{n}.craft_tmp", std::process::id())
 }
 
-fn context(e: io::Error, msg: String) -> io::Error {
-    io::Error::new(e.kind(), format!("{msg}: {e}"))
-}
-
 /// The end of an error message: whether an original file was left as it was.
 fn unchanged(existed: bool) -> &'static str {
     if existed { "; the original file was not changed" } else { "" }
@@ -326,6 +320,7 @@ fn write_error(e: io::Error, path: &Path, dir: &Path, existed: bool) -> io::Erro
     let kept = unchanged(existed);
     let msg = match e.kind() {
         io::ErrorKind::AlreadyExists => format!("cannot save {}: the file already exists{kept}", path.display()),
+        io::ErrorKind::NotFound => format!("cannot save {}: the folder {} does not exist ({e}){kept}", path.display(), dir.display()),
         io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem => {
             format!("cannot save {}: the folder {} is not writable ({e}){kept}", path.display(), dir.display())
         }
@@ -457,11 +452,15 @@ mod tests {
     }
 
     #[test]
-    fn creates_missing_parent_folders() {
+    fn a_missing_folder_is_an_error_naming_it() {
         let d = TempDir::new("parent");
-        let p = d.0.join("a/b/out.png");
-        atomic_write(&p, b"x").ok();
-        assert_eq!(std::fs::read(&p).ok(), Some(b"x".to_vec()));
+        let folder = d.0.join("a");
+        let p = folder.join("b/out.png");
+        for r in [atomic_write(&p, b"x"), write_new(&p, b"x")] {
+            let msg = r.err().map(|e| e.to_string()).unwrap_or_default();
+            assert!(msg.contains(&folder.join("b").display().to_string()), "{msg}");
+        }
+        assert!(!folder.exists(), "no folder is created");
     }
 
     #[test]
