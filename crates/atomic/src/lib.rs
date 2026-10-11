@@ -34,6 +34,8 @@ pub trait AtomicFs {
     fn sync(&self, file: &File) -> io::Result<()>;
     /// Rename `from` over `to`, replacing it atomically.
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
+    /// Give the file `from` the second name `to`; fails with `AlreadyExists` when `to` exists.
+    fn hard_link(&self, from: &Path, to: &Path) -> io::Result<()>;
     /// Remove a file.
     fn remove(&self, path: &Path) -> io::Result<()>;
     /// Flush a directory entry change to durable storage (Unix); no-op elsewhere.
@@ -57,6 +59,10 @@ impl AtomicFs for RealFs {
 
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
         std::fs::rename(from, to)
+    }
+
+    fn hard_link(&self, from: &Path, to: &Path) -> io::Result<()> {
+        std::fs::hard_link(from, to)
     }
 
     fn remove(&self, path: &Path) -> io::Result<()> {
@@ -151,16 +157,17 @@ fn replace(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, fill: impl FnOnce
     let target = resolve_symlink(path);
     let (dir, name) = split(&target, path)?;
     std::fs::create_dir_all(&dir).map_err(|e| context(e, format!("cannot create the folder {}", dir.display())))?;
+    let existed = target.exists();
 
-    let tmp = stage(fs, &dir, &name, path, fill)?;
+    let tmp = stage(fs, &dir, &name, path, existed, fill)?;
 
-    if target.exists() {
+    if existed {
         let _ = fs.copy_permissions(&target, &tmp);
     }
 
     if let Err(e) = retry_rename(retry, || fs.rename(&tmp, &target)) {
         let _ = fs.remove(&tmp);
-        return Err(rename_error(e, path));
+        return Err(rename_error(e, path, existed));
     }
 
     let _ = fs.sync_dir(&dir);
@@ -178,14 +185,22 @@ fn split(target: &Path, path: &Path) -> io::Result<(PathBuf, String)> {
 }
 
 /// Create a temporary file in `dir`, fill it with `fill` and flush it. A leftover file with the
-/// same name is skipped. When filling or flushing fails, the temporary file is removed.
-fn stage(fs: &dyn AtomicFs, dir: &Path, name: &str, path: &Path, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<PathBuf> {
+/// same name is skipped. When filling or flushing fails, the temporary file is removed. `existed`
+/// says whether the error may report an original file as unchanged.
+fn stage(
+    fs: &dyn AtomicFs,
+    dir: &Path,
+    name: &str,
+    path: &Path,
+    existed: bool,
+    fill: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<PathBuf> {
     for _ in 0..8 {
         let tmp = dir.join(temp_name(name));
         let mut file = match fs.create_new(&tmp) {
             Ok(f) => f,
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(write_error(e, path, dir)),
+            Err(e) => return Err(write_error(e, path, dir, existed)),
         };
         let written = fill(&mut file).and_then(|()| fs.sync(&file));
         drop(file);
@@ -193,7 +208,7 @@ fn stage(fs: &dyn AtomicFs, dir: &Path, name: &str, path: &Path, fill: impl FnOn
             Ok(()) => Ok(tmp),
             Err(e) => {
                 let _ = fs.remove(&tmp);
-                Err(write_error(e, path, dir))
+                Err(write_error(e, path, dir, existed))
             }
         };
     }
@@ -210,42 +225,52 @@ pub fn write_new_with<F>(path: &Path, write_fn: F) -> io::Result<()>
 where
     F: FnOnce(&mut File) -> io::Result<()>,
 {
-    let target = resolve_symlink(path);
-    if target.exists() {
-        return Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{}: file already exists", path.display())));
-    }
+    create(&RealFs, path, write_fn)
+}
 
-    let name = target.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("{}: not a file path", path.display())))?;
-    let dir = match target.parent() {
-        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
-        _ => PathBuf::from("."),
-    };
+/// Exclusively creates and writes `bytes` to `path` through a custom [`AtomicFs`].
+pub fn write_new_custom(fs: &dyn AtomicFs, path: &Path, bytes: &[u8]) -> io::Result<()> {
+    create(fs, path, |f| f.write_all(bytes))
+}
+
+/// The create path behind every `write_new*` function: stage the content beside the target,
+/// then give it the target's name with a hard link, which fails rather than replace a file that
+/// appeared in the meantime. Volumes without hard links get a copy into a newly created file.
+fn create(fs: &dyn AtomicFs, path: &Path, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+    let target = resolve_symlink(path);
+    let (dir, name) = split(&target, path)?;
+    if target.exists() {
+        return Err(write_error(io::Error::from(io::ErrorKind::AlreadyExists), path, &dir, true));
+    }
     std::fs::create_dir_all(&dir).map_err(|e| context(e, format!("cannot create the folder {}", dir.display())))?;
 
-    let tmp = dir.join(temp_name(&name.to_string_lossy()));
-    let mut f = OpenOptions::new().write(true).create_new(true).open(&tmp)?;
-    let filled = write_fn(&mut f).and_then(|()| sync_file(&f));
-    drop(f);
+    let tmp = stage(fs, &dir, &name, path, false, fill)?;
 
-    if let Err(e) = filled {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(write_error(e, path, &dir));
+    let placed = match fs.hard_link(&tmp, &target) {
+        Err(e) if e.kind() != io::ErrorKind::AlreadyExists => copy_new(fs, &tmp, &target),
+        linked => linked,
+    };
+    let _ = fs.remove(&tmp);
+    if let Err(e) = placed {
+        // A file that appeared in the meantime is someone else's and stays as it is.
+        let existed = e.kind() == io::ErrorKind::AlreadyExists;
+        return Err(write_error(e, path, &dir, existed));
     }
 
-    #[cfg(unix)]
-    let placed = std::fs::hard_link(&tmp, &target).or_else(|e| {
-        if e.kind() == io::ErrorKind::AlreadyExists {
-            Err(e)
-        } else {
-            // Hard link unsupported; fall back to atomic rename if target still missing
-            std::fs::rename(&tmp, &target)
-        }
-    });
-    #[cfg(not(unix))]
-    let placed = std::fs::rename(&tmp, &target);
+    let _ = fs.sync_dir(&dir);
+    Ok(())
+}
 
-    let _ = std::fs::remove_file(&tmp);
-    placed
+/// Copy `tmp` into `target`, which must not exist yet, and flush it. A partly written `target` is
+/// removed.
+fn copy_new(fs: &dyn AtomicFs, tmp: &Path, target: &Path) -> io::Result<()> {
+    let mut to = fs.create_new(target)?;
+    let copied = File::open(tmp).and_then(|mut from| io::copy(&mut from, &mut to)).and_then(|_| fs.sync(&to));
+    drop(to);
+    if copied.is_err() {
+        let _ = fs.remove(target);
+    }
+    copied
 }
 
 /// Retries an operation with exponential backoff while it fails with `PermissionDenied`.
@@ -292,26 +317,32 @@ fn context(e: io::Error, msg: String) -> io::Error {
     io::Error::new(e.kind(), format!("{msg}: {e}"))
 }
 
-const UNCHANGED: &str = "the original file was not changed";
+/// The end of an error message: whether an original file was left as it was.
+fn unchanged(existed: bool) -> &'static str {
+    if existed { "; the original file was not changed" } else { "" }
+}
 
-fn write_error(e: io::Error, path: &Path, dir: &Path) -> io::Error {
+fn write_error(e: io::Error, path: &Path, dir: &Path, existed: bool) -> io::Error {
+    let kept = unchanged(existed);
     let msg = match e.kind() {
+        io::ErrorKind::AlreadyExists => format!("cannot save {}: the file already exists{kept}", path.display()),
         io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem => {
-            format!("cannot save {}: the folder {} is not writable ({e}); {UNCHANGED}", path.display(), dir.display())
+            format!("cannot save {}: the folder {} is not writable ({e}){kept}", path.display(), dir.display())
         }
-        io::ErrorKind::StorageFull => format!("cannot save {}: the disk is full ({e}); {UNCHANGED}", path.display()),
-        _ => format!("cannot save {}: {e}; {UNCHANGED}", path.display()),
+        io::ErrorKind::StorageFull => format!("cannot save {}: the disk is full ({e}){kept}", path.display()),
+        _ => format!("cannot save {}: {e}{kept}", path.display()),
     };
     io::Error::new(e.kind(), msg)
 }
 
-fn rename_error(e: io::Error, path: &Path) -> io::Error {
+fn rename_error(e: io::Error, path: &Path, existed: bool) -> io::Error {
+    let kept = unchanged(existed);
     let msg = if is_cross_device(&e) {
-        format!("cannot save {}: the temporary file is on a different volume than the destination ({e}); {UNCHANGED}", path.display())
+        format!("cannot save {}: the temporary file is on a different volume than the destination ({e}){kept}", path.display())
     } else if e.kind() == io::ErrorKind::PermissionDenied {
-        format!("cannot save {}: the file is locked or read-only ({e}); {UNCHANGED}", path.display())
+        format!("cannot save {}: the file is locked or read-only ({e}){kept}", path.display())
     } else {
-        format!("cannot save {}: {e}; {UNCHANGED}", path.display())
+        format!("cannot save {}: {e}{kept}", path.display())
     };
     io::Error::new(e.kind(), msg)
 }
@@ -359,9 +390,15 @@ mod tests {
     #[derive(Default)]
     struct Faulty {
         fail_sync: bool,
+        /// Syncs fail once this many have succeeded.
+        syncs_before_failure: Option<u32>,
+        syncs: Cell<u32>,
         fail_rename: Option<io::ErrorKind>,
         locked_renames: Cell<u32>,
         renames: Cell<u32>,
+        no_hard_links: bool,
+        /// Another process creates the target just before the hard link.
+        created_meanwhile: Option<&'static [u8]>,
     }
 
     impl AtomicFs for Faulty {
@@ -369,7 +406,8 @@ mod tests {
             RealFs.create_new(path)
         }
         fn sync(&self, file: &File) -> io::Result<()> {
-            if self.fail_sync {
+            let done = self.syncs.replace(self.syncs.get() + 1);
+            if self.fail_sync || self.syncs_before_failure.is_some_and(|n| done >= n) {
                 return Err(io::Error::new(io::ErrorKind::StorageFull, "injected: no space left on device"));
             }
             RealFs.sync(file)
@@ -384,6 +422,15 @@ mod tests {
                 return Err(io::Error::new(io::ErrorKind::PermissionDenied, "injected: sharing violation"));
             }
             RealFs.rename(from, to)
+        }
+        fn hard_link(&self, from: &Path, to: &Path) -> io::Result<()> {
+            if let Some(bytes) = self.created_meanwhile {
+                std::fs::write(to, bytes)?;
+            }
+            if self.no_hard_links {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "injected: hard links not supported"));
+            }
+            RealFs.hard_link(from, to)
         }
         fn remove(&self, path: &Path) -> io::Result<()> {
             RealFs.remove(path)
@@ -483,6 +530,49 @@ mod tests {
         let res = write_new(&p, b"second");
         assert!(res.is_err());
         assert_eq!(std::fs::read(&p).ok(), Some(b"first".to_vec()));
+        assert_no_temp(&d.0);
+    }
+
+    #[test]
+    fn write_new_copies_where_hard_links_fail_and_never_replaces() {
+        let d = TempDir::new("new-copy");
+        let p = d.0.join("export.png");
+        let fs = Faulty { no_hard_links: true, ..Default::default() };
+        assert!(create(&fs, &p, |f| f.write_all(b"copied")).is_ok());
+        assert_eq!(std::fs::read(&p).ok(), Some(b"copied".to_vec()));
+        assert_no_temp(&d.0);
+
+        // A file that appears after the existence check is kept, whether the copy or the hard
+        // link finds it.
+        for no_hard_links in [true, false] {
+            let p = d.0.join(format!("raced-{no_hard_links}.png"));
+            let fs = Faulty { no_hard_links, created_meanwhile: Some(ORIGINAL), ..Default::default() };
+            let e = create(&fs, &p, |f| f.write_all(b"mine"));
+            assert_eq!(e.map_err(|e| e.kind()), Err(io::ErrorKind::AlreadyExists));
+            assert_eq!(std::fs::read(&p).ok(), Some(ORIGINAL.to_vec()));
+            assert_eq!(fs.renames.get(), 0);
+        }
+        assert_no_temp(&d.0);
+
+        // A failed new file has no original to speak of.
+        let p = d.0.join("full.png");
+        let fs = Faulty { fail_sync: true, ..Default::default() };
+        let msg = create(&fs, &p, |f| f.write_all(b"x")).err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(msg.contains("disk is full") && !msg.contains("original"), "{msg}");
+        assert!(!p.exists());
+        assert_no_temp(&d.0);
+    }
+
+    #[test]
+    fn a_failed_copy_leaves_no_partial_file() {
+        let d = TempDir::new("new-copy-fails");
+        let p = d.0.join("export.png");
+        // The temporary file flushes; the copy made in its place does not.
+        let fs = Faulty { no_hard_links: true, syncs_before_failure: Some(1), ..Default::default() };
+        let e = write_new_custom(&fs, &p, b"copied");
+        assert_eq!(e.map_err(|e| e.kind()), Err(io::ErrorKind::StorageFull));
+        assert_eq!(fs.syncs.get(), 2);
+        assert!(!p.exists());
         assert_no_temp(&d.0);
     }
 }
