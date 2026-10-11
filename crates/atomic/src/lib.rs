@@ -40,8 +40,8 @@ pub trait AtomicFs {
     fn remove(&self, path: &Path) -> io::Result<()>;
     /// Flush a directory entry change to durable storage (Unix); no-op elsewhere.
     fn sync_dir(&self, dir: &Path) -> io::Result<()>;
-    /// Copy the destination's permissions onto the temporary file before replacement.
-    fn copy_permissions(&self, from: &Path, to: &Path) -> io::Result<()>;
+    /// Give the open temporary file the permissions of the file it replaces.
+    fn set_permissions(&self, file: &File, perms: std::fs::Permissions) -> io::Result<()>;
 }
 
 /// The production file system implementation.
@@ -81,9 +81,8 @@ impl AtomicFs for RealFs {
         }
     }
 
-    fn copy_permissions(&self, from: &Path, to: &Path) -> io::Result<()> {
-        let perms = std::fs::metadata(from)?.permissions();
-        std::fs::set_permissions(to, perms)
+    fn set_permissions(&self, file: &File, perms: std::fs::Permissions) -> io::Result<()> {
+        file.set_permissions(perms)
     }
 }
 
@@ -162,11 +161,7 @@ fn replace(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, fill: impl FnOnce
         check_writable(&target).map_err(|e| read_only_error(e, path))?;
     }
 
-    let tmp = stage(fs, &dir, &name, path, existed, fill)?;
-
-    if existed {
-        let _ = fs.copy_permissions(&target, &tmp);
-    }
+    let tmp = stage(fs, &dir, &name, path, existing.as_ref(), fill)?;
 
     if let Err(e) = retry_rename(retry, || fs.rename(&tmp, &target)) {
         let _ = fs.remove(&tmp);
@@ -200,17 +195,20 @@ fn split(target: &Path, path: &Path) -> io::Result<(PathBuf, String)> {
     Ok((dir, name.to_string_lossy().into_owned()))
 }
 
-/// Create a temporary file in `dir`, fill it with `fill` and flush it. A leftover file with the
-/// same name is skipped. When filling or flushing fails, the temporary file is removed. `existed`
-/// says whether the error may report an original file as unchanged.
+/// Create a temporary file in `dir`, fill it with `fill`, give it the permissions of the file it
+/// replaces (`replaced`, Unix) and flush it. A leftover file with the same name is skipped. When
+/// any step fails, the temporary file is removed.
 fn stage(
     fs: &dyn AtomicFs,
     dir: &Path,
     name: &str,
     path: &Path,
-    existed: bool,
+    replaced: Option<&std::fs::Metadata>,
     fill: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> io::Result<PathBuf> {
+    let existed = replaced.is_some();
+    // Windows files carry only a read-only flag, and a read-only file can't be replaced.
+    let perms = replaced.filter(|_| cfg!(unix)).map(|m| m.permissions());
     for _ in 0..8 {
         let tmp = dir.join(temp_name(name));
         let mut file = match fs.create_new(&tmp) {
@@ -218,15 +216,15 @@ fn stage(
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(write_error(e, path, dir, existed)),
         };
-        let written = fill(&mut file).and_then(|()| fs.sync(&file));
+        let written = fill(&mut file)
+            .map_err(|e| write_error(e, path, dir, existed))
+            .and_then(|()| perms.map_or(Ok(()), |p| fs.set_permissions(&file, p).map_err(|e| permissions_error(e, path))))
+            .and_then(|()| fs.sync(&file).map_err(|e| write_error(e, path, dir, existed)));
         drop(file);
-        return match written {
-            Ok(()) => Ok(tmp),
-            Err(e) => {
-                let _ = fs.remove(&tmp);
-                Err(write_error(e, path, dir, existed))
-            }
-        };
+        if written.is_err() {
+            let _ = fs.remove(&tmp);
+        }
+        return written.map(|()| tmp);
     }
     Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{}: could not create a temporary file", dir.display())))
 }
@@ -259,7 +257,7 @@ fn create(fs: &dyn AtomicFs, path: &Path, fill: impl FnOnce(&mut File) -> io::Re
         return Err(write_error(io::Error::from(io::ErrorKind::AlreadyExists), path, &dir, true));
     }
 
-    let tmp = stage(fs, &dir, &name, path, false, fill)?;
+    let tmp = stage(fs, &dir, &name, path, None, fill)?;
 
     let placed = match fs.hard_link(&tmp, &target) {
         Err(e) if e.kind() != io::ErrorKind::AlreadyExists => copy_new(fs, &tmp, &target),
@@ -363,6 +361,11 @@ fn write_error(e: io::Error, path: &Path, dir: &Path, existed: bool) -> io::Erro
     io::Error::new(e.kind(), msg)
 }
 
+fn permissions_error(e: io::Error, path: &Path) -> io::Error {
+    let msg = format!("cannot save {}: the new file cannot be given the original's permissions ({e}){}", path.display(), unchanged(true));
+    io::Error::new(e.kind(), msg)
+}
+
 fn read_only_error(e: io::Error, path: &Path) -> io::Error {
     let kept = unchanged(true);
     let msg = match e.kind() {
@@ -436,6 +439,7 @@ mod tests {
         locked_renames: Cell<u32>,
         renames: Cell<u32>,
         no_hard_links: bool,
+        fail_permissions: bool,
         /// Another process creates the target just before the hard link.
         created_meanwhile: Option<&'static [u8]>,
     }
@@ -477,8 +481,11 @@ mod tests {
         fn sync_dir(&self, dir: &Path) -> io::Result<()> {
             RealFs.sync_dir(dir)
         }
-        fn copy_permissions(&self, from: &Path, to: &Path) -> io::Result<()> {
-            RealFs.copy_permissions(from, to)
+        fn set_permissions(&self, file: &File, perms: std::fs::Permissions) -> io::Result<()> {
+            if self.fail_permissions {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "injected: operation not permitted"));
+            }
+            RealFs.set_permissions(file, perms)
         }
     }
 
@@ -616,6 +623,20 @@ mod tests {
         assert_eq!(e.map_err(|e| e.kind()), Err(io::ErrorKind::StorageFull));
         assert_eq!(fs.syncs.get(), 2);
         assert!(!p.exists());
+        assert_no_temp(&d.0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failing_to_keep_permissions_fails_the_save() {
+        let d = TempDir::new("perms");
+        let p = d.0.join("doc.craft");
+        std::fs::write(&p, ORIGINAL).ok();
+        let fs = Faulty { fail_permissions: true, ..Default::default() };
+        let msg = atomic_write_custom(&fs, NO_RETRY, &p, b"new").err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(msg.contains("permissions"), "{msg}");
+        assert_eq!(std::fs::read(&p).ok(), Some(ORIGINAL.to_vec()));
+        assert_eq!(fs.renames.get(), 0);
         assert_no_temp(&d.0);
     }
 }
