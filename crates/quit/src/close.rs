@@ -2,7 +2,8 @@
 
 use egui::{Context, ViewportCommand, ViewportId};
 
-/// Call once per frame, after the app has dealt with unsaved work: when the root window was asked
+/// Call once per frame, last, after all of the app's own close handling (eframe calls `logic`
+/// before `ui`, so that includes anything the app does in `ui`): when the root window was asked
 /// to close (close button, the app's own `ViewportCommand::Close`, the OS) and this platform has
 /// its own quit (see [`crate::quit`]), cancels the close and quits that way instead. The window
 /// stays for the quit to close.

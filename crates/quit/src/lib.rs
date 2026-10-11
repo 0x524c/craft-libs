@@ -11,16 +11,19 @@
 //! another display cycle runs.
 //!
 //! [`quit`] is that quit. With the `egui` feature, [`on_close_request`] routes a window close
-//! through it; call it once per frame after the app's own unsaved-changes check:
+//! through it. Call it last in the frame, after all of the app's own close handling: eframe calls
+//! `logic` before `ui`, so an app that handles closes in `ui` calls it at the end of `ui`, not in
+//! `logic`, or it quits before the app's unsaved-changes check has run:
 //!
 //! ```ignore
-//! fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+//! fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+//!     // ... the app's UI ...
+//!     let ctx = ui.ctx();
 //!     if ctx.input(|i| i.viewport().close_requested()) && self.has_unsaved_changes() {
 //!         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
 //!         self.ask_to_save(); // sends `ViewportCommand::Close` once answered
-//!     } else {
-//!         craft_quit::on_close_request(ctx);
 //!     }
+//!     craft_quit::on_close_request(ctx); // last, so it sees the app's `CancelClose`
 //! }
 //! ```
 //!
