@@ -28,8 +28,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// File-system operations performed by atomic writes.
 /// [`RealFs`] provides the production implementation; test suites implement this to inject faults.
 pub trait AtomicFs {
-    /// Create `tmp` (which must not exist), write all `bytes`, and flush to disk.
-    fn write_new(&self, tmp: &Path, bytes: &[u8]) -> io::Result<()>;
+    /// Create `path`, which must not exist, and open it for writing.
+    fn create_new(&self, path: &Path) -> io::Result<File>;
+    /// Flush a written file to durable storage.
+    fn sync(&self, file: &File) -> io::Result<()>;
     /// Rename `from` over `to`, replacing it atomically.
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
     /// Remove a file.
@@ -45,10 +47,12 @@ pub trait AtomicFs {
 pub struct RealFs;
 
 impl AtomicFs for RealFs {
-    fn write_new(&self, tmp: &Path, bytes: &[u8]) -> io::Result<()> {
-        let mut f = OpenOptions::new().write(true).create_new(true).open(tmp)?;
-        f.write_all(bytes)?;
-        sync_file(&f)
+    fn create_new(&self, path: &Path) -> io::Result<File> {
+        OpenOptions::new().write(true).create_new(true).open(path)
+    }
+
+    fn sync(&self, file: &File) -> io::Result<()> {
+        sync_file(file)
     }
 
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
@@ -133,74 +137,22 @@ pub fn atomic_write_with<F>(path: &Path, write_fn: F) -> io::Result<()>
 where
     F: FnOnce(&mut File) -> io::Result<()>,
 {
-    let target = resolve_symlink(path);
-    let name = target.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("{}: not a file path", path.display())))?;
-    let dir = match target.parent() {
-        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
-        _ => PathBuf::from("."),
-    };
-    std::fs::create_dir_all(&dir).map_err(|e| context(e, format!("cannot create the folder {}", dir.display())))?;
-
-    let mut tmp = None;
-    for _ in 0..8 {
-        let candidate = dir.join(temp_name(&name.to_string_lossy()));
-        match OpenOptions::new().write(true).create_new(true).open(&candidate) {
-            Ok(mut f) => {
-                let res = write_fn(&mut f).and_then(|()| sync_file(&f));
-                drop(f);
-                if let Err(e) = res {
-                    let _ = std::fs::remove_file(&candidate);
-                    return Err(write_error(e, path, &dir));
-                }
-                tmp = Some(candidate);
-                break;
-            }
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(write_error(e, path, &dir)),
-        }
-    }
-
-    let tmp = tmp.ok_or_else(|| io::Error::new(io::ErrorKind::AlreadyExists, format!("{}: could not create a temporary file", dir.display())))?;
-
-    if target.exists() {
-        let _ = RealFs.copy_permissions(&target, &tmp);
-    }
-
-    if let Err(e) = retry_rename(RenameRetry::platform(), || std::fs::rename(&tmp, &target)) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(rename_error(e, path));
-    }
-
-    let _ = RealFs.sync_dir(&dir);
-    Ok(())
+    replace(&RealFs, RenameRetry::platform(), path, write_fn)
 }
 
 /// Atomically writes `bytes` to `path` through custom [`AtomicFs`] and [`RenameRetry`].
 pub fn atomic_write_custom(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace(fs, retry, path, |f| f.write_all(bytes))
+}
+
+/// The replace path behind every `atomic_write*` function: stage the new content beside the
+/// target, then rename it over the target.
+fn replace(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
     let target = resolve_symlink(path);
-    let name = target.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("{}: not a file path", path.display())))?;
-    let dir = match target.parent() {
-        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
-        _ => PathBuf::from("."),
-    };
+    let (dir, name) = split(&target, path)?;
     std::fs::create_dir_all(&dir).map_err(|e| context(e, format!("cannot create the folder {}", dir.display())))?;
 
-    let mut tmp = None;
-    for _ in 0..8 {
-        let candidate = dir.join(temp_name(&name.to_string_lossy()));
-        match fs.write_new(&candidate, bytes) {
-            Ok(()) => {
-                tmp = Some(candidate);
-                break;
-            }
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(e) => {
-                let _ = fs.remove(&candidate);
-                return Err(write_error(e, path, &dir));
-            }
-        }
-    }
-    let tmp = tmp.ok_or_else(|| io::Error::new(io::ErrorKind::AlreadyExists, format!("{}: could not create a temporary file", dir.display())))?;
+    let tmp = stage(fs, &dir, &name, path, fill)?;
 
     if target.exists() {
         let _ = fs.copy_permissions(&target, &tmp);
@@ -213,6 +165,39 @@ pub fn atomic_write_custom(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, b
 
     let _ = fs.sync_dir(&dir);
     Ok(())
+}
+
+/// The folder `target` is in and its file name. `path` is the caller's path, for the error.
+fn split(target: &Path, path: &Path) -> io::Result<(PathBuf, String)> {
+    let name = target.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("{}: not a file path", path.display())))?;
+    let dir = match target.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    Ok((dir, name.to_string_lossy().into_owned()))
+}
+
+/// Create a temporary file in `dir`, fill it with `fill` and flush it. A leftover file with the
+/// same name is skipped. When filling or flushing fails, the temporary file is removed.
+fn stage(fs: &dyn AtomicFs, dir: &Path, name: &str, path: &Path, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<PathBuf> {
+    for _ in 0..8 {
+        let tmp = dir.join(temp_name(name));
+        let mut file = match fs.create_new(&tmp) {
+            Ok(f) => f,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(write_error(e, path, dir)),
+        };
+        let written = fill(&mut file).and_then(|()| fs.sync(&file));
+        drop(file);
+        return match written {
+            Ok(()) => Ok(tmp),
+            Err(e) => {
+                let _ = fs.remove(&tmp);
+                Err(write_error(e, path, dir))
+            }
+        };
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{}: could not create a temporary file", dir.display())))
 }
 
 /// Exclusively creates and writes `path` without replacing existing files.
@@ -373,20 +358,21 @@ mod tests {
 
     #[derive(Default)]
     struct Faulty {
-        fail_write_after: Option<usize>,
+        fail_sync: bool,
         fail_rename: Option<io::ErrorKind>,
         locked_renames: Cell<u32>,
         renames: Cell<u32>,
     }
 
     impl AtomicFs for Faulty {
-        fn write_new(&self, tmp: &Path, bytes: &[u8]) -> io::Result<()> {
-            if let Some(n) = self.fail_write_after {
-                let mut f = OpenOptions::new().write(true).create_new(true).open(tmp)?;
-                f.write_all(&bytes[..n.min(bytes.len())])?;
+        fn create_new(&self, path: &Path) -> io::Result<File> {
+            RealFs.create_new(path)
+        }
+        fn sync(&self, file: &File) -> io::Result<()> {
+            if self.fail_sync {
                 return Err(io::Error::new(io::ErrorKind::StorageFull, "injected: no space left on device"));
             }
-            RealFs.write_new(tmp, bytes)
+            RealFs.sync(file)
         }
         fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
             self.renames.set(self.renames.get() + 1);
@@ -432,16 +418,37 @@ mod tests {
     }
 
     #[test]
-    fn write_failure_halfway_keeps_original() {
+    fn failed_flush_keeps_original() {
         let d = TempDir::new("write");
         let p = d.0.join("doc.craft");
         std::fs::write(&p, ORIGINAL).ok();
-        let fs = Faulty { fail_write_after: Some(5), ..Default::default() };
+        let fs = Faulty { fail_sync: true, ..Default::default() };
         let e = atomic_write_custom(&fs, NO_RETRY, &p, &[7u8; 4096]);
-        assert!(e.is_err());
+        assert_eq!(e.map_err(|e| e.kind()), Err(io::ErrorKind::StorageFull));
         assert_eq!(std::fs::read(&p).ok(), Some(ORIGINAL.to_vec()));
         assert_eq!(fs.renames.get(), 0);
         assert_no_temp(&d.0);
+    }
+
+    #[test]
+    fn streaming_writes_go_through_the_injected_fs() {
+        let d = TempDir::new("stream");
+        let p = d.0.join("doc.craft");
+        std::fs::write(&p, ORIGINAL).ok();
+        let chunks = |f: &mut File| {
+            f.write_all(b"chunk1 ")?;
+            f.write_all(b"chunk2")
+        };
+        let fs = Faulty { fail_sync: true, ..Default::default() };
+        assert!(replace(&fs, NO_RETRY, &p, chunks).is_err());
+        let fs = Faulty { fail_rename: Some(io::ErrorKind::Other), ..Default::default() };
+        assert!(replace(&fs, NO_RETRY, &p, chunks).is_err());
+        assert_eq!(fs.renames.get(), 1);
+        assert_eq!(std::fs::read(&p).ok(), Some(ORIGINAL.to_vec()));
+        assert_no_temp(&d.0);
+        let fs = Faulty::default();
+        assert!(replace(&fs, NO_RETRY, &p, chunks).is_ok());
+        assert_eq!(std::fs::read(&p).ok(), Some(b"chunk1 chunk2".to_vec()));
     }
 
     #[test]
