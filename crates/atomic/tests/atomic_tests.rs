@@ -152,3 +152,21 @@ fn symlink_loop_is_an_error() {
     assert!(std::fs::symlink_metadata(d.0.join("a")).map(|m| m.file_type().is_symlink()).unwrap_or(false));
     assert_no_temp(&d.0);
 }
+
+#[cfg(unix)]
+#[test]
+fn read_only_target_is_not_replaced() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = TempDir::new("read_only");
+    let p = d.0.join("locked.txt");
+    std::fs::write(&p, ORIGINAL).ok();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o444)).ok();
+    // Root may write the file anyway; the check only means something for an ordinary user.
+    if std::fs::OpenOptions::new().write(true).open(&p).is_ok() {
+        return;
+    }
+    let msg = atomic_write(&p, b"new").err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(msg.contains("read-only"), "{msg}");
+    assert_eq!(std::fs::read(&p).ok(), Some(ORIGINAL.to_vec()));
+    assert_no_temp(&d.0);
+}

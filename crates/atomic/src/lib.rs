@@ -156,7 +156,11 @@ pub fn atomic_write_custom(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, b
 fn replace(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
     let target = resolve_links(path)?;
     let (dir, name) = split(&target, path)?;
-    let existed = target.exists();
+    let existing = std::fs::metadata(&target).ok();
+    let existed = existing.is_some();
+    if existing.as_ref().is_some_and(|m| m.is_file()) {
+        check_writable(&target).map_err(|e| read_only_error(e, path))?;
+    }
 
     let tmp = stage(fs, &dir, &name, path, existed, fill)?;
 
@@ -170,6 +174,19 @@ fn replace(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, fill: impl FnOnce
     }
 
     let _ = fs.sync_dir(&dir);
+    Ok(())
+}
+
+/// A rename replaces a file the user can't write (Unix only needs the folder to be writable), so
+/// refuse, as writing it in place would. Opening for writing without truncating changes nothing.
+#[cfg(unix)]
+fn check_writable(target: &Path) -> io::Result<()> {
+    OpenOptions::new().write(true).open(target).map(drop)
+}
+
+/// Windows refuses to rename over a read-only file by itself.
+#[cfg(not(unix))]
+fn check_writable(_: &Path) -> io::Result<()> {
     Ok(())
 }
 
@@ -341,6 +358,17 @@ fn write_error(e: io::Error, path: &Path, dir: &Path, existed: bool) -> io::Erro
             format!("cannot save {}: the folder {} is not writable ({e}){kept}", path.display(), dir.display())
         }
         io::ErrorKind::StorageFull => format!("cannot save {}: the disk is full ({e}){kept}", path.display()),
+        _ => format!("cannot save {}: {e}{kept}", path.display()),
+    };
+    io::Error::new(e.kind(), msg)
+}
+
+fn read_only_error(e: io::Error, path: &Path) -> io::Error {
+    let kept = unchanged(true);
+    let msg = match e.kind() {
+        io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem => {
+            format!("cannot save {}: the file is read-only ({e}){kept}", path.display())
+        }
         _ => format!("cannot save {}: {e}{kept}", path.display()),
     };
     io::Error::new(e.kind(), msg)
