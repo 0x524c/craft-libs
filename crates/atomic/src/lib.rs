@@ -154,7 +154,7 @@ pub fn atomic_write_custom(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, b
 /// The replace path behind every `atomic_write*` function: stage the new content beside the
 /// target, then rename it over the target.
 fn replace(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
-    let target = resolve_symlink(path);
+    let target = resolve_links(path)?;
     let (dir, name) = split(&target, path)?;
     let existed = target.exists();
 
@@ -236,7 +236,7 @@ pub fn write_new_custom(fs: &dyn AtomicFs, path: &Path, bytes: &[u8]) -> io::Res
 /// then give it the target's name with a hard link, which fails rather than replace a file that
 /// appeared in the meantime. Volumes without hard links get a copy into a newly created file.
 fn create(fs: &dyn AtomicFs, path: &Path, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
-    let target = resolve_symlink(path);
+    let target = resolve_links(path)?;
     let (dir, name) = split(&target, path)?;
     if target.exists() {
         return Err(write_error(io::Error::from(io::ErrorKind::AlreadyExists), path, &dir, true));
@@ -296,11 +296,27 @@ fn sleep_ms(ms: u64) {
 #[cfg(target_arch = "wasm32")]
 fn sleep_ms(_ms: u64) {}
 
-fn resolve_symlink(path: &Path) -> PathBuf {
-    match std::fs::symlink_metadata(path) {
-        Ok(m) if m.file_type().is_symlink() => std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
-        _ => path.to_path_buf(),
+/// Symbolic links followed before giving up (a loop, or an absurd chain).
+const MAX_LINKS: usize = 40;
+
+/// The file a chain of symbolic links ends at (`path` itself when it is not a link), so the link
+/// is kept and the file it names is written. A dangling link resolves to the missing file it
+/// names, which is then created.
+fn resolve_links(path: &Path) -> io::Result<PathBuf> {
+    let mut p = path.to_path_buf();
+    for _ in 0..MAX_LINKS {
+        match std::fs::symlink_metadata(&p) {
+            Ok(m) if m.file_type().is_symlink() => {
+                let to = std::fs::read_link(&p).map_err(|e| io::Error::new(e.kind(), format!("cannot save {}: {e}", path.display())))?;
+                p = match p.parent() {
+                    Some(dir) if to.is_relative() => dir.join(to),
+                    _ => to,
+                };
+            }
+            _ => return Ok(p),
+        }
     }
+    Err(io::Error::new(io::ErrorKind::InvalidInput, format!("cannot save {}: too many levels of symbolic links", path.display())))
 }
 
 /// Generates a unique, hidden temporary file name beside `file`.

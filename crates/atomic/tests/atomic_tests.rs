@@ -1,4 +1,4 @@
-use craft_atomic::{atomic_write, atomic_write_with, or_plain_fsync, write_new_with};
+use craft_atomic::{atomic_write, atomic_write_with, or_plain_fsync, write_new, write_new_with};
 use std::cell::Cell;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -124,4 +124,31 @@ fn mode_and_symlink_preservation() {
     atomic_write(&link, b"through symlink").ok();
     assert!(std::fs::symlink_metadata(&link).map(|m| m.file_type().is_symlink()).unwrap_or(false));
     assert_eq!(std::fs::read(&real).ok(), Some(b"through symlink".to_vec()));
+}
+
+#[cfg(unix)]
+#[test]
+fn dangling_relative_symlink_stays_a_link() {
+    let d = TempDir::new("dangling");
+    std::fs::create_dir(d.0.join("real")).ok();
+    let link = d.0.join("link.txt");
+    std::os::unix::fs::symlink("real/doc.txt", &link).ok();
+
+    assert!(atomic_write(&link, b"created through the link").is_ok());
+    assert!(std::fs::symlink_metadata(&link).map(|m| m.file_type().is_symlink()).unwrap_or(false));
+    assert_eq!(std::fs::read(d.0.join("real/doc.txt")).ok(), Some(b"created through the link".to_vec()));
+    assert_no_temp(&d.0);
+    assert_no_temp(&d.0.join("real"));
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_loop_is_an_error() {
+    let d = TempDir::new("loop");
+    std::os::unix::fs::symlink("b", d.0.join("a")).ok();
+    std::os::unix::fs::symlink("a", d.0.join("b")).ok();
+    assert!(atomic_write(&d.0.join("a"), b"x").is_err_and(|e| e.to_string().starts_with("cannot save") && e.to_string().contains("symbolic links")));
+    assert!(write_new(&d.0.join("a"), b"x").is_err());
+    assert!(std::fs::symlink_metadata(d.0.join("a")).map(|m| m.file_type().is_symlink()).unwrap_or(false));
+    assert_no_temp(&d.0);
 }
