@@ -40,7 +40,9 @@ printer parsing, PPD options and argument mapping. On Windows it also parses the
 PowerShell, checks physical sheet geometry, duplex and raster bounds without hardware,
 renders a mixed-orientation PDF through WinRT, and attempts submission to a temporary paused
 queue. The queue portion explicitly skips if the driver or administrative rights are absent;
-rendering and geometry tests do not skip. Physical printer fidelity remains a hardware check.
+rendering and geometry tests do not skip. Windows CI installs the inbox test driver and sets
+`CRAFT_PRINT_REQUIRE_QUEUE=1`, making queue preparation/submission mandatory on its runner.
+Physical printer fidelity remains a hardware check.
 
 The cross-platform GitHub Actions workflow is defined in `.github/workflows/print.yml`.
 It runs formatting, Clippy and this crate's own tests on Windows, Linux and macOS when print

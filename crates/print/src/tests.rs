@@ -261,6 +261,7 @@ fn the_print_script_renders_the_job_and_reaches_the_spooler() {
         &[("CRAFT_TEST_PRINTER", name)],
     );
     if let Err(why) = added {
+        assert_ne!(std::env::var("CRAFT_PRINT_REQUIRE_QUEUE").as_deref(), Ok("1"), "CI requires a prepared paused printer: {why}");
         eprintln!("skipping the real print: the test printer could not be prepared: {why}");
         return;
     }
