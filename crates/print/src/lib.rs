@@ -392,9 +392,12 @@ pub fn printers_parsed(queues: &str, available: Option<&str>) -> Vec<Printer> {
 
 /// The `powershell` command that runs a script. `-NoProfile` keeps a user's profile from
 /// writing banners into what is parsed, `-NonInteractive` from waiting for input.
+/// The full system path avoids running a powershell.exe beside a portable app.
 #[cfg(windows)]
 fn powershell_command(script: &str) -> std::process::Command {
-    let mut c = std::process::Command::new("powershell");
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    let exe = std::path::Path::new(&root).join("System32").join("WindowsPowerShell").join("v1.0").join("powershell.exe");
+    let mut c = std::process::Command::new(exe);
     use std::os::windows::process::CommandExt as _;
     c.args(["-NoProfile", "-NonInteractive", "-Command", script]).creation_flags(0x0800_0000);
     c.env_remove("CRAFT_PRINT_DRYRUN").env_remove("CRAFT_PRINT_TEST_SETTINGS");
