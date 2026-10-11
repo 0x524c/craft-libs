@@ -38,6 +38,7 @@ renders a mixed-orientation PDF through WinRT, and attempts submission to a temp
 queue. The queue portion explicitly skips if the driver or administrative rights are absent;
 rendering and geometry tests do not skip. Physical printer fidelity remains a hardware check.
 
-The proposed cross-platform GitHub Actions workflow is in `docs/print-ci.yml`. Move it to
-`.github/workflows/print.yml` with credentials that can update workflows; the session OAuth
-token cannot create it. Native Windows execution is pending until a Windows runner is available.
+The cross-platform GitHub Actions workflow is defined in `.github/workflows/print.yml`.
+It runs formatting, Clippy and this crate's own tests on Windows, Linux and macOS when print
+code changes, and supports manual runs. The Windows job executes the WinRT and spooler
+regressions above; physical printer fidelity still requires hardware verification.
