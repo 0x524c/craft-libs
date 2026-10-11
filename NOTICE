@@ -42,3 +42,10 @@ FilmCraft/EffectCraft split, tab and accordion layouts and VectorCraft floating 
 above. The generic transaction validation, optional renderer and workspace-location helpers
 are implemented here without dependencies on application engines or native window helpers.
 All sources listed above are licensed MIT OR Apache-2.0. No icon artwork is copied here.
+
+The PDF spooler in crates/print is extracted from:
+- PdfCraft, crates/print/src/spool.rs, windows_print.ps1 and spooler tests,
+  revision 33c14e07cfd742a82bf03baa6b103c01008fa68c.
+  https://github.com/storytold/pdfcraft
+  Copyright (c) 2026 ArtCraft Team and the PdfCraft contributors.
+  Licensed MIT OR Apache-2.0. PDF composition and application code are not copied.
