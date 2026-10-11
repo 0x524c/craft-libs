@@ -264,7 +264,7 @@ fn the_print_script_renders_the_job_and_reaches_the_spooler() {
             if ($paused.ReturnValue -ne 0) { throw 'test queue could not be paused' }
         } catch {
             Remove-Printer -Name $name -ErrorAction SilentlyContinue
-            if ($portCreated) { Remove-PrinterPort -Name $port -ErrorAction SilentlyContinue }
+            if ($portCreated) { Remove-PrinterPort -Name $port -ComputerName $env:COMPUTERNAME -ErrorAction SilentlyContinue }
             throw
         }
         "#,
@@ -287,7 +287,7 @@ fn the_print_script_renders_the_job_and_reaches_the_spooler() {
         $port = $name + '.prn'
         try { Get-PrintJob -PrinterName $name | Remove-PrintJob } finally {
             try { Remove-Printer -Name $name } finally {
-                Remove-PrinterPort -Name $port
+                Remove-PrinterPort -Name $port -ComputerName $env:COMPUTERNAME
                 if (Test-Path -LiteralPath $port) { Remove-Item -LiteralPath $port }
             }
         }
