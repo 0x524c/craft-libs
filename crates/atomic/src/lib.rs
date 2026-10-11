@@ -114,12 +114,13 @@ fn full_flush_unsupported(e: &io::Error) -> bool {
     cfg!(target_vendor = "apple") && matches!(e.raw_os_error(), Some(ENOTSUP | ENOTTY))
 }
 
-/// Retry configuration for renames that encounter transient file locks (`PermissionDenied`).
+/// Retry configuration for renames that encounter transient file locks (see [`retry_rename`]).
 #[derive(Debug, Clone, Copy)]
 pub struct RenameRetry {
     /// Number of retries after the initial attempt (0 = no retry).
     pub attempts: u32,
-    /// Delay before the first retry in milliseconds; doubles on each subsequent attempt.
+    /// Delay before the first retry in milliseconds; doubles on each subsequent attempt, up to
+    /// 200 ms per attempt.
     pub first_delay_ms: u64,
 }
 
@@ -286,20 +287,30 @@ fn copy_new(fs: &dyn AtomicFs, tmp: &Path, target: &Path) -> io::Result<()> {
     copied
 }
 
-/// Retries an operation with exponential backoff while it fails with `PermissionDenied`.
+/// The longest pause between two rename attempts.
+const MAX_RETRY_DELAY_MS: u64 = 200;
+
+/// Retries an operation with exponential backoff while it fails because another process holds
+/// the file: `PermissionDenied`, or on Windows a sharing or lock violation.
 pub fn retry_rename(retry: RenameRetry, mut rename: impl FnMut() -> io::Result<()>) -> io::Result<()> {
-    let mut delay = retry.first_delay_ms;
+    let mut delay = retry.first_delay_ms.min(MAX_RETRY_DELAY_MS);
     let mut left = retry.attempts;
     loop {
         match rename() {
-            Err(e) if e.kind() == io::ErrorKind::PermissionDenied && left > 0 => {
+            Err(e) if is_transient_lock(&e) && left > 0 => {
                 left -= 1;
                 sleep_ms(delay);
-                delay = delay.saturating_mul(2);
+                delay = delay.saturating_mul(2).min(MAX_RETRY_DELAY_MS);
             }
             r => return r,
         }
     }
+}
+
+fn is_transient_lock(e: &io::Error) -> bool {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const ERROR_LOCK_VIOLATION: i32 = 33;
+    e.kind() == io::ErrorKind::PermissionDenied || (cfg!(windows) && matches!(e.raw_os_error(), Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -638,5 +649,16 @@ mod tests {
         assert_eq!(std::fs::read(&p).ok(), Some(ORIGINAL.to_vec()));
         assert_eq!(fs.renames.get(), 0);
         assert_no_temp(&d.0);
+    }
+
+    #[test]
+    fn retry_delays_are_capped() {
+        let d = TempDir::new("cap");
+        let p = d.0.join("doc.craft");
+        let fs = Faulty { locked_renames: Cell::new(2), ..Default::default() };
+        let started = std::time::Instant::now();
+        assert!(atomic_write_custom(&fs, RenameRetry { attempts: 2, first_delay_ms: 60_000 }, &p, b"new").is_ok());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert_eq!(fs.renames.get(), 3);
     }
 }
