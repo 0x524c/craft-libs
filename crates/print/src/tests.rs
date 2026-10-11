@@ -277,16 +277,20 @@ fn the_print_script_renders_the_job_and_reaches_the_spooler() {
     }
     let job = Job { printer: Some(name.into()), title: "test.pdf".into(), ..Job::default() };
     let sent = spool::submit(&pdf, &job);
-    let queued =
-        windows_powershell(&format!("if (Get-PrintJob -Name '{name}') {{ (Get-PrintJob -Name '{name}' | Measure-Object).Count }} else {{ 0 }}"), &[]);
+    let queued = windows_powershell(
+        &format!("if (Get-PrintJob -PrinterName '{name}') {{ (Get-PrintJob -PrinterName '{name}' | Measure-Object).Count }} else {{ 0 }}"),
+        &[],
+    );
     let cleaned = windows_powershell(
         r#"
         $name = $env:CRAFT_TEST_PRINTER
         $port = Join-Path $env:TEMP ($name + '.prn')
-        Get-PrintJob -Name $name | Remove-PrintJob
-        Remove-Printer -Name $name
-        Remove-PrinterPort -Name $port
-        Remove-Item -LiteralPath $port -ErrorAction SilentlyContinue
+        try { Get-PrintJob -PrinterName $name | Remove-PrintJob } finally {
+            try { Remove-Printer -Name $name } finally {
+                Remove-PrinterPort -Name $port
+                Remove-Item -LiteralPath $port -ErrorAction SilentlyContinue
+            }
+        }
         "#,
         &[("CRAFT_TEST_PRINTER", name)],
     );
