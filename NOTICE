@@ -49,3 +49,6 @@ The PDF spooler in crates/print is extracted from:
   https://github.com/storytold/pdfcraft
   Copyright (c) 2026 ArtCraft Team and the PdfCraft contributors.
   Licensed MIT OR Apache-2.0. PDF composition and application code are not copied.
+
+The Windows printer duplex-capability query and parser additionally draw on PdfCraft,
+crates/print/src/spool.rs, revision fb97ce958dfe92b6762ce40615c7836551710139 (PR #1154), under the same licenses above.
