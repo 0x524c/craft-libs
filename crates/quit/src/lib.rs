@@ -48,8 +48,31 @@ mod close;
 #[cfg(target_os = "macos")]
 mod macos;
 
+#[cfg(all(feature = "menu", target_os = "macos"))]
+mod menu;
+
 #[cfg(feature = "egui")]
 pub use close::on_close_request;
+
+/// Replace winit's default macOS app menu with one whose Quit (⌘Q) asks the app first.
+///
+/// winit's Quit ends the process without asking, so unsaved work is lost. This menu's Quit sends
+/// the root window a `ViewportCommand::Close` instead: the app's unsaved-changes check runs as it
+/// does for the close button, and [`on_close_request`] then quits. Call it once, from the eframe
+/// app creator: winit builds its default menu before that and would replace one installed
+/// earlier. `app_name` is shown in the menu ("Quit WordCraft").
+///
+/// Other platforms: does nothing.
+#[cfg(feature = "menu")]
+pub fn install_app_menu(ctx: &egui::Context, app_name: &str) {
+    #[cfg(target_os = "macos")]
+    if let Err(e) = menu::install(ctx, app_name) {
+        // winit's menu stays; the app still runs, but ⌘Q quits without asking.
+        eprintln!("craft-quit: app menu not installed: {e}");
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (ctx, app_name);
+}
 
 /// Quit through the platform's own path, where leaving by closing the window is not safe.
 ///
