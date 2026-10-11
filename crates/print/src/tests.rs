@@ -288,9 +288,14 @@ fn the_print_script_renders_the_job_and_reaches_the_spooler() {
         try { Get-PrintJob -PrinterName $name | Remove-PrintJob } finally {
             try { Remove-Printer -Name $name } finally {
                 Remove-PrinterPort -Name $port
-                Remove-Item -LiteralPath $port -ErrorAction SilentlyContinue
+                if (Test-Path -LiteralPath $port) { Remove-Item -LiteralPath $port }
             }
         }
+        if (Get-Printer -Name $name -ErrorAction SilentlyContinue) { throw 'test queue was not removed' }
+        if ((Get-PrinterPort -Name $port -ErrorAction SilentlyContinue) -or (Test-Path -LiteralPath $port)) {
+            throw 'test port was not removed'
+        }
+        Write-Output 'cleaned'
         "#,
         &[("CRAFT_TEST_PRINTER", name)],
     );
