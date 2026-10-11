@@ -486,3 +486,14 @@ fn queue_duplex_defaults_and_explicit_scaling_reach_the_spooler() {
     assert!(shrink.iter().any(|a| a == "print-scaling=auto-fit"));
     assert!(!shrink.iter().any(|a| a.starts_with("fit-to-page=")));
 }
+
+/// A portable app must never resolve PowerShell from its own directory.
+#[cfg(windows)]
+#[test]
+fn windows_starts_powershell_by_its_full_path() {
+    let command = powershell_command("$null");
+    let program = std::path::Path::new(command.get_program());
+    assert!(program.is_absolute(), "{program:?}");
+    assert!(program.ends_with("System32/WindowsPowerShell/v1.0/powershell.exe"), "{program:?}");
+    assert!(program.is_file(), "{program:?}");
+}
