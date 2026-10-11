@@ -246,15 +246,15 @@ fn the_print_script_renders_the_job_and_reaches_the_spooler() {
     let added = windows_powershell(
         r#"
         $name = $env:CRAFT_TEST_PRINTER
-        $port = Join-Path $env:TEMP ($name + '.prn')
+        $port = $name + '.prn'
         if (Get-Printer -Name $name -ErrorAction SilentlyContinue) { throw 'test queue already exists' }
         if ((Get-PrinterPort -Name $port -ErrorAction SilentlyContinue) -or (Test-Path -LiteralPath $port)) {
             throw 'test port already exists'
         }
         $portCreated = $false
         try {
-            # FILE: can ask GDI for an output filename even for a paused queue. A local port
-            # with its own path has no prompt; the paused job is removed before it can write.
+            # FILE: can ask GDI for an output filename even for a paused queue. A uniquely named
+            # local port has no prompt; the paused job is removed before it can write.
             Add-PrinterPort -Name $port
             $portCreated = $true
             Add-Printer -Name $name -DriverName 'Generic / Text Only' -PortName $port
@@ -284,7 +284,7 @@ fn the_print_script_renders_the_job_and_reaches_the_spooler() {
     let cleaned = windows_powershell(
         r#"
         $name = $env:CRAFT_TEST_PRINTER
-        $port = Join-Path $env:TEMP ($name + '.prn')
+        $port = $name + '.prn'
         try { Get-PrintJob -PrinterName $name | Remove-PrintJob } finally {
             try { Remove-Printer -Name $name } finally {
                 Remove-PrinterPort -Name $port
