@@ -23,6 +23,7 @@ craft-<name> = { git = "https://github.com/storytold/craft-libs", rev = "<commit
 
 ## Libraries
 
+- [`craft-atomic`](crates/atomic/README.md): Crash-safe atomic file writing and replacement with same-directory staging, directory fsync, Apple `F_FULLFSYNC` fallback, transient lock backoff, and fault injection for the Craft suite.
 - [`craft-print`](crates/print/README.md): PDF submission to CUPS and Windows, printer discovery,
   duplex/copies/colour and driver preferences. PDF generation stays in each app.
 
