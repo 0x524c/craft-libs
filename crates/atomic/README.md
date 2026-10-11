@@ -4,13 +4,15 @@
 
 Extracted from the storage engine in **PhotoCraft** (refs #2, #14), it guarantees that a failed save or abnormal termination never leaves user documents truncated, corrupted, or missing.
 
-## Core Guarantees
-
-1. **Non-Destructive Replacement**: `atomic_write` never truncates the destination file in place. It writes a temporary file in the **same directory** as the destination, flushes it to non-volatile storage, renames it over the destination atomically, and flushes the directory so the rename survives power failure.
-2. **Guaranteed Same-Directory Staging**: Staging files are allocated beside the destination (`.{stem}.{pid}-{n}.craft_tmp`), guaranteeing same-filesystem volume rename semantics and eliminating `EXDEV` / `ERROR_NOT_SAME_DEVICE`.
-3. **Transient Lock Backoff (Windows)**: Antivirus scanners and search indexers hold newly written files momentarily. `RenameRetry` automatically retries renames encountering `PermissionDenied`, sharing violations or lock violations with exponential backoff.
-4. **Apple SMB / Network Share Fallback**: On macOS, `sync_all` issues `F_FULLFSYNC`. Where network shares or virtual file systems reject full flush with `ENOTSUP` (45) or `ENOTTY` (25), it falls back to standard `fsync`.
-5. **Permission Preservation**: On Unix, replaces files while preserving the original file's mode and permissions (e.g. `0600`).
+## Core Guarantees: Atomicity vs. Durability
+ 
+1. **Atomicity (All-or-Nothing Replacement)**: `atomic_write` never truncates or overwrites the destination in place. It stages content in a hidden temporary file beside the destination (`.{stem}.{pid}-{n}.craft_tmp`), guaranteeing same-volume rename semantics (`EXDEV`-free). An external reader never sees a partial write. If writing fails, times out, or the process crashes mid-stream, the destination retains its prior bytes and the staging file is unlinked.
+2. **Durability (Power-Loss & Crash Persistence)**:
+   - **Content Flush**: Before rename, staging file bytes are flushed to physical storage media (`sync_file`, issuing `F_FULLFSYNC` on macOS/APFS with SMB `fsync` fallback).
+   - **Directory Flush**: After rename, on Unix platforms, the parent directory table is explicitly synced (`sync_dir`) so the new directory entry survives sudden power loss.
+3. **Transient Lock Backoff (Windows)**: Antivirus scanners and search indexers hold newly written files momentarily. `RenameRetry` automatically retries renames encountering `PermissionDenied`, sharing violations (32), or lock violations (33) with exponential backoff capped at 200ms.
+4. **Permission & Symlink Invariants**: On Unix, preserves destination permissions (e.g. `0600`). Symlink chains are resolved with a hop limit, writing through the symlink to the ultimate target without replacing the link itself.
+5. **Safe Exclusive Creation (`write_new`)**: Uses hard links where supported, or exclusive create (`O_EXCL`), guaranteeing that an existing file is never replaced under race conditions.
 6. **Fault-Injection Testability**: The `AtomicFs` trait enables unit and integration test suites to simulate disk-full, locked files, and permission failures without physical disk I/O.
 
 A replaced file is a new file (a new inode), so its owner and group, extended attributes and ACLs, Finder tags, alternate data streams and hard links are not kept; a crash between the write and the rename can leave a `.<name>.<pid>-<n>.craft_tmp` file beside the destination.

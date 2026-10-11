@@ -8,6 +8,19 @@
 //! survives a power loss. If any step fails, the destination retains its original bytes and
 //! the temporary staging file is removed.
 //!
+//! ### Guarantees: Atomicity vs. Durability
+//! - **Atomicity Guarantee (All-or-Nothing)**:
+//!   [`atomic_write`] guarantees that external readers never observe a partial write. Either the target
+//!   file retains its previous bytes, or it is replaced completely with the new contents. If writing fails,
+//!   times out, or the process terminates prematurely, the target remains unmodified and any staging files
+//!   are cleaned up.
+//! - **Durability Guarantee (Crash & Power-Loss Persistence)**:
+//!   Data persistence across power failures requires two explicit sync points:
+//!   1. **Content Flush (`sync_file`)**: The staging file's payload is forced to non-volatile storage
+//!      (`F_FULLFSYNC` on macOS, `sync_all` on Windows/Linux) *before* the atomic rename.
+//!   2. **Directory Flush (`sync_dir`)**: On Unix, the containing directory table is synced *after* the
+//!      rename so the filesystem directory entry survives power loss.
+//!
 //! ### Platform Characteristics
 //! - **Windows**: Antivirus scanners, search indexers, and backup utilities briefly hold files
 //!   open with sharing violations. The rename is retried with exponential backoff (`RenameRetry`).
@@ -442,6 +455,7 @@ mod tests {
 
     #[derive(Default)]
     struct Faulty {
+        events: std::cell::RefCell<Vec<&'static str>>,
         fail_sync: bool,
         /// Syncs fail once this many have succeeded.
         syncs_before_failure: Option<u32>,
@@ -457,9 +471,11 @@ mod tests {
 
     impl AtomicFs for Faulty {
         fn create_new(&self, path: &Path) -> io::Result<File> {
+            self.events.borrow_mut().push("create_new");
             RealFs.create_new(path)
         }
         fn sync(&self, file: &File) -> io::Result<()> {
+            self.events.borrow_mut().push("sync_file");
             let done = self.syncs.replace(self.syncs.get() + 1);
             if self.fail_sync || self.syncs_before_failure.is_some_and(|n| done >= n) {
                 return Err(io::Error::new(io::ErrorKind::StorageFull, "injected: no space left on device"));
@@ -467,6 +483,7 @@ mod tests {
             RealFs.sync(file)
         }
         fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+            self.events.borrow_mut().push("rename");
             self.renames.set(self.renames.get() + 1);
             if let Some(kind) = self.fail_rename {
                 return Err(io::Error::new(kind, "injected rename failure"));
@@ -478,6 +495,7 @@ mod tests {
             RealFs.rename(from, to)
         }
         fn hard_link(&self, from: &Path, to: &Path) -> io::Result<()> {
+            self.events.borrow_mut().push("hard_link");
             if let Some(bytes) = self.created_meanwhile {
                 std::fs::write(to, bytes)?;
             }
@@ -487,12 +505,15 @@ mod tests {
             RealFs.hard_link(from, to)
         }
         fn remove(&self, path: &Path) -> io::Result<()> {
+            self.events.borrow_mut().push("remove");
             RealFs.remove(path)
         }
         fn sync_dir(&self, dir: &Path) -> io::Result<()> {
+            self.events.borrow_mut().push("sync_dir");
             RealFs.sync_dir(dir)
         }
         fn set_permissions(&self, file: &File, perms: std::fs::Permissions) -> io::Result<()> {
+            self.events.borrow_mut().push("set_permissions");
             if self.fail_permissions {
                 return Err(io::Error::new(io::ErrorKind::PermissionDenied, "injected: operation not permitted"));
             }
@@ -660,5 +681,35 @@ mod tests {
         assert!(atomic_write_custom(&fs, RenameRetry { attempts: 2, first_delay_ms: 60_000 }, &p, b"new").is_ok());
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
         assert_eq!(fs.renames.get(), 3);
+    }
+
+    #[test]
+    fn distinguishes_atomicity_and_durability_order() {
+        let d = TempDir::new("durability_order");
+        let p = d.0.join("doc.craft");
+        std::fs::write(&p, ORIGINAL).ok();
+
+        let fs = Faulty::default();
+        atomic_write_custom(&fs, NO_RETRY, &p, b"durable payload").expect("successful atomic write");
+
+        let events = fs.events.into_inner();
+        let sync_file_idx = events.iter().position(|&e| e == "sync_file").expect("file content must be flushed");
+        let rename_idx = events.iter().position(|&e| e == "rename").expect("atomic rename must be performed");
+
+        // 1. Content Durability: staging file must be synced to stable media BEFORE pointer switch (rename)
+        assert!(
+            sync_file_idx < rename_idx,
+            "Durability invariant violated: file content must be flushed to stable storage before rename (sync={sync_file_idx}, rename={rename_idx})"
+        );
+
+        // 2. Directory Durability: on Unix, parent directory must be synced AFTER rename to commit directory entry
+        #[cfg(unix)]
+        {
+            let sync_dir_idx = events.iter().position(|&e| e == "sync_dir").expect("directory must be flushed on Unix");
+            assert!(
+                rename_idx < sync_dir_idx,
+                "Durability invariant violated: parent directory must be flushed after rename (rename={rename_idx}, sync_dir={sync_dir_idx})"
+            );
+        }
     }
 }
