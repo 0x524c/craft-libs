@@ -18,8 +18,19 @@ A Cargo workspace (edition 2024, resolver 3). Each library is a crate under `cra
 Apps depend on a crate by git:
 
 ```toml
-craft-<name> = { git = "https://github.com/echelon/craft-libs", rev = "<commit>" }
+craft-<name> = { git = "https://github.com/storytold/craft-libs", rev = "<commit>" }
 ```
+
+## Libraries
+
+- [`craft-ui`](crates/ui/README.md): SVG catalogs, icon buttons, tabs, pane controls, transactional docking and theme helpers for egui frontends;
+  assets, themes, localization and command handling stay in each app. Requires Rust 1.95 or later.
+- [Shared UI component audit](docs/ui-components-audit.md): source inventory, extraction priorities
+  and compatibility boundaries across the Craft suite.
+- [Theme infrastructure](docs/theme-infrastructure.md): eight-app comparison and the small shared
+  widget-state styling boundary.
+- [Panel docking](docs/ui-docking.md): validated panel moves, floating groups, workspace adapters
+  and an optional egui docking surface.
 
 ## License and credits
 
