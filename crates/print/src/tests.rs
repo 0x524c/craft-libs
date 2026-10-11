@@ -192,7 +192,7 @@ fn the_windows_job_is_the_environment_of_the_print_script() {
 #[cfg(windows)]
 fn windows_powershell(script: &str, envs: &[(&str, &str)]) -> Result<String, String> {
     let mut c = std::process::Command::new("powershell");
-    c.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+    c.args(["-NoProfile", "-NonInteractive", "-Command", &format!("$ErrorActionPreference = 'Stop'; {script}")]);
     for (k, v) in envs {
         c.env(k, v);
     }
@@ -244,10 +244,21 @@ fn the_print_script_renders_the_job_and_reaches_the_spooler() {
     let name = format!("Craft Test Print {}", std::process::id());
     let name = name.as_str();
     let added = windows_powershell(
-        &format!(
-            "if (-not (Get-Printer -Name '{name}' -ErrorAction SilentlyContinue)) {{ Add-Printer -Name '{name}' -DriverName 'Generic / Text Only' -PortName 'FILE:' }}; Get-CimInstance Win32_Printer | Where-Object Name -eq '{name}' | Invoke-CimMethod -MethodName Pause | Out-Null"
-        ),
-        &[],
+        r#"
+        $name = $env:CRAFT_TEST_PRINTER
+        if (Get-Printer -Name $name -ErrorAction SilentlyContinue) { throw 'test queue already exists' }
+        try {
+            Add-Printer -Name $name -DriverName 'Generic / Text Only' -PortName 'FILE:'
+            $queue = Get-CimInstance Win32_Printer | Where-Object Name -eq $name
+            if (-not $queue) { throw 'test queue could not be found' }
+            $paused = Invoke-CimMethod -InputObject $queue -MethodName Pause
+            if ($paused.ReturnValue -ne 0) { throw 'test queue could not be paused' }
+        } catch {
+            Remove-Printer -Name $name -ErrorAction SilentlyContinue
+            throw
+        }
+        "#,
+        &[("CRAFT_TEST_PRINTER", name)],
     );
     if let Err(why) = added {
         eprintln!("skipping the real print: the test printer could not be prepared: {why}");
