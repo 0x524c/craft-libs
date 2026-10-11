@@ -17,6 +17,27 @@ pub fn on_close_request(ctx: &Context) -> bool {
     take_over_close(ctx, crate::quit)
 }
 
+/// The id of a Quit menu item that asks the app first.
+///
+/// An app that builds its own native app menu (muda, any version) gives its Quit item this id,
+/// instead of using muda's `PredefinedMenuItem::quit`, which ends the process without asking, and
+/// passes its menu events to [`on_menu_event`]. Apps without their own menu use
+/// [`crate::install_app_menu`], which does both.
+pub const QUIT_MENU_ID: &str = "craft-quit.quit";
+
+/// Handle a native menu event by the id of the item chosen. For [`QUIT_MENU_ID`], asks the root
+/// window to close (`ViewportCommand::Close`), so the app's unsaved-changes check runs as it does
+/// for the close button and [`on_close_request`] then quits. Returns whether the item was Quit;
+/// other items are left to the caller. Safe to call from a menu-event handler between frames:
+/// egui keeps the command for the next frame.
+pub fn on_menu_event(ctx: &Context, id: &str) -> bool {
+    if id != QUIT_MENU_ID {
+        return false;
+    }
+    ctx.send_viewport_cmd(ViewportCommand::Close);
+    true
+}
+
 /// [`on_close_request`] with the platform quit passed in. `quit` returns whether it quits.
 fn take_over_close(ctx: &Context, quit: impl FnOnce() -> bool) -> bool {
     if ctx.viewport_id() != ViewportId::ROOT || !ctx.input(|i| i.viewport().close_requested()) {
@@ -88,6 +109,28 @@ mod tests {
         let (taken, quit_calls, _) = frame(true, true, |ctx| ctx.send_viewport_cmd(ViewportCommand::CancelClose));
         assert!(!taken);
         assert_eq!(quit_calls, 0, "unsaved work asks first");
+    }
+
+    /// The root window's commands from one frame run after `before`, which runs between frames
+    /// like a native menu-event handler.
+    fn commands_after(before: impl FnOnce(&Context)) -> Vec<ViewportCommand> {
+        let ctx = Context::default();
+        before(&ctx);
+        let mut out = ctx.run_ui(RawInput::default(), |_| {});
+        out.textures_delta.clear(); // not painted
+        out.viewport_output.remove(&ViewportId::ROOT).map(|o| o.commands).unwrap_or_default()
+    }
+
+    #[test]
+    fn the_quit_menu_item_asks_the_window_to_close() {
+        let commands = commands_after(|ctx| assert!(on_menu_event(ctx, QUIT_MENU_ID)));
+        assert!(commands.contains(&ViewportCommand::Close), "the app's close handling decides");
+    }
+
+    #[test]
+    fn other_menu_items_are_left_to_the_app() {
+        let commands = commands_after(|ctx| assert!(!on_menu_event(ctx, "edit.copy")));
+        assert!(!commands.contains(&ViewportCommand::Close));
     }
 
     #[test]

@@ -52,7 +52,7 @@ mod macos;
 mod menu;
 
 #[cfg(feature = "egui")]
-pub use close::on_close_request;
+pub use close::{QUIT_MENU_ID, on_close_request, on_menu_event};
 
 /// Replace winit's default macOS app menu with one whose Quit (⌘Q) asks the app first.
 ///
@@ -61,6 +61,10 @@ pub use close::on_close_request;
 /// does for the close button, and [`on_close_request`] then quits. Call it once, from the eframe
 /// app creator: winit builds its default menu before that and would replace one installed
 /// earlier. `app_name` is shown in the menu ("Quit WordCraft").
+///
+/// For apps without an app menu of their own. It replaces the whole menu and sets muda's
+/// process-wide menu-event handler, so an app that builds its own muda menu should not call it:
+/// give that menu's Quit item [`QUIT_MENU_ID`] and pass its events to [`on_menu_event`] instead.
 ///
 /// Other platforms: does nothing.
 #[cfg(feature = "menu")]
