@@ -1068,6 +1068,15 @@ impl Sheets<'_> {
                 if get(&self.trailer, b"Encrypt").is_some() {
                     return Err(refuse("it is encrypted"));
                 }
+                // Annotation appearances live outside /Contents. Transforming only content
+                // would leave them at the old coordinates; deleting them loses printed marks.
+                // Require callers to flatten before fitting until appearances can be reframed.
+                if let Some(annotations) = get(&dict, b"Annots")
+                    && !matches!(annotations, Obj::Null)
+                    && !matches!(annotations, Obj::Array(items) if items.is_empty())
+                {
+                    return Err(refuse("flatten page annotations before using shrink-to-fit"));
+                }
                 let [a, b, c, d, e, f] = frame.matrix;
                 let [x, y, w, h] = frame.clip;
                 let prefix = format!(

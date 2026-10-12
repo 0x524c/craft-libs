@@ -61,6 +61,10 @@ a driver paper-size mismatch. On Windows `command_preview` describes the in-proc
 (`xps-print`, then the printer and options as `key=value`) instead of a command line. The crate
 does not provide PostScript output, separations, trapping or colour-managed device rendering.
 
+Windows shrink-to-fit refuses pages with annotations when their geometry needs fitting.
+Callers must flatten annotation appearances into page content first. Exact-size printing and
+rotation retain the annotations. This avoids losing printed comments, forms or other marks.
+
 `cargo test -p craft-print` tests CUPS transport (including pipe-sized jobs and refusal),
 printer parsing, PPD options and argument mapping, and on every platform the Windows pieces that
 need no printer: the PrintTicket, the checks on the driver's validated ticket and capabilities,

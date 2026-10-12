@@ -49,6 +49,10 @@ const TABLOID: TestPage = TestPage { media: Some([0.0, 0.0, 792.0, 1224.0]), cro
 /// cross-reference stream, as modern writers save. The root page node sets a Letter MediaBox
 /// for pages that inherit it.
 fn test_pdf(pages: &[TestPage], compressed: bool) -> Vec<u8> {
+    test_pdf_with_annotations(pages, compressed, None)
+}
+
+fn test_pdf_with_annotations(pages: &[TestPage], compressed: bool, annotations: Option<&str>) -> Vec<u8> {
     let n = pages.len();
     // 1 catalog, 2 page tree, 3 content, then the pages.
     let kids: Vec<String> = (0..n).map(|i| format!("{} 0 R", 4 + i)).collect();
@@ -68,6 +72,9 @@ fn test_pdf(pages: &[TestPage], compressed: bool) -> Vec<u8> {
         }
         if let Some(r) = p.rotate {
             page += &format!(" /Rotate {r}");
+        }
+        if let Some(annotations) = annotations {
+            page += &format!(" /Annots {annotations}");
         }
         objects.push(page + " >>");
     }
@@ -262,6 +269,27 @@ fn shrink_to_fit_reframes_sheets_on_the_paper() {
     assert_eq!(edits.iter().map(|e| (e.sheet, e.rotate)).collect::<Vec<_>>(), [(1, 270), (2, 0)]);
     assert_eq!(edits[0].frame.as_ref().unwrap().media, (792.0, 612.0), "the paper in the page's unrotated space");
     assert_eq!(shapes(&sheets.update(&edits).unwrap()), [((612, 792), 0), ((612, 792), 270), ((612, 792), 0)]);
+}
+
+#[test]
+fn shrink_to_fit_refuses_to_drop_annotation_appearances() {
+    use crate::sheets::{Fit, plan, read};
+    for annotations in ["[<< /Subtype /Text /Rect [36 36 72 72] /F 4 >>]", "42 0 R"] {
+        let pdf = test_pdf_with_annotations(&[LETTER, LETTER_LANDSCAPE], false, Some(annotations));
+        let sheets = read(&pdf).unwrap();
+        let fit = plan(&sheets.sheets, (612.0, 792.0), Fit::Shrink { margin: 18.0 }).unwrap();
+        assert!(matches!(sheets.update(&fit), Err(Error::Spool(ref m)) if m.contains("flatten page annotations")));
+        let exact = plan(&sheets.sheets, (612.0, 792.0), Fit::Exact).unwrap();
+        let rotated = sheets.update(&exact).unwrap();
+        assert!(rotated.starts_with(&pdf));
+        assert!(String::from_utf8_lossy(&rotated[pdf.len()..]).contains("/Annots"), "rotation retains annotations on the updated page");
+    }
+    for annotations in ["[]", "null"] {
+        let pdf = test_pdf_with_annotations(&[LETTER, LETTER_LANDSCAPE], false, Some(annotations));
+        let sheets = read(&pdf).unwrap();
+        let fit = plan(&sheets.sheets, (612.0, 792.0), Fit::Shrink { margin: 18.0 }).unwrap();
+        assert!(sheets.update(&fit).is_ok());
+    }
 }
 
 #[test]
