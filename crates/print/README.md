@@ -15,39 +15,73 @@ opens Windows printer preferences and submits jobs with copies, collation, duple
 
 - **macOS/Linux:** CUPS `lpstat`, `lpoptions` and `lp`. Jobs stream through stdin. Exact-size
   sheets use `fit-to-page=false`; shrink-to-fit uses IPP `print-scaling=auto-fit`.
-- **Windows:** inbox Windows PowerShell, `Windows.Data.Pdf` and `System.Drawing.Printing`.
-  Each sheet is rasterized, with paper and orientation selected per page. Exact-size mode
-  preserves physical size and clips hardware margins. Shrink-to-fit uses matching driver
-  paper or its default, centers in the printable area and never enlarges smaller sheets.
-  Long-edge duplex uses `Vertical`; short-edge uses
-  `Horizontal`. Driver-specific defaults remain in Windows printer preferences.
+- **Windows:** in this process, with no PowerShell, script or other program started, so
+  printing works where App Control for Business or AppLocker enforce script rules. Printers
+  come from `EnumPrinters` (local queues and `\\server\queue` connections) and the default from
+  `GetDefaultPrinter`. A job is drawn as vectors by the in-box `Windows.Data.Pdf` with Direct2D
+  into the XPS print API (the `winprint` crate), and copies, collation, duplex, colour, paper,
+  orientation and "no scaling" travel in a PrintTicket that the driver validates first; a
+  driver that would change the paper, orientation or scaling is refused before anything is
+  sent. Paper is the driver's own option for the sheet's size (to 0.25 mm), preferring the one
+  named like the standard size ("ARCH D" over a custom 24 × 36 in entry). This backend comes
+  from storytold/pdfcraft#599 and #1132.
+  A job has one ticket, so one paper and orientation. Sheets of the other orientation are
+  turned back with `/Rotate`, so portrait and landscape sheets still print as one job. Exact
+  size refuses sheets of different sizes and paper the driver lacks. Shrink-to-fit uses the
+  driver's matching paper, else its default paper, and puts every sheet on it: a sheet that
+  doesn't fit inside the paper's widest hardware margin is shrunk, a smaller one keeps its
+  size, and both are centred. Both are done by appending an incremental update to the PDF
+  (new versions of the pages that need it, the original bytes untouched); the crate reads
+  only cross-reference sections, object streams and the page tree for this, leniently and
+  with every size bounded. Encrypted PDFs can be turned but not reframed. Annotations on a
+  reframed page are dropped; print-ready PDFs have them flattened.
+  Long-edge duplex is `TwoSidedLongEdge` and short-edge `TwoSidedShortEdge`; `duplex: None`
+  leaves duplex out of the ticket. Driver-specific defaults remain in Windows printer
+  preferences (`rundll32 printui.dll`, the one process this crate starts, and only when asked).
 - **Browser/other targets:** discovery is empty and submission reports an unsupported
   platform; callers can offer PDF export instead.
 
-Windows jobs briefly use a random, exclusively created temporary file, removed on drop
-on both success and failure. CUPS jobs never use a PDF temporary file. Printing is synchronous;
-UI callers should submit on a worker. Receipts are backend messages, not portable job IDs.
-`Job::duplex = None` preserves the queue's duplex default; `Some(Duplex::Off)` forces
-simplex. `Job::scaling` defaults to `Scaling::Exact`; callers exporting arbitrary document
-sizes can choose `Scaling::ShrinkToFit`. Exact mode reports a driver paper-size mismatch.
-Windows raster allocation is bounded to 64 million pixels per sheet and 32768 per dimension;
-large sheets use lower raster resolution while retaining physical size. The backend supports
-sheets up to 128 inches and reports invalid sizes. It does not provide PostScript output,
-separations, trapping, colour-managed device rasterization or PDF passthrough on Windows.
+Windows jobs briefly use a file in a private temporary folder (random name, this user's only),
+named after the job's title because the spooler shows it as the document name; the folder is
+removed once the spooler has the job, on success and failure. Windows answers when the job is in
+the queue ("spooled 3 sheet(s)"): a paused queue or an offline printer keeps it there. CUPS jobs
+never use a PDF temporary file. Printing is synchronous; UI callers should submit on a worker.
+Receipts are backend messages, not portable job IDs. `Job::duplex = None` preserves the queue's
+duplex default; `Some(Duplex::Off)` forces simplex. `Job::scaling` defaults to `Scaling::Exact`;
+callers exporting arbitrary document sizes can choose `Scaling::ShrinkToFit`. Exact mode reports
+a driver paper-size mismatch. On Windows `command_preview` describes the in-process job
+(`xps-print`, then the printer and options as `key=value`) instead of a command line. The crate
+does not provide PostScript output, separations, trapping or colour-managed device rendering.
 
 `cargo test -p craft-print` tests CUPS transport (including pipe-sized jobs and refusal),
-printer parsing, PPD options and argument mapping. On Windows it also parses the embedded
-PowerShell, checks physical sheet geometry, duplex and raster bounds without hardware,
-renders a mixed-orientation PDF through WinRT, and attempts submission to a temporary paused
-queue. The queue portion explicitly skips if the driver or administrative rights are absent;
-rendering and geometry tests do not skip. Windows CI installs the inbox test driver and sets
-`CRAFT_PRINT_REQUIRE_QUEUE=1`, making queue preparation/submission mandatory on its runner.
-Physical printer fidelity remains a hardware check.
+printer parsing, PPD options and argument mapping, and on every platform the Windows pieces that
+need no printer: the PrintTicket, the checks on the driver's validated ticket and capabilities,
+paper matching, job file names, and the PDF sheet reader and its update (classic and compressed
+cross-references, turning, reframing, refusal, and thousands of truncated and corrupted files
+that must fail without a panic). On Windows it also submits a mixed-orientation exact-size job
+and a shrink-to-fit job to a temporary paused queue (inbox "Generic / Text Only" driver on
+`LPT1:`) and checks each arrives as one job with all its sheets. The queue portion explicitly
+skips if the driver or administrative rights are absent. Windows CI installs the inbox test
+driver and sets `CRAFT_PRINT_REQUIRE_QUEUE=1`, making queue preparation/submission mandatory on
+its runner. Two ignored tests check a real printer by hand: `an_installed_driver_validates_the_ticket`
+(`CRAFT_PRINT_TEST_PRINTER`; sends no job) and `an_installed_printer_prints_a_file`
+(`CRAFT_PRINT_TEST_PRINTER`, `CRAFT_PRINT_TEST_FILE`, optional `CRAFT_PRINT_TEST_SCALING=shrink`
+and `CRAFT_PRINT_TEST_DUPLEX=long`). Physical printer fidelity remains a hardware check.
 
 The cross-platform GitHub Actions workflow is defined in `.github/workflows/print.yml`.
 It runs formatting, Clippy and this crate's own tests on Windows, Linux and macOS when print
-code changes, and supports manual runs. The Windows job executes the WinRT and spooler
-regressions above; physical printer fidelity still requires hardware verification.
+code changes, and supports manual runs. The Windows job executes the spooler regression above;
+physical printer fidelity still requires hardware verification.
 
-Windows discovery reports driver duplex support in `Printer::two_sided`; CUPS leaves it unknown.
-Callers can warn when a Windows driver ignores the job’s duplex choice.
+Windows discovery reports driver duplex support in `Printer::two_sided` (a two-sided option in
+the driver's PrintCapabilities); CUPS leaves it unknown. Callers can warn when a Windows driver
+ignores the job’s duplex choice.
+
+Windows dependencies: `winprint` (BSD-3-Clause, pinned, its PDFium-downloading `pdfium` feature
+off) and `winsafe` (MIT) hold every Win32 and WinRT call, so the crate keeps `unsafe` forbidden;
+`roxmltree` reads PrintTickets and `miniz_oxide` inflates PDF streams. `winprint` 0.2.1 lists
+reqwest (with rustls) and sigstore crates as non-optional build-dependencies, used only by its
+`pdfium` feature: they compile into its build script on Windows but not into the library. Apps
+running `cargo deny` need a licence exception for `webpki-root-certs` (CDLA-Permissive-2.0, CA
+list data reqwest brings) and an advisory ignore for RUSTSEC-2024-0370 (`proc-macro-error`
+unmaintained, a compile-time proc macro of winprint's `fmt-derive`).
