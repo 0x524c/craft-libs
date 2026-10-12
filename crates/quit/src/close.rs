@@ -34,7 +34,7 @@ pub fn on_menu_event(ctx: &Context, id: &str) -> bool {
     if id != QUIT_MENU_ID {
         return false;
     }
-    ctx.send_viewport_cmd(ViewportCommand::Close);
+    ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
     true
 }
 
@@ -125,6 +125,23 @@ mod tests {
     fn the_quit_menu_item_asks_the_window_to_close() {
         let commands = commands_after(|ctx| assert!(on_menu_event(ctx, QUIT_MENU_ID)));
         assert!(commands.contains(&ViewportCommand::Close), "the app's close handling decides");
+    }
+
+    #[test]
+    fn quit_from_a_child_viewport_still_asks_the_root_to_close() {
+        let ctx = Context::default();
+        let child = ViewportId::from_hash_of("document-child");
+        let mut input = RawInput { viewport_id: child, ..RawInput::default() };
+        input.viewports.entry(child).or_default().parent = Some(ViewportId::ROOT);
+        let mut out = ctx.run_ui(input, |ui| {
+            assert_eq!(ui.ctx().viewport_id(), child);
+            assert!(on_menu_event(ui.ctx(), QUIT_MENU_ID));
+        });
+        out.textures_delta.clear(); // not painted
+        let root_commands = out.viewport_output.get(&ViewportId::ROOT).map(|o| o.commands.as_slice()).unwrap_or_default();
+        let child_commands = out.viewport_output.get(&child).map(|o| o.commands.as_slice()).unwrap_or_default();
+        assert!(root_commands.contains(&ViewportCommand::Close), "root unsaved handling decides whether the app exits");
+        assert!(!child_commands.contains(&ViewportCommand::Close), "Quit must not just close the current child");
     }
 
     #[test]
