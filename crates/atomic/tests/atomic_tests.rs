@@ -170,3 +170,68 @@ fn read_only_target_is_not_replaced() {
     assert_eq!(std::fs::read(&p).ok(), Some(ORIGINAL.to_vec()));
     assert_no_temp(&d.0);
 }
+
+#[cfg(unix)]
+#[test]
+fn private_staging_preserves_existing_modes_after_callback() -> io::Result<()> {
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt;
+
+    let d = TempDir::new("private_staging");
+    std::fs::set_permissions(&d.0, Permissions::from_mode(0o755))?;
+    for mode in [0o600, 0o640, 0o664, 0o200] {
+        let p = d.0.join(format!("doc-{mode:o}.craft"));
+        std::fs::write(&p, ORIGINAL)?;
+        std::fs::set_permissions(&p, Permissions::from_mode(mode))?;
+        atomic_write_with(&p, |f| {
+            assert_eq!(f.metadata()?.permissions().mode() & 0o777, 0o600, "stage must be private before the callback, even for a shared destination");
+            // Settings writers restrict the stage themselves; this must not change the
+            // destination mode that atomic replacement promises to preserve.
+            f.set_permissions(Permissions::from_mode(0o600))?;
+            f.write_all(b"new private payload")?;
+            assert_eq!(f.metadata()?.permissions().mode() & 0o777, 0o600, "payload must stay private while writing");
+            Ok(())
+        })?;
+        assert_eq!(std::fs::metadata(&p)?.permissions().mode() & 0o777, mode);
+        std::fs::set_permissions(&p, Permissions::from_mode(0o600))?;
+        assert_eq!(std::fs::read(&p)?, b"new private payload");
+    }
+    assert_no_temp(&d.0);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn new_files_start_private_and_keep_callback_permissions() -> io::Result<()> {
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt;
+
+    let d = TempDir::new("private_new");
+    for exclusive in [false, true] {
+        let p = d.0.join(format!("new-{exclusive}.craft"));
+        let fill = |f: &mut std::fs::File| {
+            assert_eq!(f.metadata()?.permissions().mode() & 0o777, 0o600);
+            f.write_all(b"new payload")?;
+            // A new file has no existing mode to restore, so the callback may select it.
+            f.set_permissions(Permissions::from_mode(0o640))
+        };
+        if exclusive {
+            write_new_with(&p, fill)?;
+        } else {
+            atomic_write_with(&p, fill)?;
+        }
+        assert_eq!(std::fs::metadata(&p)?.permissions().mode() & 0o777, 0o640);
+        assert_eq!(std::fs::read(&p)?, b"new payload");
+    }
+    for exclusive in [false, true] {
+        let p = d.0.join(format!("default-{exclusive}.craft"));
+        if exclusive {
+            write_new(&p, b"private by default")?;
+        } else {
+            atomic_write(&p, b"private by default")?;
+        }
+        assert_eq!(std::fs::metadata(&p)?.permissions().mode() & 0o777, 0o600);
+    }
+    assert_no_temp(&d.0);
+    Ok(())
+}

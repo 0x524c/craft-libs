@@ -49,6 +49,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// [`RealFs`] provides the production implementation; test suites implement this to inject faults.
 pub trait AtomicFs {
     /// Create `path`, which must not exist, and open it for writing.
+    /// On Unix, create it with owner-only permissions so payload written afterward is private.
     fn create_new(&self, path: &Path) -> io::Result<File>;
     /// Flush a written file to durable storage.
     fn sync(&self, file: &File) -> io::Result<()>;
@@ -70,7 +71,16 @@ pub struct RealFs;
 
 impl AtomicFs for RealFs {
     fn create_new(&self, path: &Path) -> io::Result<File> {
-        OpenOptions::new().write(true).create_new(true).open(path)
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            // Set the mode at creation: chmod afterward leaves a window in which another
+            // user can open the stage, including a stage left behind by an abrupt exit.
+            options.mode(0o600);
+        }
+        options.open(path)
     }
 
     fn sync(&self, file: &File) -> io::Result<()> {
@@ -159,6 +169,10 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// Atomically writes to `path` using a streaming writer callback `F`.
+///
+/// On Unix, the staging file starts with mode `0600` (restricted by the process umask).
+/// Existing destination permissions are restored after the callback. For a new destination,
+/// callback-selected permissions are kept, or the file remains private by default.
 pub fn atomic_write_with<F>(path: &Path, write_fn: F) -> io::Result<()>
 where
     F: FnOnce(&mut File) -> io::Result<()>,
@@ -258,6 +272,8 @@ pub fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// Exclusively creates and writes `path` with a streaming writer callback `F`.
+/// On Unix, the file starts private (`0600`, restricted by the process umask); the callback
+/// may choose its final permissions.
 pub fn write_new_with<F>(path: &Path, write_fn: F) -> io::Result<()>
 where
     F: FnOnce(&mut File) -> io::Result<()>,
@@ -302,7 +318,14 @@ fn create(fs: &dyn AtomicFs, path: &Path, fill: impl FnOnce(&mut File) -> io::Re
 /// removed.
 fn copy_new(fs: &dyn AtomicFs, tmp: &Path, target: &Path) -> io::Result<()> {
     let mut to = fs.create_new(target)?;
-    let copied = File::open(tmp).and_then(|mut from| io::copy(&mut from, &mut to)).and_then(|_| fs.sync(&to));
+    let copied = File::open(tmp).and_then(|mut from| {
+        io::copy(&mut from, &mut to)?;
+        // Keep callback-selected modes just as hard-link publication does, but only
+        // after copying the payload into a destination that was created privately.
+        #[cfg(unix)]
+        fs.set_permissions(&to, from.metadata()?.permissions())?;
+        fs.sync(&to)
+    });
     drop(to);
     if copied.is_err() {
         let _ = fs.remove(target);
@@ -466,6 +489,8 @@ mod tests {
     #[derive(Default)]
     struct Faulty {
         events: std::cell::RefCell<Vec<&'static str>>,
+        #[cfg(unix)]
+        created_modes: std::cell::RefCell<Vec<u32>>,
         fail_sync: bool,
         /// Syncs fail once this many have succeeded.
         syncs_before_failure: Option<u32>,
@@ -483,7 +508,13 @@ mod tests {
     impl AtomicFs for Faulty {
         fn create_new(&self, path: &Path) -> io::Result<File> {
             self.events.borrow_mut().push("create_new");
-            RealFs.create_new(path)
+            let file = RealFs.create_new(path)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                self.created_modes.borrow_mut().push(file.metadata()?.permissions().mode() & 0o777);
+            }
+            Ok(file)
         }
         fn sync(&self, file: &File) -> io::Result<()> {
             self.events.borrow_mut().push("sync_file");
@@ -670,6 +701,29 @@ mod tests {
         assert_eq!(fs.syncs.get(), 2);
         assert!(!p.exists());
         assert_no_temp(&d.0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exclusive_copy_starts_private_and_keeps_callback_mode() -> io::Result<()> {
+        use std::fs::Permissions;
+        use std::os::unix::fs::PermissionsExt;
+
+        let d = TempDir::new("private-copy");
+        for mode in [0o600, 0o640] {
+            let p = d.0.join(format!("export-{mode:o}.craft"));
+            let fs = Faulty { no_hard_links: true, ..Default::default() };
+            create(&fs, &p, |f| {
+                f.write_all(b"private export")?;
+                f.set_permissions(Permissions::from_mode(mode))
+            })?;
+            // Check both the staging file and the exclusive-copy destination at creation.
+            assert_eq!(*fs.created_modes.borrow(), [0o600, 0o600]);
+            assert_eq!(std::fs::metadata(&p)?.permissions().mode() & 0o777, mode);
+            assert_eq!(std::fs::read(&p)?, b"private export");
+        }
+        assert_no_temp(&d.0);
+        Ok(())
     }
 
     #[cfg(unix)]
