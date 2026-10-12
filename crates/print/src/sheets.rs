@@ -425,6 +425,9 @@ struct Budget {
 
 impl Budget {
     fn charge(&mut self, records: usize, decoded: usize, nodes: usize, tokens: usize) -> Option<()> {
+        if self.exhausted {
+            return None;
+        }
         let fits = self.records.checked_add(records).is_some_and(|n| n <= MAX_RECORDS)
             && self.decoded.checked_add(decoded).is_some_and(|n| n <= MAX_DECODED)
             && self.nodes.checked_add(nodes).is_some_and(|n| n <= MAX_NODES)
@@ -513,6 +516,9 @@ fn indirect<'a>(data: &'a [u8], offset: usize, budget: &mut Budget) -> Option<In
 
 /// A stream's data with its filters undone: FlateDecode (with PNG predictors), or none.
 fn decode(dict: &Dict, raw: &[u8], budget: &mut Budget) -> Option<Vec<u8>> {
+    if budget.exhausted {
+        return None;
+    }
     let limit = MAX_STREAM.min(MAX_DECODED.saturating_sub(budget.decoded));
     if limit == 0 {
         budget.exhausted = true;
@@ -717,6 +723,10 @@ fn startxref(data: &[u8]) -> Option<usize> {
 
 impl Reader<'_> {
     fn object(&mut self, num: u32) -> Option<Obj> {
+        // Geometry fallback must not resume parsing after any job-wide budget is spent.
+        if self.budget.exhausted {
+            return None;
+        }
         match *self.entries.get(&num)? {
             Entry::Free => None,
             Entry::At(offset) => indirect(self.data, offset, &mut self.budget).filter(|x| x.num == num).map(|x| x.obj),

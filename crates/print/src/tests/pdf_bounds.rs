@@ -236,3 +236,21 @@ fn duplicate_dictionary_keys_keep_the_last_value_and_last_position() {
     let escaped = Lexer::new(b"<< /A#42 1 /C 2 /AB 3 >>", 0).object(0).unwrap();
     assert_eq!(escaped.dict().unwrap(), &vec![(b"C".to_vec(), Obj::Num(b"2".to_vec())), (b"AB".to_vec(), Obj::Num(b"3".to_vec()))]);
 }
+
+#[test]
+fn an_inflate_limit_stops_later_stream_and_object_work() {
+    let packed = miniz_oxide::deflate::compress_to_vec_zlib(&[0; 32], 6);
+    let dict = vec![(b"Filter".to_vec(), Obj::Name(b"FlateDecode".to_vec()))];
+    let mut budget = Budget { decoded: MAX_DECODED - 4, ..Budget::default() };
+    assert!(decode(&dict, &packed, &mut budget).is_none());
+    assert!(budget.exhausted);
+    // A rejected inflate has not charged its partial output. A later tiny stream
+    // would otherwise fit, letting geometry fallback repeatedly try more streams.
+    assert_eq!(budget.decoded, MAX_DECODED - 4);
+    assert!(decode(&vec![], b"ok", &mut budget).is_none());
+    assert!(budget.charge(1, 0, 0, 0).is_none());
+    let mut reader = Reader { data: b"1 0 obj (hello) endobj", entries: HashMap::from([(1, Entry::At(0))]), objstms: HashMap::new(), budget };
+    assert!(reader.object(1).is_none());
+    assert_eq!(reader.budget.nodes, 0);
+    assert_eq!(reader.budget.tokens, 0);
+}
