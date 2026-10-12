@@ -12,7 +12,7 @@
 
 use std::io::Write as _;
 
-use winprint::printer::{FilePrinter as _, PrinterDevice, WinPdfPrinter};
+use winprint::printer::{PrinterDevice, WinPdfPrinter};
 use winprint::ticket::document::{NS_PSK, OwnedName, PrintFeature, PrintTicketDocument, reader::ParsableXmlDocument as _};
 use winprint::ticket::{FeatureOptionPack as _, PageMediaSize, PrintCapabilities, PrintTicket, PrintTicketBuilder};
 
@@ -124,7 +124,7 @@ fn imageable_margin(device: &PrinterDevice, ticket: &PrintTicket) -> f64 {
 /// temporary folder (an unpredictable name, only this user's) for as long as the spooler takes
 /// it, and the folder is removed however the job ended. Windows answers once the job is in the
 /// queue: a paused queue or an offline printer keeps the job there, as with any program.
-pub(crate) fn submit(pdf: &[u8], job: &Job) -> Result<String, Error> {
+pub(crate) fn submit_with_progress(pdf: &[u8], job: &Job, progress: &mut dyn FnMut(usize, usize)) -> Result<String, Error> {
     let read = sheets::read(pdf)?;
     let count = read.sheets.len();
     let first = read.sheets.first().map(sheets::Sheet::size).ok_or_else(|| spool_error("the print-ready PDF has no pages"))?;
@@ -139,37 +139,36 @@ pub(crate) fn submit(pdf: &[u8], job: &Job) -> Result<String, Error> {
     let dir = tempfile::Builder::new().prefix("craft-print-").tempdir().map_err(written)?;
     let path = dir.path().join(ticket::job_filename(&job.title));
     let read = &read;
-    // Joined before `dir` is dropped: the spooler reads the file.
-    let result = std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .name("print job".into())
-            .spawn_scoped(s, move || {
-                let (ticket, paper) = driver_ticket(&device, job, first, landscape)?;
-                let (fit, paper) = match job.scaling {
-                    Scaling::Exact => (Fit::Exact, first),
-                    Scaling::ShrinkToFit => {
-                        let (short, long) = (ticket::points(paper.0.min(paper.1)), ticket::points(paper.0.max(paper.1)));
-                        (Fit::Shrink { margin: imageable_margin(&device, &ticket) }, if landscape { (long, short) } else { (short, long) })
-                    }
-                };
-                let edits = sheets::plan(&read.sheets, paper, fit)?;
-                let updated = if edits.is_empty() { None } else { Some(read.update(&edits)?) };
-                let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(written)?;
-                file.write_all(updated.as_deref().unwrap_or(pdf)).map_err(written)?;
-                drop(file);
-                WinPdfPrinter::new(device).print(&path, ticket).map_err(|e| {
-                    let mut message = e.to_string();
-                    let mut cause = std::error::Error::source(&e);
-                    while let Some(source) = cause {
-                        message.push_str(&format!(": {source}"));
-                        cause = source.source();
-                    }
-                    spool_error(message)
-                })
+    // The worker is joined before `dir` is dropped: the spooler reads the file.
+    let result = crate::progress::run(progress, move |sender| {
+        let (ticket, paper) = driver_ticket(&device, job, first, landscape)?;
+        let (fit, paper) = match job.scaling {
+            Scaling::Exact => (Fit::Exact, first),
+            Scaling::ShrinkToFit => {
+                let (short, long) = (ticket::points(paper.0.min(paper.1)), ticket::points(paper.0.max(paper.1)));
+                (Fit::Shrink { margin: imageable_margin(&device, &ticket) }, if landscape { (long, short) } else { (short, long) })
+            }
+        };
+        let edits = sheets::plan(&read.sheets, paper, fit)?;
+        let updated = if edits.is_empty() { None } else { Some(read.update(&edits)?) };
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(written)?;
+        file.write_all(updated.as_deref().unwrap_or(pdf)).map_err(written)?;
+        drop(file);
+        WinPdfPrinter::new(device)
+            .print_with_progress(&path, ticket, |processed, total| {
+                // Page acceptance is distinct from terminal job success. The callback
+                // drains on the submitter's thread, so it can retain non-Send UI state.
+                let _ = sender.send((processed as usize, total as usize));
             })
-            .map_err(|e| spool_error(format!("the print job could not be started: {e}")))?
-            .join()
-            .map_err(|_| spool_error("the print job stopped unexpectedly; check the printer's queue before printing again"))?
+            .map_err(|e| {
+                let mut message = e.to_string();
+                let mut cause = std::error::Error::source(&e);
+                while let Some(source) = cause {
+                    message.push_str(&format!(": {source}"));
+                    cause = source.source();
+                }
+                spool_error(message)
+            })
     });
     drop(dir);
     result?;
@@ -218,7 +217,7 @@ mod tests {
             title: "craft-print test".into(),
             ..Job::default()
         };
-        let sent = submit(&pdf, &job);
+        let sent = crate::submit(&pdf, &job);
         eprintln!("{sent:?}");
         assert!(sent.is_ok());
     }
