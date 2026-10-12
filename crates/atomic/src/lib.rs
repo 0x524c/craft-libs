@@ -13,15 +13,20 @@
 //!   [`atomic_write`] guarantees that external readers never observe a partial write. Either the target
 //!   file retains its previous bytes, or it is replaced completely with the new contents. If an error occurs
 //!   during staging or rename, the target remains unmodified and the staging file is removed in user space.
-//!   Note that an abnormal process crash or power loss leaves the staging file on disk to be swept on startup;
-//!   it does not corrupt the destination.
-//! - **Durability Guarantee (Crash & Power-Loss Persistence)**:
+//!   An abnormal process termination (e.g. `SIGKILL`, crash, power loss) bypasses user-space cleanup and
+//!   leaves the temporary staging file on disk. Sweeping orphaned staging files is the responsibility of the
+//!   consuming application; the library does not perform background sweeping. The destination file itself is
+//!   never corrupted.
+//! - **Durability & Ordering Boundaries**:
 //!   Data persistence across power failures involves two sync points:
 //!   1. **Content Flush (`sync_file`)**: The staging file's payload is forced to non-volatile storage
 //!      (`F_FULLFSYNC` on macOS, `sync_all` on Windows/Linux) *before* the atomic rename.
 //!   2. **Directory Flush (`sync_dir`, Unix only)**: On Unix, flushing the parent directory table is
 //!      attempted *after* the rename on a best-effort basis. If directory sync fails, the error is ignored
 //!      because the rename has already committed and the destination has already been replaced.
+//!   3. **Hardware Durability Limits**: While this enforces strict kernel dispatch order
+//!      (`sync_file < rename < sync_dir`), software flushes cannot guarantee data survival across
+//!      unbuffered drive controller write-caching or physical power cutoffs.
 //!
 //! ### Platform Characteristics
 //! - **Windows**: Antivirus scanners, search indexers, and backup utilities briefly hold files
