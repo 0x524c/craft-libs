@@ -4,22 +4,24 @@
 //!
 //! [`atomic_write`] never truncates the destination file in place. It writes a temporary file
 //! in the **same directory** as the destination, flushes it to non-volatile storage (`sync_all`),
-//! renames it over the destination atomically, and on Unix, flushes the directory so the rename
-//! survives a power loss. If any step fails, the destination retains its original bytes and
+//! renames it over the destination atomically, and on Unix, attempts to flush the directory so the rename
+//! survives a power loss. If write or rename fails, the destination retains its original bytes and
 //! the temporary staging file is removed.
 //!
 //! ### Guarantees: Atomicity vs. Durability
 //! - **Atomicity Guarantee (All-or-Nothing)**:
 //!   [`atomic_write`] guarantees that external readers never observe a partial write. Either the target
-//!   file retains its previous bytes, or it is replaced completely with the new contents. If writing fails,
-//!   times out, or the process terminates prematurely, the target remains unmodified and any staging files
-//!   are cleaned up.
+//!   file retains its previous bytes, or it is replaced completely with the new contents. If an error occurs
+//!   during staging or rename, the target remains unmodified and the staging file is removed in user space.
+//!   Note that an abnormal process crash or power loss leaves the staging file on disk to be swept on startup;
+//!   it does not corrupt the destination.
 //! - **Durability Guarantee (Crash & Power-Loss Persistence)**:
-//!   Data persistence across power failures requires two explicit sync points:
+//!   Data persistence across power failures involves two sync points:
 //!   1. **Content Flush (`sync_file`)**: The staging file's payload is forced to non-volatile storage
 //!      (`F_FULLFSYNC` on macOS, `sync_all` on Windows/Linux) *before* the atomic rename.
-//!   2. **Directory Flush (`sync_dir`)**: On Unix, the containing directory table is synced *after* the
-//!      rename so the filesystem directory entry survives power loss.
+//!   2. **Directory Flush (`sync_dir`, Unix only)**: On Unix, flushing the parent directory table is
+//!      attempted *after* the rename on a best-effort basis. If directory sync fails, the error is ignored
+//!      because the rename has already committed and the destination has already been replaced.
 //!
 //! ### Platform Characteristics
 //! - **Windows**: Antivirus scanners, search indexers, and backup utilities briefly hold files
@@ -182,6 +184,8 @@ fn replace(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, fill: impl FnOnce
         return Err(rename_error(e, path, existed));
     }
 
+    // The new bytes are in place; a failed directory fsync can't be undone and must not report
+    // the save as failed, so it is best effort.
     let _ = fs.sync_dir(&dir);
     Ok(())
 }
@@ -284,6 +288,7 @@ fn create(fs: &dyn AtomicFs, path: &Path, fill: impl FnOnce(&mut File) -> io::Re
         return Err(write_error(e, path, &dir, existed));
     }
 
+    // The new file is in place; a failed directory fsync can't be undone and is best effort.
     let _ = fs.sync_dir(&dir);
     Ok(())
 }
@@ -465,6 +470,7 @@ mod tests {
         renames: Cell<u32>,
         no_hard_links: bool,
         fail_permissions: bool,
+        fail_sync_dir: bool,
         /// Another process creates the target just before the hard link.
         created_meanwhile: Option<&'static [u8]>,
     }
@@ -510,6 +516,9 @@ mod tests {
         }
         fn sync_dir(&self, dir: &Path) -> io::Result<()> {
             self.events.borrow_mut().push("sync_dir");
+            if self.fail_sync_dir {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "injected: directory sync failed"));
+            }
             RealFs.sync_dir(dir)
         }
         fn set_permissions(&self, file: &File, perms: std::fs::Permissions) -> io::Result<()> {
@@ -711,5 +720,15 @@ mod tests {
                 "Durability invariant violated: parent directory must be flushed after rename (rename={rename_idx}, sync_dir={sync_dir_idx})"
             );
         }
+    }
+
+    #[test]
+    fn sync_dir_failure_is_best_effort() {
+        let d = TempDir::new("best_effort_sync_dir");
+        let p = d.0.join("doc.craft");
+        let fs = Faulty { fail_sync_dir: true, ..Default::default() };
+        assert!(atomic_write_custom(&fs, NO_RETRY, &p, b"best effort data").is_ok());
+        assert_eq!(std::fs::read(&p).ok(), Some(b"best effort data".to_vec()));
+        assert_no_temp(&d.0);
     }
 }

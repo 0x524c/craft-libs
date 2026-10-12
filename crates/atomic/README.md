@@ -6,10 +6,10 @@ Extracted from the storage engine in **PhotoCraft** (refs #2, #14), it guarantee
 
 ## Core Guarantees: Atomicity vs. Durability
  
-1. **Atomicity (All-or-Nothing Replacement)**: `atomic_write` never truncates or overwrites the destination in place. It stages content in a hidden temporary file beside the destination (`.{stem}.{pid}-{n}.craft_tmp`), guaranteeing same-volume rename semantics (`EXDEV`-free). An external reader never sees a partial write. If writing fails, times out, or the process crashes mid-stream, the destination retains its prior bytes and the staging file is unlinked.
+1. **Atomicity (All-or-Nothing Replacement)**: `atomic_write` never truncates or overwrites the destination in place. It stages content in a hidden temporary file beside the destination (`.{stem}.{pid}-{n}.craft_tmp`), guaranteeing same-volume rename semantics (`EXDEV`-free). An external reader never sees a partial write. If an error occurs during staging or rename, the destination retains its prior bytes and the staging file is unlinked in user space. An abnormal process crash or power loss leaves the staging file on disk to be swept on startup; the destination is never corrupted.
 2. **Durability (Power-Loss & Crash Persistence)**:
    - **Content Flush**: Before rename, staging file bytes are flushed to physical storage media (`sync_file`, issuing `F_FULLFSYNC` on macOS/APFS with SMB `fsync` fallback).
-   - **Directory Flush**: After rename, on Unix platforms, the parent directory table is explicitly synced (`sync_dir`) so the new directory entry survives sudden power loss.
+   - **Directory Flush (Unix)**: After rename, syncing the parent directory table (`sync_dir`) is attempted on a best-effort basis. If directory sync fails, the error is ignored because the rename has already committed and the destination has already been replaced.
 3. **Transient Lock Backoff (Windows)**: Antivirus scanners and search indexers hold newly written files momentarily. `RenameRetry` automatically retries renames encountering `PermissionDenied`, sharing violations (32), or lock violations (33) with exponential backoff capped at 200ms.
 4. **Permission & Symlink Invariants**: On Unix, preserves destination permissions (e.g. `0600`). Symlink chains are resolved with a hop limit, writing through the symlink to the ultimate target without replacing the link itself.
 5. **Safe Exclusive Creation (`write_new`)**: Uses hard links where supported, or exclusive create (`O_EXCL`), guaranteeing that an existing file is never replaced under race conditions.
@@ -29,7 +29,7 @@ let path = Path::new("project.craft");
 let data = b"precious document state";
 
 // Atomically replaces project.craft. If writing fails, project.craft retains
-// its prior bytes and all temporary staging files are unlinked.
+// its prior bytes and temporary staging files are unlinked in user space.
 atomic_write(path, data).expect("safe atomic write");
 ```
 
