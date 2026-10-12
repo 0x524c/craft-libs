@@ -154,6 +154,58 @@ pub fn delta_e76(a: [f64; 3], b: [f64; 3]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
 
+/// CIEDE2000 colour difference (CIE 142-2001, kL = kC = kH = 1).
+pub fn delta_e2000(a: [f64; 3], b: [f64; 3]) -> f64 {
+    use std::f64::consts::PI;
+    let (l1, a1, b1) = (a[0], a[1], a[2]);
+    let (l2, a2, b2) = (b[0], b[1], b[2]);
+    let c_bar = (a1.hypot(b1) + a2.hypot(b2)) / 2.0;
+    let c7 = c_bar.powi(7);
+    let g = 0.5 * (1.0 - (c7 / (c7 + 25f64.powi(7))).sqrt());
+    let (a1p, a2p) = (a1 * (1.0 + g), a2 * (1.0 + g));
+    let (c1p, c2p) = (a1p.hypot(b1), a2p.hypot(b2));
+    let hue = |b: f64, a: f64| if b == 0.0 && a == 0.0 { 0.0 } else { b.atan2(a).rem_euclid(2.0 * PI) };
+    let (h1p, h2p) = (hue(b1, a1p), hue(b2, a2p));
+    let dl = l2 - l1;
+    let dc = c2p - c1p;
+    let dh = if c1p * c2p == 0.0 {
+        0.0
+    } else {
+        let d = h2p - h1p;
+        if d > PI {
+            d - 2.0 * PI
+        } else if d < -PI {
+            d + 2.0 * PI
+        } else {
+            d
+        }
+    };
+    let dhh = 2.0 * (c1p * c2p).sqrt() * (dh / 2.0).sin();
+    let l_bar = (l1 + l2) / 2.0;
+    let cp_bar = (c1p + c2p) / 2.0;
+    let hp_bar = if c1p * c2p == 0.0 {
+        h1p + h2p
+    } else if (h1p - h2p).abs() <= PI {
+        (h1p + h2p) / 2.0
+    } else if h1p + h2p < 2.0 * PI {
+        (h1p + h2p + 2.0 * PI) / 2.0
+    } else {
+        (h1p + h2p - 2.0 * PI) / 2.0
+    };
+    let t = 1.0 - 0.17 * (hp_bar - PI / 6.0).cos() + 0.24 * (2.0 * hp_bar).cos() + 0.32 * (3.0 * hp_bar + PI / 30.0).cos()
+        - 0.20 * (4.0 * hp_bar - 63f64.to_radians()).cos();
+    let d_theta = 30f64.to_radians() * (-((hp_bar.to_degrees() - 275.0) / 25.0).powi(2)).exp();
+    let cp7 = cp_bar.powi(7);
+    let rc = 2.0 * (cp7 / (cp7 + 25f64.powi(7))).sqrt();
+    let l50 = (l_bar - 50.0).powi(2);
+    let sl = 1.0 + 0.015 * l50 / (20.0 + l50).sqrt();
+    let sc = 1.0 + 0.045 * cp_bar;
+    let sh = 1.0 + 0.015 * cp_bar * t;
+    let rt = -(2.0 * d_theta).sin() * rc;
+    let (x, y, z) = (dl / sl, dc / sc, dhh / sh);
+    (x * x + y * y + z * z + rt * y * z).sqrt()
+}
+
 /// Quantizes to ICC s15Fixed16Number and back (what a profile can actually store).
 pub fn s15f16_round(v: f64) -> f64 {
     (v * 65536.0).round() / 65536.0
@@ -178,6 +230,22 @@ mod tests {
         }
         let w = xyz_to_lab(D50, D50);
         assert!((w[0] - 100.0).abs() < 1e-12 && w[1].abs() < 1e-12 && w[2].abs() < 1e-12);
+    }
+
+    #[test]
+    fn delta_e2000_matches_sharma_reference_pairs() {
+        // Sharma, Wu & Dalal (2005), test data pairs 1, 7, 17, 25 and 34.
+        let pairs = [
+            ([50.0, 2.6772, -79.7751], [50.0, 0.0, -82.7485], 2.0425),
+            ([50.0, 0.0, 0.0], [50.0, -1.0, 2.0], 2.3669),
+            ([50.0, 2.5, 0.0], [73.0, 25.0, -18.0], 27.1492),
+            ([60.2574, -34.0099, 36.2677], [60.4626, -34.1751, 39.4387], 1.2644),
+            ([22.7233, 20.0904, -46.6940], [23.0331, 14.9730, -42.5619], 2.0373),
+        ];
+        for (a, b, want) in pairs {
+            assert!((delta_e2000(a, b) - want).abs() < 1e-4, "{a:?} {b:?}: {}", delta_e2000(a, b));
+            assert!((delta_e2000(b, a) - want).abs() < 1e-4);
+        }
     }
 
     #[test]

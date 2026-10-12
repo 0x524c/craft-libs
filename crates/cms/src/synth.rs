@@ -21,13 +21,17 @@
 //!
 //! The model is plausible for coated offset, not a measured characterisation: use a real
 //! profile from your print provider for production print.
+//!
+//! [`cmyk_profile_from_model`] builds the same tables from any [`Forward`] model, inverting its
+//! sampled AToB table; the Coated FOGRA39 built-in is made that way from a model fitted to
+//! Fogra's measurements (`tests/fogra39.rs`).
 
-use crate::Intent;
 use crate::clut::Clut;
 use crate::curve::Curve;
 use crate::math;
 use crate::pipeline::Stage;
 use crate::profile::{ColorSpace, Lut, LutKind, Pcs, Profile, ProfileClass};
+use crate::{CmsError, Intent};
 
 pub const DESCRIPTION: &str = "Photocraft Coated CMYK (synthetic, 300% TAC, medium GCR)";
 
@@ -35,6 +39,8 @@ pub const DESCRIPTION: &str = "Photocraft Coated CMYK (synthetic, 300% TAC, medi
 #[derive(Clone, Debug)]
 pub struct CmykParams {
     pub description: String,
+    /// Copyright tag text.
+    pub copyright: String,
     /// Total area coverage limit (3.0 = 300 %).
     pub tac: f64,
     /// Gray component (min of C, M, Y of the K-free solution) where black generation starts.
@@ -54,6 +60,7 @@ impl Default for CmykParams {
     fn default() -> Self {
         CmykParams {
             description: DESCRIPTION.into(),
+            copyright: crate::builtin::COPYRIGHT.into(),
             tac: 3.0,
             gcr_start: 0.2,
             k_max: 0.95,
@@ -142,9 +149,33 @@ impl CmykModel {
     }
 }
 
+/// A printer model: CMYK coverages (each in `[0, 1]`) → ICC-relative Lab (paper = L* 100).
+/// The separation solves and the gamut boundary invert it.
+pub trait Forward: Sync {
+    fn lab(&self, cmyk: [f64; 4]) -> [f64; 3];
+}
+
+impl Forward for CmykModel {
+    fn lab(&self, cmyk: [f64; 4]) -> [f64; 3] {
+        CmykModel::lab(self, cmyk)
+    }
+}
+
+/// A forward model read from a sampled AToB table: 4 inputs, legacy (`lut16`) Lab outputs, as
+/// [`sample_a2b`] makes it.
+struct TableForward(Clut);
+
+impl Forward for TableForward {
+    fn lab(&self, cmyk: [f64; 4]) -> [f64; 3] {
+        let mut o = [0.0f32; 3];
+        self.0.eval(&cmyk.map(|v| v.clamp(0.0, 1.0) as f32), &mut o);
+        decode_v2(o.map(f64::from))
+    }
+}
+
 /// Bounded least-squares solve for C, M, Y given K, minimising ΔE76 to `target`, subject to
 /// `C + M + Y ≤ limit` (projected Levenberg–Marquardt with a numerical Jacobian).
-fn solve_cmy(model: &CmykModel, target: [f64; 3], k: f64, limit: f64, seeds: &[[f64; 3]]) -> ([f64; 3], f64) {
+fn solve_cmy<F: Forward + ?Sized>(model: &F, target: [f64; 3], k: f64, limit: f64, seeds: &[[f64; 3]]) -> ([f64; 3], f64) {
     let project = |mut x: [f64; 3]| {
         for _ in 0..4 {
             for v in &mut x {
@@ -238,7 +269,7 @@ fn solve_cmy(model: &CmykModel, target: [f64; 3], k: f64, limit: f64, seeds: &[[
 const SEEDS: [[f64; 3]; 5] = [[0.3, 0.3, 0.3], [0.05, 0.05, 0.05], [0.8, 0.8, 0.8], [0.9, 0.2, 0.2], [0.2, 0.9, 0.9]];
 
 /// Colorimetric separation of a relative Lab target: GCR black generation then a CMY solve.
-pub fn separate(model: &CmykModel, p: &CmykParams, target: [f64; 3], warm: Option<[f64; 4]>) -> ([f64; 4], f64) {
+pub fn separate<F: Forward + ?Sized>(model: &F, p: &CmykParams, target: [f64; 3], warm: Option<[f64; 4]>) -> ([f64; 4], f64) {
     let mut seeds: Vec<[f64; 3]> = warm.map(|w| vec![[w[0], w[1], w[2]]]).unwrap_or_default();
     seeds.extend_from_slice(&SEEDS);
     let (cmy0, _) = solve_cmy(model, target, 0.0, 3.0, &seeds);
@@ -259,7 +290,7 @@ struct Gbd {
 }
 
 impl Gbd {
-    fn new(model: &CmykModel, p: &CmykParams) -> Self {
+    fn new<F: Forward + ?Sized>(model: &F, p: &CmykParams) -> Self {
         let (l_bins, h_bins) = (41usize, 72usize);
         let mut cmax = vec![0.0f64; l_bins * h_bins];
         let n = 21;
@@ -373,8 +404,8 @@ fn par_map<T: Send>(n: usize, f: impl Fn(usize) -> T + Sync + Send) -> Vec<T> {
     (0..n).map(f).collect()
 }
 
-fn b2a_table(model: &CmykModel, p: &CmykParams, gbd: Option<&Gbd>) -> Clut {
-    let n = p.grid_b2a;
+fn b2a_table<F: Forward + ?Sized>(model: &F, p: &CmykParams, gbd: Option<&Gbd>) -> Clut {
+    let n = p.grid_b2a.max(2);
     let nodes = n * n * n;
     let vals = par_map(n * n, |row| {
         // One (L, a) row along b, warm-starting each solve from its neighbour.
@@ -411,14 +442,40 @@ fn lut16(clut: Clut) -> Lut {
 /// Generates a synthetic CMYK profile.
 pub fn cmyk_profile(p: &CmykParams) -> Profile {
     let model = CmykModel::coated(p.tvi);
-    let g = p.grid_a2b;
-    let a2b = Clut::sample(vec![g; 4], 3, |inp, out| {
+    let a2b = sample_a2b(&model, p.grid_a2b);
+    lut_profile(&model, a2b, model.paper, p)
+}
+
+/// Samples a forward model into an AToB table with `grid`⁴ nodes (at least 2⁴) and legacy Lab
+/// encoding.
+fn sample_a2b<F: Forward + ?Sized>(model: &F, grid: usize) -> Clut {
+    Clut::sample(vec![grid.max(2); 4], 3, |inp, out| {
         let lab = model.lab([inp[0] as f64, inp[1] as f64, inp[2] as f64, inp[3] as f64]);
         out.copy_from_slice(&encode_v2(lab));
-    });
-    let gbd = Gbd::new(&model, p);
-    let colorimetric = b2a_table(&model, p, None);
-    let perceptual = b2a_table(&model, p, Some(&gbd));
+    })
+}
+
+/// A CMYK profile of any forward model on paper with absolute XYZ `paper`: the AToB table
+/// samples `model` on `p.grid_a2b`⁴ nodes, and the BToA tables invert that table rather than the
+/// model, so Lab → CMYK → Lab round trips through the profile are as close as the separation
+/// allows. Grids below 2 nodes and a zero, negative or non-finite `paper` are refused with
+/// [`CmsError::Invalid`].
+pub fn cmyk_profile_from_model<F: Forward + ?Sized>(model: &F, paper: [f64; 3], p: &CmykParams) -> Result<Profile, CmsError> {
+    if p.grid_a2b < 2 || p.grid_b2a < 2 {
+        return Err(CmsError::Invalid(format!("CMYK profile grids {}⁴/{}³ need at least 2 nodes", p.grid_a2b, p.grid_b2a)));
+    }
+    if !paper.iter().all(|v| v.is_finite() && *v > 0.0) {
+        return Err(CmsError::Invalid(format!("paper XYZ {paper:?}")));
+    }
+    let a2b = sample_a2b(model, p.grid_a2b);
+    let forward = TableForward(a2b.clone());
+    Ok(lut_profile(&forward, a2b, paper, p))
+}
+
+fn lut_profile<F: Forward + ?Sized>(model: &F, a2b: Clut, paper: [f64; 3], p: &CmykParams) -> Profile {
+    let gbd = Gbd::new(model, p);
+    let colorimetric = b2a_table(model, p, None);
+    let perceptual = b2a_table(model, p, Some(&gbd));
     let a2b = lut16(a2b);
     let (b0, b1) = (lut16(perceptual), lut16(colorimetric));
     Profile {
@@ -428,8 +485,8 @@ pub fn cmyk_profile(p: &CmykParams) -> Profile {
         pcs: Pcs::Lab,
         rendering_intent: Intent::Perceptual,
         description: p.description.clone(),
-        copyright: crate::builtin::COPYRIGHT.into(),
-        white_point: model.paper.map(math::s15f16_round),
+        copyright: p.copyright.clone(),
+        white_point: paper.map(math::s15f16_round),
         black_point: None,
         chad: None,
         matrix: None,

@@ -8,7 +8,8 @@
 //!   [`Intent`] and optional black point compensation, and converts 8/16-bit and float pixel
 //!   buffers through precomputed tables (tetrahedral 3D/4D interpolation, rayon on native).
 //! * [`builtin`] ships sRGB, Display P3, Adobe RGB (1998)-compatible, ProPhoto-compatible,
-//!   linear sRGB, Rec. 2020, Gray 2.2, sGray, Lab D50 and a synthetic coated CMYK profile.
+//!   linear sRGB, Rec. 2020, Gray 2.2, sGray, Lab D50, a synthetic coated CMYK profile and a
+//!   Coated FOGRA39 profile fitted to Fogra's characterisation data.
 //! * [`Lut3d`] samples a display transform into a 3D texture for the GPU canvas.
 //!
 //! Implemented from the public ICC.1:2010 (v4.3) and ICC.1:2001-04 (v2) specifications,

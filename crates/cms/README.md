@@ -30,6 +30,8 @@ t.eval(&[1.0, 0.0, 0.0], &mut out);                        // exact single colou
 * `lutfile::parse(name, bytes)` / `lutfile::write_cube(&lut)`: `.cube`, `.3dl` and `.look` LUT
   files; `lutfile::builtin(id)` returns generated looks (`lutfile::BUILTIN`).
 * `Profile::to_bytes()`: original bytes of parsed profiles (byte-exact), or an ICC v4.3 encoding.
+* `Builtin::from_profile_name(desc)`: the built-in for a profile a document names (see
+  [Selecting by profile name](#selecting-by-profile-name)).
 * `Profile::same_colors(&other)`: the same colour space whatever the encoding (every sample of
   a device grid within ΔE 0.5 through both), e.g. Photoshop's sRGB IEC61966-2.1 and the built-in
   sRGB. `content_hash()` compares bytes and suits cache keys only.
@@ -65,25 +67,83 @@ published with, so profiles embedded in existing files still match byte for byte
 | `gray-gamma-2.2`, `sgray` | gray gamma 2.2; gray with the sRGB curve (default gray working space) |
 | `lab-d50` | Lab identity (v4 encoding) |
 | `coated-cmyk` | **Photocraft Coated CMYK (synthetic, 300% TAC, medium GCR)**: default CMYK |
+| `coated-fogra39` | Coated FOGRA39 (fitted, craft-cms): fitted to Fogra's FOGRA39 data, 330% TAC, medium GCR |
 
-### The CMYK profile
+### The CMYK profiles
 
 Adobe's CMYK profiles (U.S. Web Coated SWOP, Coated FOGRA39) are proprietary, and the freely
 downloadable characterisation-based profiles (ECI/FOGRA, colord, Ghostscript) carry
-redistribution conditions or unclear licences, so this crate generates its own
-(`src/synth.rs`): a Yule–Nielsen modified Neugebauer model (n = 2) over the 16 overprints with
+redistribution conditions or unclear licences, so this crate generates its own. Both share the
+separation code in `src/synth.rs`: GCR black generation (starts at 20 % gray component, K max
+95 %), a bounded least-squares CMY solve under the total ink limit, and perceptual tables with
+L* black-point scaling and soft chroma compression against a sampled gamut boundary.
+
+**`coated-cmyk`** (`profiles/photocraft-coated-cmyk.icc`, 237 KB, AToB 11⁴ lut16, BToA 21³
+lut16) comes from a Yule–Nielsen modified Neugebauer model (n = 2) over the 16 overprints with
 ISO 12647-2 coated-paper Lab aims for paper/C/M/Y/RGB overprints, parabolic dot gain (14 % CMY,
-17 % K at 50 %), GCR black generation (starts at 20 % gray component, K max 95 %), total ink
-limit 300 %, perceptual tables with L* black-point scaling and soft chroma compression against a
-sampled gamut boundary. `profiles/photocraft-coated-cmyk.icc` (237 KB, AToB 11⁴ lut16, BToA
-21³ lut16) is that output, dedicated to the public domain (CC0-1.0). Regenerate with
+17 % K at 50 %) and a 300 % ink limit. It is a plausible coated-offset profile, not a measured
+characterisation: its midtones are darker than FOGRA39 (mean ΔE00 6.7 against the FOGRA39
+patches, oranges such as 0/50/100/0 about 5 ΔE00 off).
+
+**`coated-fogra39`** (`profiles/craft-coated-fogra39.icc`, 664 KB, AToB 11⁴ lut16, BToA 33³
+lut16, 330 % ink limit) reproduces the colours of documents set up for Coated FOGRA39 or ISO
+Coated v2. It is fitted to Fogra's FOGRA39 characterisation data (`tests/data/FOGRA39.txt`,
+1617 IT8.7/4 patches, CMYK with D50 XYZ and Lab; ISO 12647-2:2004 Amd 1 offset on paper type
+1/2): a Yule–Nielsen modified Neugebauer model with free overprints, per-ink tone curves and a
+fitted n (1.45) is solved by least squares against all patches (mean ΔE00 1.1 on its own), then
+a Gaussian-kernel ridge regression of the remaining Lab errors over CMYK (σ = 0.2, λ = 0.01)
+corrects it before the AToB table is sampled. The BToA tables invert that AToB table.
+
+| Through the AToB, relative colorimetric, against the 1617 FOGRA39 patches | mean ΔE00 | p95 | max |
+|---|---|---|---|
+| `coated-fogra39` | 0.07 | 0.18 | 0.53 |
+| `coated-fogra39` fit, against the 10 % of patches held out of it | 0.11 | 0.32 | 0.79 |
+| `coated-cmyk` | 6.67 | 13.4 | 16.1 |
+
+Lab → CMYK → Lab through the profile (relative colorimetric) returns colours inside the gamut
+within mean ΔE00 0.24 (p95 1.0, max 2.5). Converted to sRGB (relative colorimetric with black
+point compensation), process solids, overprints and oranges land within 0.8 ΔE00 of reference
+values for Coated FOGRA39 (`tests/fogra39.rs`).
+
+"FOGRA39" identifies the reference data the profile is fitted to; it does not imply
+certification, approval or endorsement by Fogra. The data file is Fogra's, distributed
+unmodified with Fogra identified as the source as Fogra's terms require (see `NOTICE`); it is
+left out of the published crate, as only the tests read it.
+
+Regenerate the profiles with
 
 ```sh
-CRAFT_CMS_REGEN_PROFILES=1 cargo test -p craft-cms --release --test regen
+CRAFT_CMS_REGEN_PROFILES=1 cargo test -p craft-cms --release --test regen --test fogra39
 ```
 
-It is a plausible coated-offset profile, not a measured characterisation: use your printer's
-profile for production print.
+Use your printer's profile for production print.
+
+### Selecting by profile name
+
+`Builtin::from_profile_name` maps the profile description a document carries to a built-in,
+ignoring case and whitespace:
+
+| Name in the document | Built-in |
+|---|---|
+| Coated FOGRA39 (ISO 12647-2:2004), Coated FOGRA39 | `coated-fogra39` |
+| ISO Coated v2 (ECI), ISO Coated v2 300% (ECI) | `coated-fogra39` |
+| each built-in's own description (e.g. sRGB IEC61966-2.1) | that built-in |
+| anything else | `None` |
+
+ECI's ISO Coated v2 profiles are made from FOGRA39L, the same characterisation data as Adobe's
+Coated FOGRA39, so they describe the same printed colours; only their separations (ink limit,
+black generation) differ.
+
+### Display transforms
+
+Page-layout and image editors usually convert CMYK for display with relative colorimetric and
+black point compensation. To match them, keep BPC on (the `TransformOptions` default):
+
+```rust
+let cmyk = Builtin::from_profile_name(&doc_profile_name).unwrap_or(Builtin::CoatedFogra39);
+let t = Transform::new(cmyk.profile(), Builtin::Srgb.profile(), Intent::RelativeColorimetric, /*bpc*/ true)?;
+// or: transform::cached(src, dst, TransformOptions::default())
+```
 
 ## Not implemented / approximate
 

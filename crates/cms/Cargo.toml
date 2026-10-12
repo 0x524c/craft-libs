@@ -6,6 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 description = "Pure-Rust ICC v2/v4 colour management: profile parsing and writing, transforms, rendering intents, black point compensation"
+# The FOGRA39 measurement data and the tests that read it stay in the repository.
+exclude = ["tests/data", "tests/fogra39.rs"]
 
 [lints]
 workspace = true
