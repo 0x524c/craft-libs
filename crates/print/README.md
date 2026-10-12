@@ -48,3 +48,6 @@ The cross-platform GitHub Actions workflow is defined in `.github/workflows/prin
 It runs formatting, Clippy and this crate's own tests on Windows, Linux and macOS when print
 code changes, and supports manual runs. The Windows job executes the WinRT and spooler
 regressions above; physical printer fidelity still requires hardware verification.
+
+Windows discovery reports driver duplex support in `Printer::two_sided`; CUPS leaves it unknown.
+Callers can warn when a Windows driver ignores the job’s duplex choice.
