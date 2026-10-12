@@ -99,7 +99,8 @@ fn discovery_and_controls_do_not_submit_a_job() {
         grayscale: "Graustufen",
     };
     let ctx = egui::Context::default();
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| state.show(ui, egui::Id::new("print"), &discover, &labels));
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| state.show(ui, egui::Id::new("print"), &discover, &labels));
+    output.textures_delta.clear();
     assert_eq!(state.settings.printer, "Office");
     assert!(state.ready());
     assert!(!state.busy());
@@ -131,10 +132,12 @@ fn localized_controls_fit_narrow_ui_and_disable_while_submitting() {
         grayscale: "Graustufen",
     };
     let frame = |state: &mut State, events| {
-        ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(220.0, 360.0))), events, ..Default::default() },
             |ui| state.show(ui, egui::Id::new("print"), &discover, &labels),
-        )
+        );
+        output.textures_delta.clear();
+        output
     };
     let output = frame(&mut state, Vec::new());
     let tree = output.platform_output.accesskit_update.unwrap();
