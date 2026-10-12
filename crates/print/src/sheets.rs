@@ -12,6 +12,7 @@
 //! panic: the caller's PDF is input like any other.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::Error;
 
@@ -19,9 +20,16 @@ use crate::Error;
 const MAX_DEPTH: usize = 64;
 const MAX_PAGES: usize = 100_000;
 /// The most a cross-reference or object stream may inflate to.
-const MAX_STREAM: usize = 64 << 20;
+const MAX_STREAM: usize = 16 << 20;
+// A short compressed file can otherwise expand into millions of hash-map entries.
+// These are job-wide budgets, including older xref sections and cached object streams.
+const MAX_RECORDS: usize = 500_000;
+const MAX_DECODED: usize = 32 << 20;
+const MAX_NODES: usize = 250_000;
+const MAX_TOKENS: usize = 16 << 20;
+const MAX_OBJECT_NODES: usize = 32_000;
+const MAX_OBJECT_TOKENS: usize = 1 << 20;
 const MAX_SECTIONS: usize = 256;
-const MAX_OBJSTM_ENTRIES: usize = 1_000_000;
 /// A page without a MediaBox (invalid, but readers accept it) is US Letter.
 const DEFAULT_MEDIA: [f64; 4] = [0.0, 0.0, 612.0, 792.0];
 /// Sheet sizes this close, in points (0.18 mm), are the same size.
@@ -100,11 +108,23 @@ fn is_regular(b: u8) -> bool {
 struct Lexer<'a> {
     s: &'a [u8],
     pos: usize,
+    nodes: usize,
+    tokens: usize,
+    max_nodes: usize,
+    max_tokens: usize,
+    exhausted: bool,
 }
 
 impl<'a> Lexer<'a> {
     fn new(s: &'a [u8], pos: usize) -> Self {
-        Lexer { s, pos }
+        Lexer { s, pos, nodes: 0, tokens: 0, max_nodes: MAX_OBJECT_NODES, max_tokens: MAX_OBJECT_TOKENS, exhausted: false }
+    }
+
+    fn bounded(s: &'a [u8], pos: usize, budget: &Budget) -> Self {
+        let mut lx = Self::new(s, pos);
+        lx.max_nodes = MAX_OBJECT_NODES.min(MAX_NODES.saturating_sub(budget.nodes));
+        lx.max_tokens = MAX_OBJECT_TOKENS.min(MAX_TOKENS.saturating_sub(budget.tokens));
+        lx
     }
 
     fn peek(&self) -> Option<u8> {
@@ -168,6 +188,11 @@ impl<'a> Lexer<'a> {
     }
 
     fn object(&mut self, depth: usize) -> Option<Obj> {
+        self.nodes = self.nodes.checked_add(1)?;
+        if self.nodes > self.max_nodes {
+            self.exhausted = true;
+            return None;
+        }
         if depth > MAX_DEPTH {
             return None;
         }
@@ -175,7 +200,7 @@ impl<'a> Lexer<'a> {
         match self.peek()? {
             b'/' => {
                 self.pos += 1;
-                Some(Obj::Name(self.name()))
+                Some(Obj::Name(self.name()?))
             }
             b'(' => self.literal().map(Obj::Str),
             b'<' if self.s.get(self.pos + 1) == Some(&b'<') => {
@@ -217,7 +242,7 @@ impl<'a> Lexer<'a> {
                 return None;
             }
             self.pos += 1;
-            let key = self.name();
+            let key = self.name()?;
             let value = self.object(depth + 1)?;
             // A repeated key: the last one counts.
             dict.retain(|(k, _)| *k != key);
@@ -225,8 +250,13 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn name(&mut self) -> Vec<u8> {
+    fn name(&mut self) -> Option<Vec<u8>> {
         let raw = self.word();
+        self.tokens = self.tokens.checked_add(raw.len())?;
+        if self.tokens > self.max_tokens {
+            self.exhausted = true;
+            return None;
+        }
         let mut out = Vec::with_capacity(raw.len());
         let mut i = 0;
         while let Some(&b) = raw.get(i) {
@@ -242,7 +272,17 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        out
+        Some(out)
+    }
+
+    fn token(&mut self, start: usize, end: usize) -> Option<Vec<u8>> {
+        let raw = self.s.get(start..end)?;
+        self.tokens = self.tokens.checked_add(raw.len())?;
+        if self.tokens > self.max_tokens {
+            self.exhausted = true;
+            return None;
+        }
+        Some(raw.to_vec())
     }
 
     /// A literal string, kept as written: balanced parentheses, `\` escaping the next byte.
@@ -258,7 +298,7 @@ impl<'a> Lexer<'a> {
                 b')' => {
                     depth = depth.saturating_sub(1);
                     if depth == 0 {
-                        return self.s.get(start..self.pos).map(<[u8]>::to_vec);
+                        return self.token(start, self.pos);
                     }
                 }
                 _ => {}
@@ -270,7 +310,7 @@ impl<'a> Lexer<'a> {
         let start = self.pos;
         let end = self.rest().iter().position(|&b| b == b'>')?;
         self.pos += end + 1;
-        self.s.get(start..self.pos).map(<[u8]>::to_vec)
+        self.token(start, self.pos)
     }
 
     /// A number, or `num gen R`.
@@ -288,6 +328,11 @@ impl<'a> Lexer<'a> {
                 return Some(Obj::Ref(num, generation));
             }
             self.pos = after;
+        }
+        self.tokens = self.tokens.checked_add(word.len())?;
+        if self.tokens > self.max_tokens {
+            self.exhausted = true;
+            return None;
         }
         Some(Obj::Num(word.to_vec()))
     }
@@ -364,10 +409,46 @@ struct ObjStm {
     objects: Vec<(u32, usize)>,
 }
 
+#[derive(Default)]
+struct Budget {
+    records: usize,
+    decoded: usize,
+    nodes: usize,
+    tokens: usize,
+    exhausted: bool,
+}
+
+impl Budget {
+    fn charge(&mut self, records: usize, decoded: usize, nodes: usize, tokens: usize) -> Option<()> {
+        let fits = self.records.checked_add(records).is_some_and(|n| n <= MAX_RECORDS)
+            && self.decoded.checked_add(decoded).is_some_and(|n| n <= MAX_DECODED)
+            && self.nodes.checked_add(nodes).is_some_and(|n| n <= MAX_NODES)
+            && self.tokens.checked_add(tokens).is_some_and(|n| n <= MAX_TOKENS);
+        if !fits {
+            self.exhausted = true;
+            return None;
+        }
+        self.records += records;
+        self.decoded += decoded;
+        self.nodes += nodes;
+        self.tokens += tokens;
+        Some(())
+    }
+
+    fn parsed(&mut self, lx: &Lexer<'_>) -> Option<()> {
+        if lx.exhausted {
+            self.exhausted = true;
+            return None;
+        }
+        self.charge(0, 0, lx.nodes, lx.tokens)
+    }
+}
+
 struct Reader<'a> {
     data: &'a [u8],
     entries: HashMap<u32, Entry>,
     objstms: HashMap<u32, Option<ObjStm>>,
+    budget: Budget,
 }
 
 /// An indirect object read at an offset: its number, value and stream data.
@@ -377,14 +458,16 @@ struct Indirect<'a> {
     stream: Option<&'a [u8]>,
 }
 
-fn indirect(data: &[u8], offset: usize) -> Option<Indirect<'_>> {
-    let mut lx = Lexer::new(data, offset);
+fn indirect<'a>(data: &'a [u8], offset: usize, budget: &mut Budget) -> Option<Indirect<'a>> {
+    let mut lx = Lexer::bounded(data, offset, budget);
     let num = u32::try_from(lx.unsigned()?).ok()?;
     lx.unsigned()?;
     if !lx.keyword(b"obj") {
         return None;
     }
-    let obj = lx.object(0)?;
+    let obj = lx.object(0);
+    budget.parsed(&lx)?;
+    let obj = obj?;
     let mut stream = None;
     if let Obj::Dict(dict) = &obj
         && lx.keyword(b"stream")
@@ -424,7 +507,12 @@ fn indirect(data: &[u8], offset: usize) -> Option<Indirect<'_>> {
 }
 
 /// A stream's data with its filters undone: FlateDecode (with PNG predictors), or none.
-fn decode(dict: &Dict, raw: &[u8]) -> Option<Vec<u8>> {
+fn decode(dict: &Dict, raw: &[u8], budget: &mut Budget) -> Option<Vec<u8>> {
+    let limit = MAX_STREAM.min(MAX_DECODED.saturating_sub(budget.decoded));
+    if limit == 0 {
+        budget.exhausted = true;
+        return None;
+    }
     let filters: Vec<&[u8]> = match get(dict, b"Filter") {
         None => Vec::new(),
         Some(Obj::Name(n)) => vec![n.as_slice()],
@@ -436,23 +524,41 @@ fn decode(dict: &Dict, raw: &[u8]) -> Option<Vec<u8>> {
         Some(Obj::Array(a)) => a.first().and_then(Obj::dict),
         _ => None,
     };
-    match filters.as_slice() {
-        [] => Some(raw.to_vec()),
+    let data = match filters.as_slice() {
+        [] => {
+            if raw.len() > limit {
+                budget.exhausted = true;
+                return None;
+            }
+            Some(raw.to_vec())
+        }
         [b"FlateDecode" | b"Fl"] => {
-            let inflated = match miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(raw, MAX_STREAM) {
+            let inflated = match miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(raw, limit) {
                 Ok(v) => v,
+                Err(e) if e.status == miniz_oxide::inflate::TINFLStatus::HasMoreOutput => {
+                    budget.exhausted = true;
+                    return None;
+                }
                 // A damaged stream: what inflated before the damage, as other readers do.
                 Err(e) if !e.output.is_empty() => e.output,
-                Err(_) => miniz_oxide::inflate::decompress_to_vec_with_limit(raw, MAX_STREAM).ok()?,
+                Err(_) => match miniz_oxide::inflate::decompress_to_vec_with_limit(raw, limit) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        budget.exhausted |= e.status == miniz_oxide::inflate::TINFLStatus::HasMoreOutput;
+                        return None;
+                    }
+                },
             };
-            unpredict(&inflated, parms)
+            unpredict(&inflated, parms, limit)
         }
         _ => None,
-    }
+    }?;
+    budget.charge(0, data.len(), 0, 0)?;
+    Some(data)
 }
 
 /// Undo a PNG predictor (`/Predictor` 10–15), which cross-reference streams use.
-fn unpredict(data: &[u8], parms: Option<&Dict>) -> Option<Vec<u8>> {
+fn unpredict(data: &[u8], parms: Option<&Dict>, limit: usize) -> Option<Vec<u8>> {
     let int = |key: &[u8], default: i64| parms.and_then(|p| get(p, key)).and_then(Obj::int).unwrap_or(default);
     let predictor = int(b"Predictor", 1);
     if predictor < 10 {
@@ -463,6 +569,9 @@ fn unpredict(data: &[u8], parms: Option<&Dict>) -> Option<Vec<u8>> {
     let columns = usize::try_from(int(b"Columns", 1)).ok().filter(|c| (1..=1 << 20).contains(c))?;
     let bpp = (colors * bits).div_ceil(8).max(1);
     let row = (columns * colors * bits).div_ceil(8);
+    if row > limit || !data.len().is_multiple_of(row + 1) || data.len() / (row + 1) * row > limit {
+        return None;
+    }
     let mut out: Vec<u8> = Vec::with_capacity(data.len());
     let mut prev = vec![0u8; row];
     for chunk in data.chunks(row + 1) {
@@ -502,21 +611,25 @@ fn unpredict(data: &[u8], parms: Option<&Dict>) -> Option<Vec<u8>> {
 }
 
 /// One cross-reference section and its trailer (for a stream, its dictionary).
-fn xref_section(data: &[u8], offset: usize, entries: &mut HashMap<u32, Entry>) -> Option<(Dict, bool)> {
-    let mut lx = Lexer::new(data, offset);
+fn xref_section(data: &[u8], offset: usize, entries: &mut HashMap<u32, Entry>, budget: &mut Budget) -> Option<(Dict, bool)> {
+    let mut lx = Lexer::bounded(data, offset, budget);
     if !lx.keyword(b"xref") {
-        let x = indirect(data, offset)?;
+        let x = indirect(data, offset, budget)?;
         let dict = x.obj.dict()?.clone();
-        xref_stream(&dict, x.stream?, entries)?;
+        xref_stream(&dict, x.stream?, entries, budget)?;
         return Some((dict, true));
     }
     let mut table = Vec::new();
     let trailer = loop {
         if lx.keyword(b"trailer") {
-            break lx.object(0)?.dict()?.clone();
+            let trailer = lx.object(0);
+            budget.parsed(&lx)?;
+            break trailer?.dict()?.clone();
         }
         let start = u32::try_from(lx.unsigned()?).ok()?;
         let count = u32::try_from(lx.unsigned()?).ok()?;
+        budget.charge(usize::try_from(count).ok()?, 0, 0, 0)?;
+        start.checked_add(count.saturating_sub(1))?;
         for i in 0..count {
             let offset = usize::try_from(lx.unsigned()?).ok()?;
             lx.unsigned()?;
@@ -528,10 +641,10 @@ fn xref_section(data: &[u8], offset: usize, entries: &mut HashMap<u32, Entry>) -
     };
     // A hybrid file's stream lists the objects its table leaves out (ISO 32000-1, 7.5.8.4).
     if let Some(at) = get(&trailer, b"XRefStm").and_then(Obj::int).and_then(|v| usize::try_from(v).ok())
-        && let Some(x) = indirect(data, at)
+        && let Some(x) = indirect(data, at, budget)
         && let (Some(dict), Some(stream)) = (x.obj.dict(), x.stream)
     {
-        xref_stream(dict, stream, entries);
+        xref_stream(dict, stream, entries, budget)?;
     }
     for (num, entry) in table {
         entries.entry(num).or_insert(entry);
@@ -539,11 +652,11 @@ fn xref_section(data: &[u8], offset: usize, entries: &mut HashMap<u32, Entry>) -
     Some((trailer, false))
 }
 
-fn xref_stream(dict: &Dict, raw: &[u8], entries: &mut HashMap<u32, Entry>) -> Option<()> {
+fn xref_stream(dict: &Dict, raw: &[u8], entries: &mut HashMap<u32, Entry>, budget: &mut Budget) -> Option<()> {
     if get(dict, b"Type").and_then(Obj::name) != Some(b"XRef") {
         return None;
     }
-    let data = decode(dict, raw)?;
+
     let widths: Vec<usize> =
         get(dict, b"W")?.array()?.iter().map(|w| w.int().and_then(|w| usize::try_from(w).ok()).filter(|w| *w <= 8)).collect::<Option<_>>()?;
     let [w0, w1, w2] = widths.as_slice() else { return None };
@@ -556,6 +669,18 @@ fn xref_stream(dict: &Dict, raw: &[u8], entries: &mut HashMap<u32, Entry>) -> Op
         Some(a) => a.iter().map(Obj::int).collect::<Option<_>>()?,
         None => vec![0, size],
     };
+    if !index.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut count = 0usize;
+    for &[start, n] in index.as_chunks::<2>().0 {
+        let (start, n) = (u32::try_from(start).ok()?, u32::try_from(n).ok()?);
+        start.checked_add(n.saturating_sub(1))?;
+        count = count.checked_add(usize::try_from(n).ok()?)?;
+    }
+    // Check counts before inflating or expanding the xref map, including duplicate records.
+    budget.charge(count, 0, 0, 0)?;
+    let data = decode(dict, raw, budget)?;
     let field = |bytes: &[u8]| bytes.iter().fold(0u64, |v, &b| v.wrapping_shl(8) | u64::from(b));
     let mut records = data.chunks_exact(entry_len);
     for &[start, count] in index.as_chunks::<2>().0 {
@@ -589,7 +714,7 @@ impl Reader<'_> {
     fn object(&mut self, num: u32) -> Option<Obj> {
         match *self.entries.get(&num)? {
             Entry::Free => None,
-            Entry::At(offset) => indirect(self.data, offset).filter(|x| x.num == num).map(|x| x.obj),
+            Entry::At(offset) => indirect(self.data, offset, &mut self.budget).filter(|x| x.num == num).map(|x| x.obj),
             Entry::In(stm, index) => {
                 if !self.objstms.contains_key(&stm) {
                     let loaded = self.load_objstm(stm);
@@ -597,20 +722,27 @@ impl Reader<'_> {
                 }
                 let objstm = self.objstms.get(&stm)?.as_ref()?;
                 let &(found, offset) = objstm.objects.get(usize::try_from(index).ok()?)?;
-                (found == num).then(|| Lexer::new(&objstm.data, offset).object(0)).flatten()
+                if found != num {
+                    return None;
+                }
+                let mut lx = Lexer::bounded(&objstm.data, offset, &self.budget);
+                let obj = lx.object(0);
+                self.budget.parsed(&lx)?;
+                obj
             }
         }
     }
 
-    fn load_objstm(&self, stm: u32) -> Option<ObjStm> {
+    fn load_objstm(&mut self, stm: u32) -> Option<ObjStm> {
         let Entry::At(offset) = *self.entries.get(&stm)? else { return None };
-        let x = indirect(self.data, offset).filter(|x| x.num == stm)?;
+        let x = indirect(self.data, offset, &mut self.budget).filter(|x| x.num == stm)?;
         let dict = x.obj.dict()?;
         if get(dict, b"Type").and_then(Obj::name) != Some(b"ObjStm") {
             return None;
         }
-        let data = decode(dict, x.stream?)?;
-        let n = get(dict, b"N").and_then(Obj::int).and_then(|n| usize::try_from(n).ok())?.min(MAX_OBJSTM_ENTRIES);
+        let n = get(dict, b"N").and_then(Obj::int).and_then(|n| usize::try_from(n).ok())?;
+        self.budget.charge(n, 0, 0, 0)?;
+        let data = decode(dict, x.stream?, &mut self.budget)?;
         let first = get(dict, b"First").and_then(Obj::int).and_then(|f| usize::try_from(f).ok())?;
         let mut lx = Lexer::new(&data, 0);
         let mut objects = Vec::new();
@@ -684,15 +816,16 @@ pub(crate) struct Sheets<'a> {
 /// What [`read`] inherits down the page tree.
 #[derive(Clone, Default)]
 struct Inherited {
-    media: Option<Obj>,
-    crop: Option<Obj>,
-    rotate: Option<Obj>,
+    media: Option<Arc<Obj>>,
+    crop: Option<Arc<Obj>>,
+    rotate: Option<Arc<Obj>>,
 }
 
 /// Read the sheets of a print-ready PDF.
 pub(crate) fn read(data: &[u8]) -> Result<Sheets<'_>, Error> {
     let start = startxref(data).ok_or_else(|| unreadable("no cross-reference table"))?;
     let mut entries = HashMap::new();
+    let mut budget = Budget::default();
     let mut trailer = None;
     let mut xref_stream = false;
     let mut seen = HashSet::new();
@@ -701,9 +834,9 @@ pub(crate) fn read(data: &[u8]) -> Result<Sheets<'_>, Error> {
         if !seen.insert(offset) || seen.len() > MAX_SECTIONS {
             break;
         }
-        let Some((section, is_stream)) = xref_section(data, offset, &mut entries) else {
+        let Some((section, is_stream)) = xref_section(data, offset, &mut entries, &mut budget) else {
             // An older section that can't be read only loses objects the newer ones replaced.
-            if trailer.is_none() {
+            if budget.exhausted || trailer.is_none() {
                 return Err(unreadable("the cross-reference table is damaged"));
             }
             break;
@@ -720,7 +853,7 @@ pub(crate) fn read(data: &[u8]) -> Result<Sheets<'_>, Error> {
         .max()
         .map_or(0, |m| m.saturating_add(1))
         .max(get(&trailer, b"Size").and_then(Obj::int).and_then(|s| u32::try_from(s).ok()).unwrap_or(0));
-    let mut reader = Reader { data, entries, objstms: HashMap::new() };
+    let mut reader = Reader { data, entries, objstms: HashMap::new(), budget };
     let root = get(&trailer, b"Root").cloned().ok_or_else(|| unreadable("no document catalog"))?;
     let catalog = reader.resolve(&root).and_then(|c| c.dict().cloned()).ok_or_else(|| unreadable("no document catalog"))?;
     let pages_root = get(&catalog, b"Pages").cloned().ok_or_else(|| unreadable("no page tree"))?;
@@ -742,22 +875,49 @@ pub(crate) fn read(data: &[u8]) -> Result<Sheets<'_>, Error> {
             }
             _ => None,
         };
-        let dict = reader.resolve(&node).and_then(|d| d.dict().cloned()).ok_or_else(|| unreadable("a page is missing"))?;
+        let mut dict = reader.resolve(&node).and_then(|d| d.dict().cloned()).ok_or_else(|| unreadable("a page is missing"))?;
         let here = Inherited {
-            media: get(&dict, b"MediaBox").cloned().or(inherited.media),
-            crop: get(&dict, b"CropBox").cloned().or(inherited.crop),
-            rotate: get(&dict, b"Rotate").cloned().or(inherited.rotate),
+            media: get(&dict, b"MediaBox").cloned().map(Arc::new).or(inherited.media),
+            crop: get(&dict, b"CropBox").cloned().map(Arc::new).or(inherited.crop),
+            rotate: get(&dict, b"Rotate").cloned().map(Arc::new).or(inherited.rotate),
         };
         let kids = get(&dict, b"Kids").cloned().and_then(|k| reader.resolve(&k));
         let is_node = get(&dict, b"Type").and_then(Obj::name) == Some(b"Pages") || (get(&dict, b"Type").is_none() && kids.is_some());
         if is_node {
             let kids = kids.and_then(|k| k.array().map(<[Obj]>::to_vec)).unwrap_or_default();
+            if stack.len().checked_add(kids.len()).is_none_or(|n| n > MAX_PAGES) {
+                return Err(unreadable("the page tree is too large"));
+            }
             stack.extend(kids.into_iter().rev().map(|kid| (kid, here.clone(), depth + 1)));
             continue;
         }
-        let media = reader.rect(here.media.as_ref()).filter(|r| r[2] > r[0] && r[3] > r[1]).unwrap_or(DEFAULT_MEDIA);
+        // Windows.Data.Pdf ignores nondefault UserUnit. Refuse it before submitting a
+        // job rather than silently printing the wrong physical dimensions.
+        if let Some(unit) = get(&dict, b"UserUnit") {
+            let unit = reader.resolve(unit).and_then(|u| u.num());
+            if unit != Some(1.0) {
+                return Err(unreadable("nondefault or invalid UserUnit is not supported"));
+            }
+        }
+        if let Some(contents) = get(&dict, b"Contents").cloned() {
+            let resolved = reader.resolve(&contents).ok_or_else(|| unreadable("page content is missing"))?;
+            // An indirect array can live in an object stream. Keep only its stream
+            // references in the wrapper; an array reference there renders blank.
+            if let Obj::Array(items) = resolved {
+                if !items.iter().all(|item| matches!(item, Obj::Ref(..))) {
+                    return Err(unreadable("a content array must contain stream references"));
+                }
+                dict.retain(|(key, _)| key != b"Contents");
+                dict.push((b"Contents".to_vec(), Obj::Array(items)));
+            } else if resolved == Obj::Null {
+                dict.retain(|(key, _)| key != b"Contents");
+            } else if !matches!(contents, Obj::Ref(..)) || !matches!(resolved, Obj::Dict(_)) {
+                return Err(unreadable("page content must be a stream or an array of streams"));
+            }
+        }
+        let media = reader.rect(here.media.as_deref()).filter(|r| r[2] > r[0] && r[3] > r[1]).unwrap_or(DEFAULT_MEDIA);
         let bounds = reader
-            .rect(here.crop.as_ref())
+            .rect(here.crop.as_deref())
             .map(|c| [c[0].max(media[0]), c[1].max(media[1]), c[2].min(media[2]), c[3].min(media[3])])
             .filter(|c| c[2] > c[0] && c[3] > c[1])
             .unwrap_or(media);
@@ -765,6 +925,9 @@ pub(crate) fn read(data: &[u8]) -> Result<Sheets<'_>, Error> {
         // Not a multiple of 90 is invalid; such a page is shown unrotated.
         let rotate = if rotate % 90 == 0 { u32::try_from(rotate).unwrap_or(0) } else { 0 };
         sheets.push(Sheet { obj, dict, bounds, rotate });
+    }
+    if reader.budget.exhausted {
+        return Err(unreadable("the parser memory budget was exceeded"));
     }
     if sheets.is_empty() {
         return Err(Error::Spool("the print-ready PDF has no pages".into()));
@@ -985,3 +1148,7 @@ impl Sheets<'_> {
         Ok(out)
     }
 }
+
+#[cfg(test)]
+#[path = "tests/pdf_bounds.rs"]
+mod tests;
