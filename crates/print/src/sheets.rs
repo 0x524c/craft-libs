@@ -231,12 +231,16 @@ impl<'a> Lexer<'a> {
     }
 
     fn dict_body(&mut self, depth: usize) -> Option<Dict> {
-        let mut dict: Dict = Vec::new();
+        // A dictionary's last occurrence of a key wins, including its position. Scanning
+        // all earlier keys for each insertion makes a small hostile dictionary quadratic.
+        // Keep bounded slots while reading, then compact them once in final occurrence order.
+        let mut positions = HashMap::new();
+        let mut items = Vec::new();
         loop {
             self.skip_ws();
             if self.rest().starts_with(b">>") {
                 self.pos += 2;
-                return Some(dict);
+                return Some(items.into_iter().flatten().collect());
             }
             if self.peek()? != b'/' {
                 return None;
@@ -244,9 +248,10 @@ impl<'a> Lexer<'a> {
             self.pos += 1;
             let key = self.name()?;
             let value = self.object(depth + 1)?;
-            // A repeated key: the last one counts.
-            dict.retain(|(k, _)| *k != key);
-            dict.push((key, value));
+            if let Some(previous) = positions.insert(key.clone(), items.len()) {
+                *items.get_mut(previous)? = None;
+            }
+            items.push(Some((key, value)));
         }
     }
 

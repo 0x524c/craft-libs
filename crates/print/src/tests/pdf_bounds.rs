@@ -224,3 +224,15 @@ fn separate_cached_object_streams_cannot_exceed_the_job_budget() {
     pdf.extend_from_slice(format!("\nendstream\nendobj\nstartxref\n{xref}\n%%EOF\n").as_bytes());
     assert!(read(&pdf).is_err(), "three small compressed streams must not cache 36 MiB");
 }
+
+#[test]
+fn duplicate_dictionary_keys_keep_the_last_value_and_last_position() {
+    let dict = Lexer::new(b"<< /A 1 /B 2 /A 3 /C 4 /B 5 >>", 0).object(0).unwrap();
+    let dict = dict.dict().unwrap();
+    assert_eq!(
+        dict.iter().map(|(key, value)| (key.as_slice(), value.int().unwrap())).collect::<Vec<_>>(),
+        [(b"A".as_slice(), 3), (b"C".as_slice(), 4), (b"B".as_slice(), 5)]
+    );
+    let escaped = Lexer::new(b"<< /A#42 1 /C 2 /AB 3 >>", 0).object(0).unwrap();
+    assert_eq!(escaped.dict().unwrap(), &vec![(b"C".to_vec(), Obj::Num(b"2".to_vec())), (b"AB".to_vec(), Obj::Num(b"3".to_vec()))]);
+}
