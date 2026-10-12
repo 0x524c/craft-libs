@@ -2,8 +2,10 @@
 
 use egui::{Context, ViewportCommand, ViewportId};
 
-/// Call once per frame, last, after all of the app's own close handling (eframe calls `logic`
-/// before `ui`, so that includes anything the app does in `ui`): when the root window was asked
+/// Call once per frame at the end of `eframe::App::logic`, after the app's own close decision.
+/// Move that decision out of `ui` as well: `logic` runs first, and `ui` does not run while the
+/// window is minimized or hidden. See the crate example for keeping a save prompt in app state.
+/// When the root window was asked
 /// to close (close button, the app's own `ViewportCommand::Close`, the OS) and this platform has
 /// its own quit (see [`crate::quit`]), cancels the close and quits that way instead. The window
 /// stays for the quit to close.
@@ -94,5 +96,45 @@ mod tests {
         assert!(!taken);
         assert_eq!(quit_calls, 1);
         assert!(!cancels(&commands), "eframe closes the window");
+    }
+
+    /// eframe uses only the logic callback while minimized; no UI callback runs here.
+    fn minimized_logic_frame(unsaved: bool) -> (bool, u32, bool, Vec<ViewportCommand>) {
+        let ctx = Context::default();
+        let mut input = RawInput::default();
+        let root = input.viewports.entry(ViewportId::ROOT).or_default();
+        root.minimized = Some(true);
+        root.events.push(ViewportEvent::Close);
+        let (taken, quit_calls, show_save_prompt) = (Cell::new(false), Cell::new(0), Cell::new(false));
+        let mut out = ctx.run_logic(&input, |ctx| {
+            if ctx.input(|i| i.viewport().close_requested()) && unsaved {
+                ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+                show_save_prompt.set(true);
+            }
+            taken.set(take_over_close(ctx, || {
+                quit_calls.set(quit_calls.get() + 1);
+                true
+            }));
+        });
+        let commands = out.viewport_commands.remove(&ViewportId::ROOT).unwrap_or_default();
+        (taken.get(), quit_calls.get(), show_save_prompt.get(), commands)
+    }
+
+    #[test]
+    fn minimized_unsaved_close_waits_for_the_prompt_without_running_ui() {
+        let (taken, quit_calls, show_save_prompt, commands) = minimized_logic_frame(true);
+        assert!(!taken);
+        assert_eq!(quit_calls, 0);
+        assert!(show_save_prompt, "UI can render the decision stored by logic");
+        assert!(cancels(&commands));
+    }
+
+    #[test]
+    fn minimized_clean_close_takes_over_without_running_ui() {
+        let (taken, quit_calls, show_save_prompt, commands) = minimized_logic_frame(false);
+        assert!(taken);
+        assert_eq!(quit_calls, 1);
+        assert!(!show_save_prompt);
+        assert!(cancels(&commands), "eframe must not tear down the window before platform quit");
     }
 }

@@ -11,21 +11,33 @@
 //! another display cycle runs.
 //!
 //! [`quit`] is that quit. With the `egui` feature, [`on_close_request`] routes a window close
-//! through it. Call it last in the frame, after all of the app's own close handling: eframe calls
-//! `logic` before `ui`, so an app that handles closes in `ui` calls it at the end of `ui`, not in
-//! `logic`, or it quits before the app's unsaved-changes check has run:
+//! through it. Put both the app's close decision and this hook in `eframe::App::logic`, with the
+//! hook last. eframe calls `logic` even while the window is minimized or hidden, when `ui` does
+//! not run. Move any unsaved-changes check out of `ui` too: `logic` runs before `ui`, so a check
+//! left in `ui` would happen after the quit. Keep prompt state in the app and render it in `ui`:
 //!
 //! ```ignore
-//! fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-//!     // ... the app's UI ...
-//!     let ctx = ui.ctx();
-//!     if ctx.input(|i| i.viewport().close_requested()) && self.has_unsaved_changes() {
+//! fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+//!     if ctx.input(|i| i.viewport().close_requested())
+//!         && self.has_unsaved_changes()
+//!         && !self.discard_confirmed
+//!     {
 //!         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-//!         self.ask_to_save(); // sends `ViewportCommand::Close` once answered
+//!         self.show_save_prompt = true;
 //!     }
 //!     craft_quit::on_close_request(ctx); // last, so it sees the app's `CancelClose`
 //! }
+//!
+//! fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+//!     // ... the app's UI, including the prompt when show_save_prompt is true ...
+//! }
 //! ```
+//!
+//! The prompt sends `ViewportCommand::Close` only after Save has succeeded (and cleared the
+//! dirty state), or Don't Save has set `discard_confirmed`. Cancel, a cancelled file picker and
+//! a failed save keep the app open; reset prompt/confirmation state when the decision is cancelled
+//! or a new document is opened. An asynchronous save must finish before requesting Close. If the
+//! window is hidden, bring it back before showing the prompt so the user can answer it.
 //!
 //! The app still saves what it keeps in `eframe::App::on_exit`: winit's
 //! `applicationWillTerminate:` runs eframe's exit handling before the process ends. The process
