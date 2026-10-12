@@ -99,13 +99,60 @@ fn discovery_and_controls_do_not_submit_a_job() {
         grayscale: "Graustufen",
     };
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| state.show(ui, egui::Id::new("print"), &discover, &labels));
-    });
+    let _ = ctx.run_ui(egui::RawInput::default(), |ui| state.show(ui, egui::Id::new("print"), &discover, &labels));
     assert_eq!(state.settings.printer, "Office");
     assert!(state.ready());
     assert!(!state.busy());
     assert_eq!(state.settings.copies, 1);
     assert_eq!(state.settings.duplex, None);
     assert!(!state.settings.grayscale);
+}
+
+#[test]
+fn localized_controls_fit_narrow_ui_and_disable_while_submitting() {
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut state = State::default();
+    let discover: Discover = Box::new(|| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender.send(vec![queue("Office printer with a very long destination name", true)]).unwrap();
+        receiver
+    });
+    let labels = Labels {
+        printer: "Drucker",
+        select_printer: "Wählen",
+        refresh: "Aktualisieren",
+        copies: "Kopien",
+        printer_default: "Standard",
+        duplex: "Seiten",
+        one_sided: "Einseitig",
+        long_edge: "Lange Kante",
+        short_edge: "Kurze Kante",
+        grayscale: "Graustufen",
+    };
+    let frame = |state: &mut State, events| {
+        ctx.run_ui(
+            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(220.0, 360.0))), events, ..Default::default() },
+            |ui| state.show(ui, egui::Id::new("print"), &discover, &labels),
+        )
+    };
+    let output = frame(&mut state, Vec::new());
+    let tree = output.platform_output.accesskit_update.unwrap();
+    let checkbox = tree.nodes.iter().find(|(_, node)| node.label() == Some("Graustufen")).unwrap().1.clone();
+    assert!(!checkbox.is_disabled());
+    let bounds = checkbox.bounds().unwrap();
+    assert!(bounds.x0 >= 0.0 && bounds.x1 <= 220.0 && bounds.y1 <= 360.0, "control stays reachable in a narrow pane");
+    let center = egui::pos2(((bounds.x0 + bounds.x1) / 2.0) as f32, ((bounds.y0 + bounds.y1) / 2.0) as f32);
+    let pointer =
+        |pressed| egui::Event::PointerButton { pos: center, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    frame(&mut state, vec![egui::Event::PointerMoved(center), pointer(true)]);
+    frame(&mut state, vec![pointer(false)]);
+    assert!(state.settings.grayscale, "the localized checkbox changes the job setting");
+    let (_sender, receiver) = std::sync::mpsc::channel();
+    assert!(state.begin(receiver).is_ok());
+    let output = frame(&mut state, Vec::new());
+    assert!(output.platform_output.accesskit_update.unwrap().nodes.iter().any(|(_, node)| node.label() == Some("Graustufen") && node.is_disabled()));
+    frame(&mut state, vec![egui::Event::PointerMoved(center), pointer(true)]);
+    frame(&mut state, vec![pointer(false)]);
+    assert!(state.settings.grayscale, "pending work disables editing its settings");
 }
