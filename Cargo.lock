@@ -515,6 +515,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-atomic"
+version = "0.1.0"
+dependencies = [
+ "rustix 1.1.5",
+]
+
+[[package]]
 name = "craft-print"
 version = "0.1.0"
 dependencies = [
