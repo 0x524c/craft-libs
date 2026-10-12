@@ -34,7 +34,11 @@ opens Windows printer preferences and submits jobs with copies, collation, duple
   (new versions of the pages that need it, the original bytes untouched); the crate reads
   only cross-reference sections, object streams and the page tree for this, leniently and
   with every size bounded. Encrypted PDFs can be turned but not reframed. Annotations on a
-  reframed page are dropped; print-ready PDFs have them flattened.
+  reframed page are dropped; print-ready PDFs have them flattened. Nondefault or invalid
+  `/UserUnit` is refused because the native renderer does not reliably honor physical units.
+  Parsing caps cumulative cross-reference/object-stream records at 500,000, decoded streams
+  at 16 MiB each and 32 MiB per job, and parsed nodes/tokens at 250,000/16 MiB per job and
+  32,000/1 MiB per object. Files exceeding these limits return a clear error.
   Long-edge duplex is `TwoSidedLongEdge` and short-edge `TwoSidedShortEdge`; `duplex: None`
   leaves duplex out of the ticket. Driver-specific defaults remain in Windows printer
   preferences (`rundll32 printui.dll`, the one process this crate starts, and only when asked).
@@ -43,7 +47,11 @@ opens Windows printer preferences and submits jobs with copies, collation, duple
 
 Windows jobs briefly use a file in a private temporary folder (random name, this user's only),
 named after the job's title because the spooler shows it as the document name; the folder is
-removed once the spooler has the job, on success and failure. Windows answers when the job is in
+removed once the spooler has the job, on success and failure. Failed and canceled terminal
+package statuses are errors, including failures received after every sheet was processed.
+A missing completion notification times out after two minutes after the native print control
+is closed and requests cancellation. Calls into a driver and interactive output-file dialogs
+are not covered by this notification timeout. Windows answers when the job is in
 the queue ("spooled 3 sheet(s)"): a paused queue or an offline printer keeps it there. CUPS jobs
 never use a PDF temporary file. Printing is synchronous; UI callers should submit on a worker.
 Receipts are backend messages, not portable job IDs. `Job::duplex = None` preserves the queue's
@@ -77,8 +85,8 @@ Windows discovery reports driver duplex support in `Printer::two_sided` (a two-s
 the driver's PrintCapabilities); CUPS leaves it unknown. Callers can warn when a Windows driver
 ignores the job’s duplex choice.
 
-Windows dependencies: `winprint` (BSD-3-Clause, pinned, its PDFium-downloading `pdfium` feature
-off) and `winsafe` (MIT) hold every Win32 and WinRT call, so the crate keeps `unsafe` forbidden;
+Windows dependencies: the maintained [`winprint` fork](https://github.com/storytold/winprint.rs)
+(BSD-3-Clause, pinned to an immutable Git revision, its PDFium-downloading `pdfium` feature off) and `winsafe` (MIT) hold every Win32 and WinRT call, so the crate keeps `unsafe` forbidden;
 `roxmltree` reads PrintTickets and `miniz_oxide` inflates PDF streams. `winprint` 0.2.1 lists
 reqwest (with rustls) and sigstore crates as non-optional build-dependencies, used only by its
 `pdfium` feature: they compile into its build script on Windows but not into the library. Apps
