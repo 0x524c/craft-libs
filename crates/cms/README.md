@@ -35,8 +35,9 @@ Buffers are checked once per call, before any pixel is written.
 * `lutfile::parse(name, bytes)` / `lutfile::write_cube(&lut)`: `.cube`, `.3dl` and `.look` LUT
   files; `lutfile::builtin(id)` returns generated looks (`lutfile::BUILTIN`).
 * `Profile::to_bytes()`: original bytes of parsed profiles (byte-exact), or an ICC v4.3 encoding.
-* `Builtin::from_profile_name(desc)`: the built-in for a profile a document names (see
-  [Selecting by profile name](#selecting-by-profile-name)).
+* `Builtin::from_profile_name(desc)`: the built-in with that description (exact match);
+  `Builtin::stand_in_for(desc)`: the built-in that approximates a profile a document names
+  when its ICC bytes are not available (see [Selecting by profile name](#selecting-by-profile-name)).
 * `Profile::same_colors(&other)`: the same colour space whatever the encoding (every sample of
   a device grid within ΔE 0.5 through both), e.g. Photoshop's sRGB IEC61966-2.1 and the built-in
   sRGB. `content_hash()` compares bytes and suits cache keys only.
@@ -134,19 +135,28 @@ Use your printer's profile for production print.
 
 ### Selecting by profile name
 
-`Builtin::from_profile_name` maps the profile description a document carries to a built-in,
-ignoring case and whitespace:
+Use the ICC bytes a document embeds or a user loads whenever there are any. When a document
+only names its profile (its `desc` tag), two functions map the name to a built-in, ignoring
+case and whitespace:
 
-| Name in the document | Built-in |
-|---|---|
-| Coated FOGRA39 (ISO 12647-2:2004), Coated FOGRA39 | `coated-fogra39` |
-| ISO Coated v2 (ECI), ISO Coated v2 300% (ECI) | `coated-fogra39` |
-| each built-in's own description (e.g. sRGB IEC61966-2.1) | that built-in |
-| anything else | `None` |
+* `Builtin::from_profile_name`: exact matches only, a built-in's own description.
+* `Builtin::stand_in_for`: the exact match, else a built-in that approximates the named
+  profile.
 
-ECI's ISO Coated v2 profiles are made from FOGRA39L, the same characterisation data as Adobe's
-Coated FOGRA39, so they describe the same printed colours; only their separations (ink limit,
-black generation) differ.
+| Name in the document | `from_profile_name` | `stand_in_for` |
+|---|---|---|
+| each built-in's own description (e.g. sRGB IEC61966-2.1) | that built-in | that built-in |
+| Coated FOGRA39 (ISO 12647-2:2004), Coated FOGRA39 | `None` | `coated-fogra39` |
+| ISO Coated v2 (ECI) | `None` | `coated-fogra39` |
+| ISO Coated v2 300% (ECI) | `None` | `None` |
+| anything else | `None` | `None` |
+
+The stand-ins are made from the same characterisation data as the named profiles: ECI's ISO
+Coated v2 is made from FOGRA39L, the data of Adobe's Coated FOGRA39. They describe the same
+printed colours. The built-in separates to at most 330 % total ink, the limit of ISO Coated v2
+(Adobe doesn't publish Coated FOGRA39's). Black generation and ink distribution differ, so
+separations through a stand-in are not the named profile's. ISO Coated v2 300% (ECI) has no
+stand-in: the built-in separates to up to 330 % total ink.
 
 ### Display transforms
 
@@ -154,8 +164,21 @@ Page-layout and image editors usually convert CMYK for display with relative col
 black point compensation. To match them, keep BPC on (the `TransformOptions` default):
 
 ```rust
-let cmyk = Builtin::from_profile_name(&doc_profile_name).unwrap_or(Builtin::CoatedFogra39);
-let t = Transform::new(cmyk.profile(), Builtin::Srgb.profile(), Intent::RelativeColorimetric, /*bpc*/ true)?;
+use craft_cms::{Builtin, Intent, Profile, Transform};
+
+// The document's own profile first; a stand-in only when it carries no ICC bytes.
+let parsed;
+let cmyk: &Profile = match doc_icc_bytes {
+    Some(bytes) => {
+        parsed = Profile::parse(bytes)?;
+        &parsed
+    }
+    None => match Builtin::stand_in_for(&doc_profile_name) {
+        Some(b) => b.profile(),
+        None => return Err(UnknownProfile(doc_profile_name)), // e.g. ask the user for the profile
+    },
+};
+let t = Transform::new(cmyk, Builtin::Srgb.profile(), Intent::RelativeColorimetric, /*bpc*/ true)?;
 // or: transform::cached(src, dst, TransformOptions::default())
 ```
 

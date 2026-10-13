@@ -512,21 +512,50 @@ fn matches_reference_srgb_values() {
 
 #[test]
 fn builtins_by_document_profile_name() {
-    for name in [
-        "Coated FOGRA39 (ISO 12647-2:2004)",
-        "Coated FOGRA39",
-        "ISO Coated v2 (ECI)",
-        "ISO Coated v2 300% (ECI)",
-        "iso coated  V2 300 % (eci)",
-        "Coated FOGRA39 (fitted, craft-cms)",
-    ] {
-        assert_eq!(Builtin::from_profile_name(name), Some(Builtin::CoatedFogra39), "{name}");
-    }
     for b in Builtin::ALL {
         assert_eq!(Builtin::from_profile_name(b.description()), Some(b), "{b:?}");
+        assert_eq!(Builtin::stand_in_for(b.description()), Some(b), "{b:?}");
     }
     assert_eq!(Builtin::from_profile_name(" srgb iec61966-2.1 "), Some(Builtin::Srgb));
-    for name in ["U.S. Web Coated (SWOP) v2", "Coated FOGRA51 (PSO)", "PSO Coated v3", ""] {
+    assert_eq!(Builtin::from_profile_name("coated fogra39 (FITTED, craft-cms)"), Some(Builtin::CoatedFogra39));
+    for name in FOGRA39_STAND_IN_NAMES.into_iter().chain(["coated  FOGRA39 (iso 12647-2:2004)", "iso coated v2(eci)"]) {
         assert_eq!(Builtin::from_profile_name(name), None, "{name}");
+        assert_eq!(Builtin::stand_in_for(name), Some(Builtin::CoatedFogra39), "{name}");
+    }
+    // The built-in separates to up to 330 % total ink, more than this profile allows.
+    for name in ["ISO Coated v2 300% (ECI)", "iso coated  V2 300 % (eci)", "U.S. Web Coated (SWOP) v2", "Coated FOGRA51 (PSO)", "PSO Coated v3", ""] {
+        assert_eq!(Builtin::from_profile_name(name), None, "{name}");
+        assert_eq!(Builtin::stand_in_for(name), None, "{name}");
+    }
+}
+
+/// Names [`Builtin::stand_in_for`] maps to [`Builtin::CoatedFogra39`] (all 330 % profiles).
+const FOGRA39_STAND_IN_NAMES: [&str; 3] = ["Coated FOGRA39 (ISO 12647-2:2004)", "Coated FOGRA39", "ISO Coated v2 (ECI)"];
+
+/// Total ink of every separation through a stand-in stays within the named profiles' 330 %
+/// limit: a 33³ sRGB grid, with BPC, for each intent the profile has tables for.
+#[test]
+fn stand_in_separations_respect_the_ink_limit() {
+    const N: usize = 33;
+    const LIMIT: f32 = 3.30 + 0.005;
+    let grid: Vec<f32> = (0..N * N * N).flat_map(|i| [i / (N * N), i / N % N, i % N].map(|v| v as f32 / (N - 1) as f32)).collect();
+    for name in FOGRA39_STAND_IN_NAMES {
+        let cmyk = Builtin::stand_in_for(name).unwrap().profile();
+        for intent in [Intent::Perceptual, Intent::RelativeColorimetric, Intent::Saturation] {
+            let t = Transform::new(Builtin::Srgb.profile(), cmyk, intent, true).unwrap();
+            let mut out = vec![0.0f32; N * N * N * 4];
+            t.convert_f32(&grid, 3, &mut out, 4, false).unwrap();
+            let (i, max) =
+                out.chunks_exact(4).map(|c| c.iter().sum::<f32>()).enumerate().fold((0, 0.0f32), |m, (i, s)| if s > m.1 { (i, s) } else { m });
+            eprintln!("{name}, {intent:?}: max total ink {:.2} % at sRGB {:?}", max * 100.0, &grid[i * 3..i * 3 + 3]);
+            assert!(max <= LIMIT, "{name}, {intent:?}: total ink {max} at sRGB {:?}", &grid[i * 3..i * 3 + 3]);
+
+            // sRGB black, the darkest separation (reviewed with perceptual: 329.75 %).
+            let mut black = [0.0f32; 4];
+            t.eval(&[0.0, 0.0, 0.0], &mut black).unwrap();
+            let total: f32 = black.iter().sum();
+            eprintln!("{name}, {intent:?}: sRGB black → {black:?}, total {:.2} %", total * 100.0);
+            assert!(total <= LIMIT, "{name}, {intent:?}: sRGB black total ink {total}");
+        }
     }
 }

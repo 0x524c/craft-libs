@@ -46,7 +46,7 @@ pub enum Builtin {
     CoatedCmyk,
     /// Coated offset CMYK fitted to Fogra's FOGRA39 characterisation data (ISO 12647-2:2004
     /// Amd 1, paper type 1/2): 330 % total ink, medium GCR. The colours of documents whose
-    /// CMYK profile is Coated FOGRA39 or ISO Coated v2 (see [`Builtin::from_profile_name`]).
+    /// CMYK profile is Coated FOGRA39 or ISO Coated v2 (see [`Builtin::stand_in_for`]).
     CoatedFogra39,
 }
 
@@ -119,25 +119,34 @@ impl Builtin {
         alias.or_else(|| Builtin::ALL.into_iter().find(|b| b.description().eq_ignore_ascii_case(s)))
     }
 
-    /// The built-in that stands in for a profile a document names (its `desc` tag), compared
-    /// ignoring case and whitespace.
-    ///
-    /// * Profiles built on the FOGRA39 characterisation data map to
-    ///   [`Builtin::CoatedFogra39`]: Adobe's "Coated FOGRA39 (ISO 12647-2:2004)" (also seen as
-    ///   "Coated FOGRA39"), and ECI's "ISO Coated v2 (ECI)" and "ISO Coated v2 300% (ECI)",
-    ///   which are made from FOGRA39L, the same data. They print the same colours; only
-    ///   their separations (total ink limit, black generation) differ.
-    /// * Every built-in by its own description, e.g. "sRGB IEC61966-2.1".
-    ///
-    /// Unknown names give `None`: keep the document's embedded profile, or ask.
+    /// The built-in whose own description (its `desc` tag) is `name`, compared ignoring case
+    /// and whitespace, e.g. "sRGB IEC61966-2.1" gives [`Builtin::Srgb`]. Only exact matches:
+    /// for a built-in that approximates another profile, see [`Builtin::stand_in_for`].
     pub fn from_profile_name(name: &str) -> Option<Builtin> {
-        let key = |s: &str| s.chars().filter(|c| !c.is_whitespace()).flat_map(char::to_lowercase).collect::<String>();
-        let n = key(name);
-        const FOGRA39: [&str; 4] = ["Coated FOGRA39 (ISO 12647-2:2004)", "Coated FOGRA39", "ISO Coated v2 (ECI)", "ISO Coated v2 300% (ECI)"];
-        if FOGRA39.iter().any(|f| key(f) == n) {
-            return Some(Builtin::CoatedFogra39);
-        }
-        Builtin::ALL.into_iter().find(|b| key(b.description()) == n)
+        let n = profile_name_key(name);
+        Builtin::ALL.into_iter().find(|b| profile_name_key(b.description()) == n)
+    }
+
+    /// The built-in to use in place of a profile a document names (its `desc` tag) when the
+    /// profile's bytes are not available, compared ignoring case and whitespace.
+    ///
+    /// * A built-in's own description gives that built-in ([`Builtin::from_profile_name`]).
+    /// * Profiles built on the FOGRA39 characterisation data give [`Builtin::CoatedFogra39`]
+    ///   (330 % total ink, as ISO Coated v2): Adobe's "Coated FOGRA39 (ISO 12647-2:2004)" (also
+    ///   seen as "Coated FOGRA39") and ECI's "ISO Coated v2 (ECI)", which is made from
+    ///   FOGRA39L, the same data.
+    /// * "ISO Coated v2 300% (ECI)" and every other name give `None`: the built-in would
+    ///   separate to more ink than that profile allows.
+    ///
+    /// The result is an approximation for display and separation. It describes the named
+    /// profile's printed colours, but its separations (black generation, ink distribution) are
+    /// not the named profile's. Prefer the document's own ICC bytes whenever it carries them.
+    pub fn stand_in_for(name: &str) -> Option<Builtin> {
+        const FOGRA39: [&str; 3] = ["Coated FOGRA39 (ISO 12647-2:2004)", "Coated FOGRA39", "ISO Coated v2 (ECI)"];
+        Builtin::from_profile_name(name).or_else(|| {
+            let n = profile_name_key(name);
+            FOGRA39.iter().any(|f| profile_name_key(f) == n).then_some(Builtin::CoatedFogra39)
+        })
     }
 
     /// The profile (built once per process).
@@ -147,6 +156,11 @@ impl Builtin {
         // so the discriminant is the cell index.
         CELLS[self as usize].get_or_init(|| build(self))
     }
+}
+
+/// A profile description for comparison: lowercase, without whitespace.
+fn profile_name_key(s: &str) -> String {
+    s.chars().filter(|c| !c.is_whitespace()).flat_map(char::to_lowercase).collect()
 }
 
 /// The default profile for a colour space: sRGB, sGray, the coated CMYK profile, Lab D50.
