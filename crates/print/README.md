@@ -71,6 +71,13 @@ that were marked nonprinting or omitting print-only marks. A visible Square appe
 `F=4` was rendered in the Windows qualification fixture; other appearance types still need
 their own fidelity checks.
 
+Native Windows PDF submission checks the driver's validated copy count and explicit
+simplex/duplex and grayscale requests before sending. Collation must be retained when both
+the page count and copy count exceed one. A driver that drops or changes these options is
+refused; select supported options or flatten grayscale into the print-ready page content.
+Without an explicit duplex request, the queue default applies. Normal color output retains
+the driver's color policy. Single-page or single-copy jobs have no collating order to check.
+
 `cargo test -p craft-print` tests CUPS transport (including pipe-sized jobs and refusal),
 printer parsing, PPD options and argument mapping, and on every platform the Windows pieces that
 need no printer: the PrintTicket, the checks on the driver's validated ticket and capabilities,
@@ -92,8 +99,8 @@ code changes, and supports manual runs. The Windows job executes the spooler reg
 physical printer fidelity still requires hardware verification.
 
 Windows discovery reports driver duplex support in `Printer::two_sided` (a two-sided option in
-the driver's PrintCapabilities); CUPS leaves it unknown. Callers can warn when a Windows driver
-ignores the job’s duplex choice.
+the driver's PrintCapabilities); CUPS leaves it unknown. Explicit simplex/duplex choices that the driver
+drops are refused before submission.
 
 Windows dependencies: the maintained [`winprint` fork](https://github.com/storytold/winprint.rs)
 (BSD-3-Clause, pinned to an immutable Git revision, its PDFium-downloading `pdfium` feature off) and `winsafe` (MIT) hold every Win32 and WinRT call, so the crate keeps `unsafe` forbidden;
@@ -113,10 +120,3 @@ with `ICM_DONE_OUTSIDEDC`, reapplied after `StartPage`; driver-managed RGB uses 
 Vendor driver automatic color correction remains a driver setting and requires qualification.
 Other platforms return `rgb::PrintError::Unsupported`. The Windows PDF backend and its existing
 completion dependency pin are independent of this additional MIT OR Apache-2.0 API.
-
-Native Windows PDF submission checks the driver's validated copy count and explicit
-simplex/duplex and grayscale requests before sending. Collation must be retained when both
-the page count and copy count exceed one. A driver that drops or changes these options is
-refused; select supported options or flatten grayscale into the print-ready page content.
-Without an explicit duplex request, the queue default applies. Normal color output retains
-the driver's color policy. Single-page or single-copy jobs have no collating order to check.

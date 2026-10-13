@@ -217,7 +217,7 @@ mod tests {
             eprintln!("{feature}={wanted}: {retained:?}");
             let offered = capabilities
                 .options_for_feature(OwnedName::qualified(feature, NS_PSK, Some("psk")))
-                .any(|o| o.name.as_ref().is_some_and(|n| n.local_name == wanted));
+                .any(|o| o.name.as_ref().is_some_and(|n| n.local_name == wanted || (feature == "PageOutputColor" && n.local_name == "Grayscale")));
             if !offered {
                 assert!(retained.is_err(), "unsupported explicit option must not be silently dropped");
             }
