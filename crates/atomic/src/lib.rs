@@ -51,6 +51,13 @@ pub trait AtomicFs {
     /// Create `path`, which must not exist, and open it for writing.
     /// On Unix, create it with owner-only permissions so payload written afterward is private.
     fn create_new(&self, path: &Path) -> io::Result<File>;
+    /// Exclusively create an empty permissions probe using normal file-creation permissions.
+    /// The probe is never used for payload and is removed before staging begins. On Unix,
+    /// request mode `0666` so the OS applies the process umask or directory's default ACL.
+    /// Existing implementations can leave this unsupported when using the private default.
+    fn create_permissions_probe(&self, _path: &Path) -> io::Result<File> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "normal file-creation permissions are not supported"))
+    }
     /// Flush a written file to durable storage.
     fn sync(&self, file: &File) -> io::Result<()>;
     /// Rename `from` over `to`, replacing it atomically.
@@ -61,7 +68,7 @@ pub trait AtomicFs {
     fn remove(&self, path: &Path) -> io::Result<()>;
     /// Flush a directory entry change to durable storage (Unix); no-op elsewhere.
     fn sync_dir(&self, dir: &Path) -> io::Result<()>;
-    /// Give the open temporary file the permissions of the file it replaces.
+    /// Give the open temporary file its final permissions.
     fn set_permissions(&self, file: &File, perms: std::fs::Permissions) -> io::Result<()>;
 }
 
@@ -81,6 +88,10 @@ impl AtomicFs for RealFs {
             options.mode(0o600);
         }
         options.open(path)
+    }
+
+    fn create_permissions_probe(&self, path: &Path) -> io::Result<File> {
+        OpenOptions::new().write(true).create_new(true).open(path)
     }
 
     fn sync(&self, file: &File) -> io::Result<()> {
@@ -161,6 +172,53 @@ impl RenameRetry {
     }
 }
 
+/// Final permissions for a newly created file on Unix. Existing destination modes are always
+/// preserved. On other platforms, file creation keeps the existing platform behavior.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum NewFilePermissions {
+    /// Keep the private staging mode (`0600`, subject to umask/default ACL), unless the streaming
+    /// callback selects another mode. This is the behavior of the original free functions.
+    #[default]
+    Private,
+    /// Use the permissions normal creation with mode `0666` would receive in the destination
+    /// directory. The OS applies its umask/default ACL; the library never changes process umask.
+    /// These permissions are applied after the callback, before syncing and publication.
+    PlatformDefault,
+}
+
+/// Permission policy for document saves and exports. Defaults to private new files, matching
+/// [`atomic_write`] and [`write_new`]. Select [`NewFilePermissions::PlatformDefault`] for normal
+/// user-file creation permissions while retaining private payload staging.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WriteOptions {
+    /// Final permissions for new files; ignored when replacing an existing Unix file.
+    pub new_file_permissions: NewFilePermissions,
+}
+
+impl WriteOptions {
+    /// [`atomic_write`] with this new-file permission policy.
+    pub fn atomic_write(self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        self.atomic_write_with(path, |f| f.write_all(bytes))
+    }
+
+    /// [`atomic_write_with`] with this policy. Existing modes and `PlatformDefault` are applied
+    /// after the callback, overriding callback-selected permissions. `Private` keeps the
+    /// original callback behavior for new files.
+    pub fn atomic_write_with(self, path: &Path, write_fn: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+        replace_with_options(&RealFs, RenameRetry::platform(), path, self.new_file_permissions, write_fn)
+    }
+
+    /// [`write_new`] with this new-file permission policy; never replaces an existing file.
+    pub fn write_new(self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        self.write_new_with(path, |f| f.write_all(bytes))
+    }
+
+    /// [`write_new_with`] with this policy. `PlatformDefault` is applied after the callback.
+    pub fn write_new_with(self, path: &Path, write_fn: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+        create_with_options(&RealFs, path, self.new_file_permissions, write_fn)
+    }
+}
+
 /// Atomically writes `bytes` to `path`, replacing any existing content.
 ///
 /// If write or rename fails, the target file is untouched and any temporary staging file is removed.
@@ -188,6 +246,16 @@ pub fn atomic_write_custom(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, b
 /// The replace path behind every `atomic_write*` function: stage the new content beside the
 /// target, then rename it over the target.
 fn replace(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+    replace_with_options(fs, retry, path, NewFilePermissions::Private, fill)
+}
+
+fn replace_with_options(
+    fs: &dyn AtomicFs,
+    retry: RenameRetry,
+    path: &Path,
+    new_permissions: NewFilePermissions,
+    fill: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<()> {
     let target = resolve_links(path)?;
     let (dir, name) = split(&target, path)?;
     let existing = std::fs::metadata(&target).ok();
@@ -196,7 +264,7 @@ fn replace(fs: &dyn AtomicFs, retry: RenameRetry, path: &Path, fill: impl FnOnce
         check_writable(&target).map_err(|e| read_only_error(e, path))?;
     }
 
-    let tmp = stage(fs, &dir, &name, path, existing.as_ref(), fill)?;
+    let tmp = stage(fs, &dir, &name, path, existing.as_ref(), new_permissions, fill)?;
 
     if let Err(e) = retry_rename(retry, || fs.rename(&tmp, &target)) {
         let _ = fs.remove(&tmp);
@@ -241,11 +309,15 @@ fn stage(
     name: &str,
     path: &Path,
     replaced: Option<&std::fs::Metadata>,
+    new_permissions: NewFilePermissions,
     fill: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> io::Result<PathBuf> {
     let existed = replaced.is_some();
     // Windows files carry only a read-only flag, and a read-only file can't be replaced.
-    let perms = replaced.filter(|_| cfg!(unix)).map(|m| m.permissions());
+    let mut perms = replaced.filter(|_| cfg!(unix)).map(|m| m.permissions());
+    if cfg!(unix) && !existed && new_permissions == NewFilePermissions::PlatformDefault {
+        perms = Some(sample_permissions(fs, dir, name).map_err(|e| write_error(e, path, dir, false))?);
+    }
     for _ in 0..8 {
         let tmp = dir.join(temp_name(name));
         let mut file = match fs.create_new(&tmp) {
@@ -264,6 +336,26 @@ fn stage(
         return written.map(|()| tmp);
     }
     Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{}: could not create a temporary file", dir.display())))
+}
+
+/// Ask the OS for normal creation permissions without changing process-global umask. An empty
+/// probe also observes directory default ACLs, which can override umask. Remove it before
+/// creating a separate private payload inode: a third party holding the probe open must never
+/// receive document bytes. This is the approach used by Qt's QSaveFile.
+fn sample_permissions(fs: &dyn AtomicFs, dir: &Path, name: &str) -> io::Result<std::fs::Permissions> {
+    for _ in 0..8 {
+        let probe = dir.join(temp_name(name));
+        let file = match fs.create_permissions_probe(&probe) {
+            Ok(f) => f,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        };
+        let sampled = file.metadata().map(|m| m.permissions());
+        drop(file);
+        let removed = fs.remove(&probe);
+        return sampled.and_then(|perms| removed.map(|()| perms));
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{}: could not create a permissions probe", dir.display())))
 }
 
 /// Exclusively creates and writes `path` without replacing existing files.
@@ -290,13 +382,22 @@ pub fn write_new_custom(fs: &dyn AtomicFs, path: &Path, bytes: &[u8]) -> io::Res
 /// then give it the target's name with a hard link, which fails rather than replace a file that
 /// appeared in the meantime. Volumes without hard links get a copy into a newly created file.
 fn create(fs: &dyn AtomicFs, path: &Path, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+    create_with_options(fs, path, NewFilePermissions::Private, fill)
+}
+
+fn create_with_options(
+    fs: &dyn AtomicFs,
+    path: &Path,
+    new_permissions: NewFilePermissions,
+    fill: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<()> {
     let target = resolve_links(path)?;
     let (dir, name) = split(&target, path)?;
     if target.exists() {
         return Err(write_error(io::Error::from(io::ErrorKind::AlreadyExists), path, &dir, true));
     }
 
-    let tmp = stage(fs, &dir, &name, path, None, fill)?;
+    let tmp = stage(fs, &dir, &name, path, None, new_permissions, fill)?;
 
     let placed = match fs.hard_link(&tmp, &target) {
         Err(e) if e.kind() != io::ErrorKind::AlreadyExists => copy_new(fs, &tmp, &target),
@@ -501,11 +602,30 @@ mod tests {
         no_hard_links: bool,
         fail_permissions: bool,
         fail_sync_dir: bool,
+        fail_probe: bool,
+        probe_collisions: Cell<u32>,
+        fail_probe_remove: bool,
+        probe_path: std::cell::RefCell<Option<PathBuf>>,
+        probe_handle: std::cell::RefCell<Option<File>>,
         /// Another process creates the target just before the hard link.
         created_meanwhile: Option<&'static [u8]>,
     }
 
     impl AtomicFs for Faulty {
+        fn create_permissions_probe(&self, path: &Path) -> io::Result<File> {
+            self.events.borrow_mut().push("probe");
+            if self.fail_probe {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "injected: probe creation failed"));
+            }
+            if self.probe_collisions.get() > 0 {
+                self.probe_collisions.set(self.probe_collisions.get() - 1);
+                return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+            }
+            let file = RealFs.create_permissions_probe(path)?;
+            *self.probe_path.borrow_mut() = Some(path.to_path_buf());
+            *self.probe_handle.borrow_mut() = Some(file.try_clone()?);
+            Ok(file)
+        }
         fn create_new(&self, path: &Path) -> io::Result<File> {
             self.events.borrow_mut().push("create_new");
             let file = RealFs.create_new(path)?;
@@ -548,6 +668,9 @@ mod tests {
         }
         fn remove(&self, path: &Path) -> io::Result<()> {
             self.events.borrow_mut().push("remove");
+            if self.fail_probe_remove && self.probe_path.borrow().as_deref() == Some(path) {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "injected: probe cleanup failed"));
+            }
             RealFs.remove(path)
         }
         fn sync_dir(&self, dir: &Path) -> io::Result<()> {
@@ -738,6 +861,136 @@ mod tests {
         assert_eq!(std::fs::read(&p).ok(), Some(ORIGINAL.to_vec()));
         assert_eq!(fs.renames.get(), 0);
         assert_no_temp(&d.0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normal_permissions_survive_exclusive_copy_and_probe_never_receives_payload() -> io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+        if std::env::var_os("CRAFT_ATOMIC_COPY_CHILD").is_none() {
+            // Test both publication paths under real umasks without changing the test runner's
+            // process-global mask. In particular, 002 must produce a shared 0664 final file.
+            for mask in ["000", "002", "022", "027", "077"] {
+                let output = Command::new("sh")
+                    .args([
+                        "-c",
+                        "umask \"$1\"; exec \"$2\" --exact tests::normal_permissions_survive_exclusive_copy_and_probe_never_receives_payload --nocapture",
+                        "copy-permissions",
+                        mask,
+                    ])
+                    .arg(std::env::current_exe()?)
+                    .env("CRAFT_ATOMIC_COPY_CHILD", "1")
+                    .output()?;
+                assert!(output.status.success(), "umask {mask}: {}", String::from_utf8_lossy(&output.stdout));
+                assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+            }
+            return Ok(());
+        }
+        let d = TempDir::new("normal-copy");
+        let reference = d.0.join("reference");
+        std::fs::write(&reference, b"normal creation")?;
+        let expected = std::fs::metadata(reference)?.permissions().mode() & 0o777;
+        for no_hard_links in [false, true] {
+            let p = d.0.join(format!("export-{no_hard_links}"));
+            let fs = Faulty { no_hard_links, probe_collisions: Cell::new(2), ..Default::default() };
+            create_with_options(&fs, &p, NewFilePermissions::PlatformDefault, |f| {
+                assert_eq!(f.metadata()?.permissions().mode() & 0o077, 0);
+                f.write_all(b"document payload")
+            })?;
+            assert_eq!(std::fs::metadata(&p)?.permissions().mode() & 0o777, expected);
+            assert_eq!(std::fs::read(&p)?, b"document payload");
+            let probe = fs.probe_handle.borrow();
+            assert_eq!(probe.as_ref().ok_or_else(|| io::Error::other("missing probe handle"))?.metadata()?.len(), 0);
+            assert!(!fs.probe_path.borrow().as_ref().is_some_and(|p| p.exists()));
+            assert!(fs.created_modes.borrow().iter().all(|m| m & 0o077 == 0), "stage and copy destination must start private");
+        }
+        assert_no_temp(&d.0);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normal_policy_preserves_existing_modes_without_probing() -> io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let d = TempDir::new("normal-existing");
+        for mode in [0o600, 0o640, 0o664] {
+            let p = d.0.join(format!("existing-{mode:o}"));
+            std::fs::write(&p, ORIGINAL)?;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode))?;
+            let fs = Faulty { fail_probe: true, ..Default::default() };
+            replace_with_options(&fs, NO_RETRY, &p, NewFilePermissions::PlatformDefault, |f| f.write_all(b"replacement"))?;
+            assert_eq!(std::fs::metadata(&p)?.permissions().mode() & 0o777, mode);
+            assert!(!fs.events.borrow().contains(&"probe"));
+        }
+        assert_no_temp(&d.0);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normal_permission_failures_abort_before_publication() -> io::Result<()> {
+        let d = TempDir::new("normal-failures");
+        for exclusive in [false, true] {
+            for (tag, fs, kind, callback_runs) in [
+                ("probe", Faulty { fail_probe: true, ..Default::default() }, io::ErrorKind::PermissionDenied, false),
+                ("collisions", Faulty { probe_collisions: Cell::new(8), ..Default::default() }, io::ErrorKind::AlreadyExists, false),
+                ("cleanup", Faulty { fail_probe_remove: true, ..Default::default() }, io::ErrorKind::PermissionDenied, false),
+                ("permissions", Faulty { fail_permissions: true, ..Default::default() }, io::ErrorKind::PermissionDenied, true),
+                ("sync", Faulty { fail_sync: true, ..Default::default() }, io::ErrorKind::StorageFull, true),
+            ] {
+                let p = d.0.join(format!("{tag}-{exclusive}"));
+                let called = Cell::new(false);
+                let fill = |f: &mut File| {
+                    called.set(true);
+                    f.write_all(b"payload")
+                };
+                let result = if exclusive {
+                    create_with_options(&fs, &p, NewFilePermissions::PlatformDefault, fill)
+                } else {
+                    replace_with_options(&fs, NO_RETRY, &p, NewFilePermissions::PlatformDefault, fill)
+                };
+                assert_eq!(result.map_err(|e| e.kind()), Err(kind), "{tag}");
+                assert_eq!(called.get(), callback_runs, "{tag}");
+                assert!(!p.exists(), "{tag}");
+                if fs.fail_probe_remove {
+                    // The only leftover is an empty probe whose removal was explicitly denied.
+                    let probe = fs.probe_path.borrow();
+                    let probe = probe.as_ref().ok_or_else(|| io::Error::other("missing probe path"))?;
+                    assert_eq!(std::fs::metadata(probe)?.len(), 0);
+                    std::fs::remove_file(probe)?;
+                }
+                assert_no_temp(&d.0);
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires setfacl/getfacl and a filesystem with POSIX ACL support"]
+    fn normal_permissions_follow_inherited_acl_with_hard_links_and_copy() -> io::Result<()> {
+        use std::process::Command;
+        let d = TempDir::new("normal-acl");
+        let output = Command::new("setfacl").args(["-m", "d:u::rwx,d:u:12345:r--,d:g::r-x,d:m::r-x,d:o::---"]).arg(&d.0).output()?;
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let acl = |path: &Path| -> io::Result<Vec<u8>> {
+            let output = Command::new("getfacl").args(["-c", "-n"]).arg(path).output()?;
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            Ok(output.stdout)
+        };
+        let reference = d.0.join("reference");
+        std::fs::write(&reference, b"normal creation")?;
+        let expected = acl(&reference)?;
+        for no_hard_links in [false, true] {
+            let fs = Faulty { no_hard_links, ..Default::default() };
+            let p = d.0.join(format!("export-{no_hard_links}"));
+            create_with_options(&fs, &p, NewFilePermissions::PlatformDefault, |f| f.write_all(b"export"))?;
+            assert_eq!(acl(&p)?, expected, "same inherited ACL as ordinary creation");
+            assert_eq!(std::fs::read(&p)?, b"export");
+        }
+        assert_no_temp(&d.0);
+        Ok(())
     }
 
     #[test]

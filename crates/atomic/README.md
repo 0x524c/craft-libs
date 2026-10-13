@@ -63,6 +63,41 @@ let path = Path::new("export.png");
 write_new(path, b"png bytes...").expect("exclusive write");
 ```
 
+### Normal Permissions for Documents and Exports
+
+The free functions and `WriteOptions::default()` keep new files private. Settings and recovery
+backups can continue using them. For a new user document or export that should follow normal
+file-creation permissions, opt in explicitly:
+
+```rust
+use std::path::Path;
+use craft_atomic::{NewFilePermissions, WriteOptions};
+
+let documents = WriteOptions { new_file_permissions: NewFilePermissions::PlatformDefault };
+documents.atomic_write(Path::new("project.craft"), b"document bytes")?;
+documents.write_new(Path::new("export.pdf"), b"pdf bytes")?;
+# Ok::<(), std::io::Error>(())
+```
+
+`atomic_write_with` and `write_new_with` on these options also support streaming. On Unix,
+the library samples normal creation with mode `0666` using a separate, empty file beside the
+destination. The OS applies the process umask or the directory's default ACL; process-global
+umask is never changed. The empty probe is removed before a distinct `0600` payload stage is
+created. Even an open handle to the probe never receives document bytes. This follows the
+[Qt QSaveFile approach](https://github.com/qt/qtbase/blob/72b2a0c2f59014a34c2c433fc1fb1d18cff7ec48/src/corelib/io/qsavefile.cpp).
+
+After writing finishes, the selected final permissions are applied before the file flush and
+publication. On replacement, the existing Unix mode always takes precedence. On new files,
+`PlatformDefault` takes precedence over callback-selected modes; the private default keeps
+the original callback behavior. The exclusive-copy fallback still starts private and applies
+final permissions after copying. Other platforms keep their existing creation behavior.
+
+Sampling adds one empty-file create/stat/remove per new file with this policy, independent of
+payload size. A sampling, probe-cleanup or permission-setting failure aborts the save; the library
+does not guess permissions. As with ordinary file creation, this samples the directory policy
+at creation time; later umask or directory-policy changes are not tracked. Matching a sampled
+Unix mode does not promise preservation of all ACLs or other metadata across replacements.
+
 ### Fault Injection & Testing
 
 ```rust
