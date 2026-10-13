@@ -525,6 +525,7 @@ dependencies = [
 name = "craft-print"
 version = "0.1.0"
 dependencies = [
+ "craft-winprint-gdi",
  "miniz_oxide 0.8.9",
  "roxmltree",
  "tempfile",
@@ -564,6 +565,14 @@ dependencies = [
  "image",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "craft-winprint-gdi"
+version = "0.1.0"
+source = "git+https://github.com/storytold/winprint.rs?rev=c32b8e717259d0a7589d301fa80122323b052012#c32b8e717259d0a7589d301fa80122323b052012"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

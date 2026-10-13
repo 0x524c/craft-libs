@@ -97,3 +97,13 @@ reqwest (with rustls) and sigstore crates as non-optional build-dependencies, us
 running `cargo deny` need a licence exception for `webpki-root-certs` (CDLA-Permissive-2.0, CA
 list data reqwest brings) and an advisory ignore for RUSTSEC-2024-0370 (`proc-macro-error`
 unmaintained, a compile-time proc macro of winprint's `fmt-derive`).
+
+`craft_print::rgb` exposes the safe `craft-winprint-gdi` API for native driver settings,
+printable geometry, RGB pages and caller-composed vector strokes. Applications retain ICC
+conversion, document layout, labels and print-mark composition. The shared transport validates
+single-copy DEVMODE settings before emitting manual copies and checks GDI errors. Color policy
+is explicit: application-managed/unmanaged RGB disables DC and old-style halftone correction
+with `ICM_DONE_OUTSIDEDC`, reapplied after `StartPage`; driver-managed RGB uses `ICM_OFF`.
+Vendor driver automatic color correction remains a driver setting and requires qualification.
+Other platforms return `rgb::PrintError::Unsupported`. The Windows PDF backend and its existing
+completion dependency pin are independent of this additional MIT OR Apache-2.0 API.
