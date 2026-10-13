@@ -5,33 +5,74 @@
 //! Kasson et al. 1995); 4-input tables interpolate linearly along the first input between
 //! two tetrahedral evaluations; other input counts use multilinear interpolation.
 
+use crate::{CmsError, check_len, invalid_arg};
+
 /// Maximum number of input or output channels of a CLUT.
 pub const MAX_CHANNELS: usize = 15;
 
+/// Largest number of stored values (nodes × outputs) a table may hold.
+pub const MAX_VALUES: usize = 16 * 1024 * 1024;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Clut {
-    pub inputs: usize,
-    pub outputs: usize,
-    /// Grid points per input dimension (each ≥ 2, or 1 for a degenerate dimension).
-    pub grid: Vec<usize>,
-    /// Normalised node values, `outputs` per node.
-    pub data: Vec<f32>,
+    pub(crate) inputs: usize,
+    pub(crate) outputs: usize,
+    pub(crate) grid: Vec<usize>,
+    pub(crate) data: Vec<f32>,
     strides: Vec<usize>,
 }
 
 impl Clut {
-    /// Builds a table from node data. Panics if `data` has the wrong length.
-    pub fn new(grid: Vec<usize>, outputs: usize, data: Vec<f32>) -> Self {
+    /// Builds a table from node data: `grid` holds the points per input dimension (1 to
+    /// [`MAX_CHANNELS`] dimensions, each ≥ 2, or 1 for a degenerate dimension), `data` holds
+    /// `outputs` values per node. Refuses inconsistent dimensions with
+    /// [`CmsError::InvalidArgument`].
+    pub fn new(grid: Vec<usize>, outputs: usize, data: Vec<f32>) -> Result<Self, CmsError> {
+        let total = Self::check_dims(&grid, outputs)?;
+        if data.len() != total {
+            return Err(invalid_arg(format!("CLUT data has {} values, the grid needs {total}", data.len())));
+        }
+        Ok(Self::from_checked(grid, outputs, data))
+    }
+
+    /// Number of values a `grid` × `outputs` table stores, or why it is refused.
+    fn check_dims(grid: &[usize], outputs: usize) -> Result<usize, CmsError> {
+        if !(1..=MAX_CHANNELS).contains(&grid.len()) || !(1..=MAX_CHANNELS).contains(&outputs) {
+            return Err(invalid_arg(format!("CLUT with {} inputs and {outputs} outputs (1 to {MAX_CHANNELS} each)", grid.len())));
+        }
+        if grid.contains(&0) {
+            return Err(invalid_arg("CLUT grid with zero points in a dimension"));
+        }
+        grid.iter()
+            .try_fold(outputs, |n, g| n.checked_mul(*g))
+            .filter(|n| *n <= MAX_VALUES)
+            .ok_or_else(|| invalid_arg(format!("CLUT grid {grid:?} × {outputs} exceeds {MAX_VALUES} values")))
+    }
+
+    fn from_checked(grid: Vec<usize>, outputs: usize, data: Vec<f32>) -> Self {
         let inputs = grid.len();
-        assert!((1..=MAX_CHANNELS).contains(&inputs) && (1..=MAX_CHANNELS).contains(&outputs), "bad CLUT dimensions");
         let mut strides = vec![0usize; inputs];
         let mut s = outputs;
         for i in (0..inputs).rev() {
             strides[i] = s;
-            s *= grid[i].max(1);
+            s *= grid[i];
         }
-        assert_eq!(data.len(), s, "CLUT data length");
         Clut { inputs, outputs, grid, data, strides }
+    }
+
+    pub fn inputs(&self) -> usize {
+        self.inputs
+    }
+    pub fn outputs(&self) -> usize {
+        self.outputs
+    }
+    /// Grid points per input dimension.
+    pub fn grid(&self) -> &[usize] {
+        &self.grid
+    }
+    /// Normalised node values, `outputs` per node, first input varying slowest.
+    pub fn data(&self) -> &[f32] {
+        &self.data
     }
 
     /// Number of nodes.
@@ -39,14 +80,15 @@ impl Clut {
         self.data.len() / self.outputs
     }
 
-    /// Builds a table by sampling `f` at every node (inputs normalised to `[0, 1]`).
-    pub fn sample(grid: Vec<usize>, outputs: usize, mut f: impl FnMut(&[f32], &mut [f32])) -> Self {
+    /// Builds a table by sampling `f` at every node (inputs normalised to `[0, 1]`); the
+    /// dimensions are checked as in [`Clut::new`].
+    pub fn sample(grid: Vec<usize>, outputs: usize, mut f: impl FnMut(&[f32], &mut [f32])) -> Result<Self, CmsError> {
+        let total = Self::check_dims(&grid, outputs)?;
         let inputs = grid.len();
-        let total: usize = grid.iter().product();
-        let mut data = vec![0.0f32; total * outputs];
+        let mut data = vec![0.0f32; total];
         let mut idx = vec![0usize; inputs];
         let mut inp = vec![0.0f32; inputs];
-        for node in 0..total {
+        for (node, out) in data.chunks_exact_mut(outputs).enumerate() {
             let mut rem = node;
             for d in (0..inputs).rev() {
                 idx[d] = rem % grid[d];
@@ -55,9 +97,9 @@ impl Clut {
             for d in 0..inputs {
                 inp[d] = if grid[d] > 1 { idx[d] as f32 / (grid[d] - 1) as f32 } else { 0.0 };
             }
-            f(&inp, &mut data[node * outputs..(node + 1) * outputs]);
+            f(&inp, out);
         }
-        Clut::new(grid, outputs, data)
+        Ok(Self::from_checked(grid, outputs, data))
     }
 
     #[inline]
@@ -71,9 +113,22 @@ impl Clut {
         (i * self.strides[d], p - i as f32, self.strides[d])
     }
 
-    /// Interpolates at `input` (`inputs` values) into `out` (`outputs` values).
+    /// Interpolates at `input` (at least `inputs` values) into `out` (at least `outputs`
+    /// values).
+    pub fn eval(&self, input: &[f32], out: &mut [f32]) -> Result<(), CmsError> {
+        self.check_io(input, out)?;
+        self.interp(input, out);
+        Ok(())
+    }
+
+    fn check_io(&self, input: &[f32], out: &[f32]) -> Result<(), CmsError> {
+        check_len("CLUT input", input.len(), self.inputs)?;
+        check_len("CLUT output", out.len(), self.outputs)
+    }
+
+    /// [`Clut::eval`] for callers that guarantee the slice lengths.
     #[inline]
-    pub fn eval(&self, input: &[f32], out: &mut [f32]) {
+    pub(crate) fn interp(&self, input: &[f32], out: &mut [f32]) {
         match self.inputs {
             1 => self.eval1(input[0], out),
             3 => {
@@ -100,7 +155,7 @@ impl Clut {
                     out[..self.outputs].copy_from_slice(&lo[..self.outputs]);
                 }
             }
-            _ => self.eval_multilinear(input, out),
+            _ => self.multilinear(input, out),
         }
     }
 
@@ -153,13 +208,21 @@ impl Clut {
     }
 
     /// Trilinear interpolation (3 inputs), kept as a reference for accuracy comparisons.
-    pub fn eval_trilinear(&self, input: &[f32], out: &mut [f32]) {
-        assert_eq!(self.inputs, 3);
-        self.eval_multilinear(input, out);
+    pub fn eval_trilinear(&self, input: &[f32], out: &mut [f32]) -> Result<(), CmsError> {
+        if self.inputs != 3 {
+            return Err(invalid_arg(format!("trilinear interpolation of a {}-input CLUT", self.inputs)));
+        }
+        self.eval_multilinear(input, out)
     }
 
     /// Multilinear interpolation over all 2^n cube corners.
-    pub fn eval_multilinear(&self, input: &[f32], out: &mut [f32]) {
+    pub fn eval_multilinear(&self, input: &[f32], out: &mut [f32]) -> Result<(), CmsError> {
+        self.check_io(input, out)?;
+        self.multilinear(input, out);
+        Ok(())
+    }
+
+    fn multilinear(&self, input: &[f32], out: &mut [f32]) {
         let n = self.inputs;
         let mut base = 0usize;
         let mut r = [0.0f32; MAX_CHANNELS];
@@ -205,28 +268,28 @@ mod tests {
 
     #[test]
     fn exact_on_nodes_and_linear_functions() {
-        let c = Clut::sample(vec![5, 5, 5], 3, f3);
+        let c = Clut::sample(vec![5, 5, 5], 3, f3).unwrap();
         let mut o = [0.0; 3];
-        c.eval(&[0.25, 0.5, 0.75], &mut o);
+        c.eval(&[0.25, 0.5, 0.75], &mut o).unwrap();
         let mut w = [0.0; 3];
         f3(&[0.25, 0.5, 0.75], &mut w);
         for i in 0..3 {
             assert!((o[i] - w[i]).abs() < 1e-6);
         }
         // Linear function is reproduced exactly anywhere.
-        c.eval(&[0.13, 0.77, 0.41], &mut o);
+        c.eval(&[0.13, 0.77, 0.41], &mut o).unwrap();
         assert!((o[0] - (0.13 * 0.5 + 0.77 * 0.3 + 0.41 * 0.2)).abs() < 1e-6);
     }
 
     #[test]
     fn four_d_and_multilinear_agree_on_linear() {
         let f = |p: &[f32], o: &mut [f32]| o[0] = 0.1 * p[0] + 0.2 * p[1] + 0.3 * p[2] + 0.4 * p[3];
-        let c = Clut::sample(vec![3, 4, 5, 6], 1, f);
+        let c = Clut::sample(vec![3, 4, 5, 6], 1, f).unwrap();
         let mut a = [0.0];
         let mut b = [0.0];
         for p in [[0.1f32, 0.9, 0.3, 0.7], [1.0, 0.0, 0.5, 0.5], [0.33, 0.66, 0.99, 0.01]] {
-            c.eval(&p, &mut a);
-            c.eval_multilinear(&p, &mut b);
+            c.eval(&p, &mut a).unwrap();
+            c.eval_multilinear(&p, &mut b).unwrap();
             let want = 0.1 * p[0] + 0.2 * p[1] + 0.3 * p[2] + 0.4 * p[3];
             assert!((a[0] - want).abs() < 1e-5 && (b[0] - want).abs() < 1e-5);
         }
@@ -237,12 +300,13 @@ mod tests {
         let c = Clut::sample(vec![3], 2, |p, o| {
             o[0] = p[0];
             o[1] = 1.0 - p[0];
-        });
+        })
+        .unwrap();
         let mut o = [0.0; 2];
-        c.eval(&[0.25], &mut o);
+        c.eval(&[0.25], &mut o).unwrap();
         assert!((o[0] - 0.25).abs() < 1e-6 && (o[1] - 0.75).abs() < 1e-6);
-        let c = Clut::sample(vec![2, 2], 1, |p, o| o[0] = p[0] + p[1]);
-        c.eval(&[0.5, 0.25], &mut o);
+        let c = Clut::sample(vec![2, 2], 1, |p, o| o[0] = p[0] + p[1]).unwrap();
+        c.eval(&[0.5, 0.25], &mut o).unwrap();
         assert!((o[0] - 0.75).abs() < 1e-6);
     }
 }

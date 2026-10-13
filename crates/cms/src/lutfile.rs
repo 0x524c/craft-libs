@@ -50,15 +50,16 @@ fn checked_data_len(size: usize) -> Result<(usize, usize), LutError> {
 }
 
 impl LutFile {
-    /// The identity table of edge `size`.
-    pub fn identity(size: usize) -> Self {
+    /// The identity table of edge `size` (2 to [`MAX_SIZE`]).
+    pub fn identity(size: usize) -> Result<Self, LutError> {
         Self::from_fn("Identity", size, |c| c)
     }
 
-    /// Samples `f` on an `size`³ grid.
-    pub fn from_fn(title: &str, size: usize, f: impl Fn([f32; 3]) -> [f32; 3]) -> Self {
-        let m = (size.max(2) - 1) as f32;
-        let mut data = Vec::with_capacity(size * size * size * 3);
+    /// Samples `f` on an `size`³ grid, `size` from 2 to [`MAX_SIZE`].
+    pub fn from_fn(title: &str, size: usize, f: impl Fn([f32; 3]) -> [f32; 3]) -> Result<Self, LutError> {
+        let (_, data_len) = checked_data_len(size)?;
+        let m = (size - 1) as f32;
+        let mut data = Vec::with_capacity(data_len);
         for b in 0..size {
             for g in 0..size {
                 for r in 0..size {
@@ -67,7 +68,7 @@ impl LutFile {
                 }
             }
         }
-        LutFile { title: title.to_string(), size, data, domain_min: [0.0; 3], domain_max: [1.0; 3] }
+        Ok(LutFile { title: title.to_string(), size, data, domain_min: [0.0; 3], domain_max: [1.0; 3] })
     }
 
     /// Whether the table expects plain 0..1 inputs (the common case; Photoshop's default).
@@ -164,7 +165,7 @@ pub fn parse_cube(text: &str) -> Result<LutFile, LutError> {
             let f = x - i as f32;
             rows[i * 3 + ch] * (1.0 - f) + rows[(i + 1) * 3 + ch] * f
         };
-        let mut l = LutFile::from_fn(&title, 33, |c| [curve(0, c[0]), curve(1, c[1]), curve(2, c[2])]);
+        let mut l = LutFile::from_fn(&title, 33, |c| [curve(0, c[0]), curve(1, c[1]), curve(2, c[2])])?;
         l.title = title;
         return l.check();
     }
@@ -294,7 +295,7 @@ pub fn builtin(id: &str) -> Option<LutFile> {
         "monoContrast" => Box::new(|c: [f32; 3]| [smooth(smooth(luma(c))); 3]),
         _ /* crossProcess */ => Box::new(|c: [f32; 3]| [smooth(c[0]) * 1.05, c[1] * 1.1 - 0.03, c[2] * 0.7 + 0.15]),
     };
-    Some(LutFile::from_fn(label, 33, f))
+    LutFile::from_fn(label, 33, f).ok()
 }
 
 #[cfg(test)]
@@ -362,7 +363,7 @@ DOMAIN_MAX 0.5 1 1
 
     #[test]
     fn cube_roundtrip_and_identity() {
-        let id = LutFile::identity(5);
+        let id = LutFile::identity(5).unwrap();
         let text = write_cube(&LutFile { title: "Id".into(), ..id.clone() });
         let back = parse_cube(&text).unwrap();
         assert_eq!(back.size, 5);
@@ -408,12 +409,12 @@ DOMAIN_MAX 0.5 1 1
         }
         let l = parse_3dl(&text).unwrap();
         assert_eq!(l.size, 2);
-        assert_eq!(l.data, LutFile::identity(2).data);
+        assert_eq!(l.data, LutFile::identity(2).unwrap().data);
     }
 
     #[test]
     fn look_hex_floats() {
-        let id = LutFile::identity(2);
+        let id = LutFile::identity(2).unwrap();
         let hex: String = id.data.iter().flat_map(|v| v.to_le_bytes()).map(|b| format!("{b:02X}")).collect();
         let xml = format!("<?xml version=\"1.0\"?><look><LUT><size>\"2\"</size><data>\"{hex}\"</data></LUT></look>");
         assert_eq!(parse("a.look", xml.as_bytes()).unwrap().data, id.data);

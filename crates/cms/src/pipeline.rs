@@ -4,7 +4,7 @@
 
 use crate::clut::Clut;
 use crate::curve::Curve;
-use crate::math;
+use crate::{CmsError, check_len, invalid_arg, math};
 
 /// Largest channel count flowing through a pipeline.
 pub const MAX: usize = 16;
@@ -54,6 +54,25 @@ impl Stage {
         }
     }
 
+    /// Checks that the stage can run on `n` channels: matrix shapes match their data and
+    /// channel counts stay within [`MAX`].
+    fn check(&self, n: usize) -> Result<(), CmsError> {
+        if let Stage::Matrix { rows, cols, m, offset } = self
+            && (!(1..=MAX).contains(rows) || !(1..=MAX).contains(cols) || m.len() != rows * cols || offset.len() != *rows)
+        {
+            return Err(invalid_arg(format!(
+                "{rows}×{cols} matrix stage with {} coefficients and {} offsets (1 to {MAX} rows and columns)",
+                m.len(),
+                offset.len()
+            )));
+        }
+        let out = self.outputs(n);
+        if !(1..=MAX).contains(&out) {
+            return Err(invalid_arg(format!("pipeline stage with {out} outputs (1 to {MAX})")));
+        }
+        Ok(())
+    }
+
     pub fn matrix3(m: &math::Mat3) -> Stage {
         Stage::Matrix { rows: 3, cols: 3, m: m.iter().flatten().copied().collect(), offset: vec![0.0; 3] }
     }
@@ -89,7 +108,7 @@ impl Stage {
                 let mut o = [0.0f32; MAX];
                 let mut inp = [0.0f32; MAX];
                 inp[..n].copy_from_slice(&v[..n]);
-                c.eval(&inp[..c.inputs], &mut o[..c.outputs]);
+                c.interp(&inp[..c.inputs], &mut o[..c.outputs]);
                 v[..c.outputs].copy_from_slice(&o[..c.outputs]);
                 c.outputs
             }
@@ -152,28 +171,59 @@ impl Stage {
 /// A sequence of stages with fixed input and output channel counts.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pipeline {
-    pub inputs: usize,
-    pub outputs: usize,
-    pub stages: Vec<Stage>,
+    inputs: usize,
+    outputs: usize,
+    stages: Vec<Stage>,
 }
 
 impl Pipeline {
-    pub fn new(inputs: usize, stages: Vec<Stage>) -> Self {
-        let outputs = stages.iter().fold(inputs, |n, s| s.outputs(n));
-        Pipeline { inputs, outputs, stages }
-    }
-
-    /// Appends stages.
-    pub fn extend(&mut self, stages: impl IntoIterator<Item = Stage>) {
-        for s in stages {
-            self.outputs = s.outputs(self.outputs);
-            self.stages.push(s);
+    /// A pipeline over `inputs` channels (1 to [`MAX`]). Refuses stages that cannot run on the
+    /// channels reaching them with [`CmsError::InvalidArgument`].
+    pub fn new(inputs: usize, stages: Vec<Stage>) -> Result<Self, CmsError> {
+        if !(1..=MAX).contains(&inputs) {
+            return Err(invalid_arg(format!("pipeline with {inputs} inputs (1 to {MAX})")));
         }
+        let mut p = Pipeline { inputs, outputs: inputs, stages: Vec::with_capacity(stages.len()) };
+        p.extend(stages)?;
+        Ok(p)
     }
 
-    /// Evaluates one pixel: `input` has `inputs` values, `out` receives `outputs` values.
+    pub fn inputs(&self) -> usize {
+        self.inputs
+    }
+    pub fn outputs(&self) -> usize {
+        self.outputs
+    }
+    pub fn stages(&self) -> &[Stage] {
+        &self.stages
+    }
+
+    /// Appends stages, checked as in [`Pipeline::new`]; on error the pipeline is unchanged.
+    pub fn extend(&mut self, stages: impl IntoIterator<Item = Stage>) -> Result<(), CmsError> {
+        let mut n = self.outputs;
+        let mut added = Vec::new();
+        for s in stages {
+            s.check(n)?;
+            n = s.outputs(n);
+            added.push(s);
+        }
+        self.stages.extend(added);
+        self.outputs = n;
+        Ok(())
+    }
+
+    /// Evaluates one pixel: `input` has at least `inputs` values, `out` receives `outputs`
+    /// values.
+    pub fn eval(&self, input: &[f32], out: &mut [f32]) -> Result<(), CmsError> {
+        check_len("pipeline input", input.len(), self.inputs)?;
+        check_len("pipeline output", out.len(), self.outputs)?;
+        self.run(input, out);
+        Ok(())
+    }
+
+    /// [`Pipeline::eval`] for callers that guarantee the slice lengths.
     #[inline]
-    pub fn eval(&self, input: &[f32], out: &mut [f32]) {
+    pub(crate) fn run(&self, input: &[f32], out: &mut [f32]) {
         let mut v = [0.0f32; MAX];
         v[..self.inputs].copy_from_slice(&input[..self.inputs]);
         let mut n = self.inputs;

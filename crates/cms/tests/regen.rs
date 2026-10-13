@@ -15,7 +15,7 @@ fn regen_or_check_coated_cmyk() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/photocraft-coated-cmyk.icc");
     if std::env::var_os("CRAFT_CMS_REGEN_PROFILES").is_some() {
         let t = std::time::Instant::now();
-        let p = craft_cms::synth::coated_cmyk();
+        let p = craft_cms::synth::coated_cmyk().unwrap();
         let bytes = p.to_bytes();
         std::fs::write(path, &*bytes).unwrap();
         eprintln!("wrote {} bytes in {:?}", bytes.len(), t.elapsed());
@@ -32,7 +32,7 @@ fn regen_or_check_coated_cmyk() {
             for y in [0.0, 0.55, 1.0] {
                 for k in [0.0, 0.5, 1.0] {
                     let mut o = [0.0f32; 3];
-                    t.eval(&[c as f32, m as f32, y as f32, k as f32], &mut o);
+                    t.eval(&[c as f32, m as f32, y as f32, k as f32], &mut o).unwrap();
                     let got = [o[0] as f64 * 100.0, o[1] as f64 * 255.0 - 128.0, o[2] as f64 * 255.0 - 128.0];
                     let want = model.lab([c, m, y, k]);
                     worst = worst.max(craft_cms::math::delta_e76(got, want));

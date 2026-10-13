@@ -323,12 +323,35 @@ fn build(b: Builtin) -> Profile {
         Builtin::GrayGamma22 => gray(b.description(), Curve::Gamma(2.2)),
         Builtin::SGray => gray(b.description(), srgb_trc()),
         Builtin::LabD50 => lab(),
-        // The shipped bytes are `synth::coated_cmyk()` (checked by the `regen` test); rebuild
-        // them rather than crash if they ever fail to parse.
-        Builtin::CoatedCmyk => Profile::parse(COATED_CMYK_ICC).unwrap_or_else(|_| crate::synth::coated_cmyk()),
+        // The shipped bytes are `synth::coated_cmyk()` (checked by the `regen` test).
+        Builtin::CoatedCmyk => shipped_cmyk(COATED_CMYK_ICC, b),
         // The fit needs the measurement data, which only the tests have; the `fogra39` tests
-        // check that the shipped bytes parse, so the synthetic coated profile is a fallback
-        // that does not happen.
-        Builtin::CoatedFogra39 => Profile::parse(COATED_FOGRA39_ICC).unwrap_or_else(|_| crate::synth::coated_cmyk()),
+        // check that the shipped bytes parse.
+        Builtin::CoatedFogra39 => shipped_cmyk(COATED_FOGRA39_ICC, b),
     }
+}
+
+/// A shipped CMYK profile. Should its bytes ever fail to parse, the synthetic coated profile
+/// is generated instead, and failing that a CMYK profile without tables stands in (transforms
+/// refuse it with an error) rather than crash.
+fn shipped_cmyk(bytes: &[u8], b: Builtin) -> Profile {
+    Profile::parse(bytes).or_else(|_| crate::synth::coated_cmyk()).unwrap_or_else(|_| Profile {
+        version: (4, 0x30),
+        class: ProfileClass::Output,
+        color_space: ColorSpace::Cmyk,
+        pcs: Pcs::Lab,
+        rendering_intent: Intent::Perceptual,
+        description: b.description().into(),
+        copyright: COPYRIGHT.into(),
+        white_point: math::d50_quantized(),
+        black_point: None,
+        chad: None,
+        matrix: None,
+        trc: None,
+        gray_trc: None,
+        a2b: [None, None, None],
+        b2a: [None, None, None],
+        bytes: None,
+        hash: Default::default(),
+    })
 }

@@ -94,9 +94,10 @@ impl Curve {
         }
     }
 
-    /// Samples `n` evenly spaced points over `[0, 1]`.
+    /// Samples `n` evenly spaced points over `[0, 1]` (one sample is the value at 0).
     pub fn sample(&self, n: usize) -> Vec<f32> {
-        (0..n).map(|i| self.eval64(i as f64 / (n - 1) as f64) as f32).collect()
+        let step = n.saturating_sub(1).max(1) as f64;
+        (0..n).map(|i| self.eval64(i as f64 / step) as f32).collect()
     }
 
     /// `true` when the curve never decreases over `[0, 1]`.

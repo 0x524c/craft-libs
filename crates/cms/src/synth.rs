@@ -31,7 +31,7 @@ use crate::curve::Curve;
 use crate::math;
 use crate::pipeline::Stage;
 use crate::profile::{ColorSpace, Lut, LutKind, Pcs, Profile, ProfileClass};
-use crate::{CmsError, Intent};
+use crate::{CmsError, Intent, invalid_arg};
 
 pub const DESCRIPTION: &str = "Photocraft Coated CMYK (synthetic, 300% TAC, medium GCR)";
 
@@ -168,7 +168,7 @@ struct TableForward(Clut);
 impl Forward for TableForward {
     fn lab(&self, cmyk: [f64; 4]) -> [f64; 3] {
         let mut o = [0.0f32; 3];
-        self.0.eval(&cmyk.map(|v| v.clamp(0.0, 1.0) as f32), &mut o);
+        self.0.interp(&cmyk.map(|v| v.clamp(0.0, 1.0) as f32), &mut o);
         decode_v2(o.map(f64::from))
     }
 }
@@ -404,7 +404,7 @@ fn par_map<T: Send>(n: usize, f: impl Fn(usize) -> T + Sync + Send) -> Vec<T> {
     (0..n).map(f).collect()
 }
 
-fn b2a_table<F: Forward + ?Sized>(model: &F, p: &CmykParams, gbd: Option<&Gbd>) -> Clut {
+fn b2a_table<F: Forward + ?Sized>(model: &F, p: &CmykParams, gbd: Option<&Gbd>) -> Result<Clut, CmsError> {
     let n = p.grid_b2a.max(2);
     let nodes = n * n * n;
     let vals = par_map(n * n, |row| {
@@ -429,6 +429,17 @@ fn b2a_table<F: Forward + ?Sized>(model: &F, p: &CmykParams, gbd: Option<&Gbd>) 
     Clut::new(vec![n; 3], 4, data)
 }
 
+/// Refuses grids below 2 nodes or above what a [`Clut`] holds, before anything is sampled.
+fn check_grids(p: &CmykParams) -> Result<(), CmsError> {
+    let fits = |grid: usize, dims: u32, outputs: usize| {
+        grid >= 2 && grid.checked_pow(dims).and_then(|n| n.checked_mul(outputs)).is_some_and(|n| n <= crate::clut::MAX_VALUES)
+    };
+    if !fits(p.grid_a2b, 4, 3) || !fits(p.grid_b2a, 3, 4) {
+        return Err(invalid_arg(format!("CMYK profile grids {}⁴/{}³ need at least 2 nodes and must fit a CLUT", p.grid_a2b, p.grid_b2a)));
+    }
+    Ok(())
+}
+
 fn lut16(clut: Clut) -> Lut {
     let (i, o) = (clut.inputs, clut.outputs);
     Lut {
@@ -439,16 +450,17 @@ fn lut16(clut: Clut) -> Lut {
     }
 }
 
-/// Generates a synthetic CMYK profile.
-pub fn cmyk_profile(p: &CmykParams) -> Profile {
+/// Generates a synthetic CMYK profile. Grids are refused as in [`cmyk_profile_from_model`].
+pub fn cmyk_profile(p: &CmykParams) -> Result<Profile, CmsError> {
+    check_grids(p)?;
     let model = CmykModel::coated(p.tvi);
-    let a2b = sample_a2b(&model, p.grid_a2b);
+    let a2b = sample_a2b(&model, p.grid_a2b)?;
     lut_profile(&model, a2b, model.paper, p)
 }
 
 /// Samples a forward model into an AToB table with `grid`⁴ nodes (at least 2⁴) and legacy Lab
 /// encoding.
-fn sample_a2b<F: Forward + ?Sized>(model: &F, grid: usize) -> Clut {
+fn sample_a2b<F: Forward + ?Sized>(model: &F, grid: usize) -> Result<Clut, CmsError> {
     Clut::sample(vec![grid.max(2); 4], 3, |inp, out| {
         let lab = model.lab([inp[0] as f64, inp[1] as f64, inp[2] as f64, inp[3] as f64]);
         out.copy_from_slice(&encode_v2(lab));
@@ -458,27 +470,25 @@ fn sample_a2b<F: Forward + ?Sized>(model: &F, grid: usize) -> Clut {
 /// A CMYK profile of any forward model on paper with absolute XYZ `paper`: the AToB table
 /// samples `model` on `p.grid_a2b`⁴ nodes, and the BToA tables invert that table rather than the
 /// model, so Lab → CMYK → Lab round trips through the profile are as close as the separation
-/// allows. Grids below 2 nodes and a zero, negative or non-finite `paper` are refused with
-/// [`CmsError::Invalid`].
+/// allows. Grids below 2 nodes or too large for a [`Clut`], and a zero, negative or
+/// non-finite `paper`, are refused with [`CmsError::InvalidArgument`].
 pub fn cmyk_profile_from_model<F: Forward + ?Sized>(model: &F, paper: [f64; 3], p: &CmykParams) -> Result<Profile, CmsError> {
-    if p.grid_a2b < 2 || p.grid_b2a < 2 {
-        return Err(CmsError::Invalid(format!("CMYK profile grids {}⁴/{}³ need at least 2 nodes", p.grid_a2b, p.grid_b2a)));
-    }
+    check_grids(p)?;
     if !paper.iter().all(|v| v.is_finite() && *v > 0.0) {
-        return Err(CmsError::Invalid(format!("paper XYZ {paper:?}")));
+        return Err(invalid_arg(format!("paper XYZ {paper:?}")));
     }
-    let a2b = sample_a2b(model, p.grid_a2b);
+    let a2b = sample_a2b(model, p.grid_a2b)?;
     let forward = TableForward(a2b.clone());
-    Ok(lut_profile(&forward, a2b, paper, p))
+    lut_profile(&forward, a2b, paper, p)
 }
 
-fn lut_profile<F: Forward + ?Sized>(model: &F, a2b: Clut, paper: [f64; 3], p: &CmykParams) -> Profile {
+fn lut_profile<F: Forward + ?Sized>(model: &F, a2b: Clut, paper: [f64; 3], p: &CmykParams) -> Result<Profile, CmsError> {
     let gbd = Gbd::new(model, p);
-    let colorimetric = b2a_table(model, p, None);
-    let perceptual = b2a_table(model, p, Some(&gbd));
+    let colorimetric = b2a_table(model, p, None)?;
+    let perceptual = b2a_table(model, p, Some(&gbd))?;
     let a2b = lut16(a2b);
     let (b0, b1) = (lut16(perceptual), lut16(colorimetric));
-    Profile {
+    Ok(Profile {
         version: (4, 0x30),
         class: ProfileClass::Output,
         color_space: ColorSpace::Cmyk,
@@ -497,11 +507,11 @@ fn lut_profile<F: Forward + ?Sized>(model: &F, a2b: Clut, paper: [f64; 3], p: &C
         bytes: None,
         hash: Default::default(),
     }
-    .with_encoded_bytes()
+    .with_encoded_bytes())
 }
 
 /// The default coated profile (what `profiles/photocraft-coated-cmyk.icc` contains).
-pub fn coated_cmyk() -> Profile {
+pub fn coated_cmyk() -> Result<Profile, CmsError> {
     cmyk_profile(&CmykParams::default())
 }
 

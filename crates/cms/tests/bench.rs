@@ -19,11 +19,11 @@ fn bench_srgb8_to_cmyk8() {
     }
     let mut dst = vec![0u8; n * 5];
     let t1 = std::time::Instant::now();
-    t.convert_u8(&src, 4, &mut dst, 5, true);
+    t.convert_u8(&src, 4, &mut dst, 5, true).unwrap();
     eprintln!("convert 6016² RGBA8 → CMYKA8 (one buffer): {:?}", t1.elapsed());
     let t2 = std::time::Instant::now();
     for (s, d) in src.chunks(65536 * 4).zip(dst.chunks_mut(65536 * 5)) {
-        t.convert_u8(s, 4, d, 5, true);
+        t.convert_u8(s, 4, d, 5, true).unwrap();
     }
     eprintln!("convert per 256² tile: {:?}", t2.elapsed());
 }

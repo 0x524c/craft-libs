@@ -18,14 +18,19 @@ use craft_cms::{Builtin, Intent, Profile, Transform};
 let src = Profile::parse(&icc_bytes)?;                    // v2/v4: matrix/TRC, gray TRC, mft1/mft2/mAB/mBA
 let dst = Builtin::CoatedCmyk.profile();
 let t = Transform::new(&src, dst, Intent::RelativeColorimetric, /*bpc*/ true)?;
-t.convert_u8(&rgba8, 4, &mut cmyka8, 5, /*copy alpha*/ true);   // also convert_u16 / convert_f32 / apply (in place)
+t.convert_u8(&rgba8, 4, &mut cmyka8, 5, /*copy alpha*/ true)?;  // also convert_u16 / convert_f32 / apply (in place)
 let mut out = [0.0; 4];
-t.eval(&[1.0, 0.0, 0.0], &mut out);                        // exact single colour
+t.eval(&[1.0, 0.0, 0.0], &mut out)?;                       // exact single colour
 ```
+
+Calls never panic on caller input: strides below the channel count, buffers that are not
+whole pixels, a destination with fewer pixels than the source, slices shorter than the
+channel count and out-of-range table or LUT dimensions return `CmsError::InvalidArgument`.
+Buffers are checked once per call, before any pixel is written.
 
 * `Transform::proof(src, proof, display, intent, bpc, simulate_paper)`: soft-proof chain.
 * `GamutCheck::new(src, proof, ΔE)`: out-of-gamut test (gamut warning).
-* `Lut3d::from_transform(&t, 33).to_rgba16f_bytes()`: display transform as a 3D texture.
+* `Lut3d::from_transform(&t, 33)?.to_rgba16f_bytes()`: display transform as a 3D texture.
 * `transform::cached(src, dst, opts)`: process-wide transform cache.
 * `lutfile::parse(name, bytes)` / `lutfile::write_cube(&lut)`: `.cube`, `.3dl` and `.look` LUT
   files; `lutfile::builtin(id)` returns generated looks (`lutfile::BUILTIN`).

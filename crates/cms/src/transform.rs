@@ -9,7 +9,7 @@ use crate::curve::Curve;
 use crate::math;
 use crate::pipeline::{Pipeline, Stage};
 use crate::profile::{ColorSpace, Pcs, Profile, ProfileClass};
-use crate::{CmsError, Intent};
+use crate::{CmsError, Intent, check_len, invalid_arg};
 
 /// Sample storage of a byte buffer for [`Transform::convert_bytes_many`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,7 +101,7 @@ impl Transform {
 
     pub fn with_options(src: &Profile, dst: &Profile, opts: TransformOptions) -> Result<Transform, CmsError> {
         let stages = link_stages(src, dst, opts.intent, opts.bpc)?;
-        let mut t = Self::from_pipeline(Pipeline::new(src.channels(), stages), opts);
+        let mut t = Self::from_pipeline(Pipeline::new(src.channels(), stages)?, opts)?;
         if opts.intent != Intent::AbsoluteColorimetric {
             t.fix_white(src.color_space, dst.color_space);
         }
@@ -117,15 +117,15 @@ impl Transform {
         stages.push(Stage::Clamp01);
         let (i2, b2) = if simulate_paper { (Intent::AbsoluteColorimetric, false) } else { (Intent::RelativeColorimetric, true) };
         stages.extend(link_stages(proof, dst, i2, b2)?);
-        Ok(Self::from_pipeline(Pipeline::new(src.channels(), stages), TransformOptions { intent, bpc, precise_float: true }))
+        Self::from_pipeline(Pipeline::new(src.channels(), stages)?, TransformOptions { intent, bpc, precise_float: true })
     }
 
     /// Builds a transform from an arbitrary pipeline over normalised values.
-    pub fn from_pipeline(mut pipeline: Pipeline, opts: TransformOptions) -> Transform {
+    pub fn from_pipeline(mut pipeline: Pipeline, opts: TransformOptions) -> Result<Transform, CmsError> {
         pipeline.optimize();
-        let (inputs, outputs) = (pipeline.inputs, pipeline.outputs);
+        let (inputs, outputs) = (pipeline.inputs(), pipeline.outputs());
         // Split trailing inverse curves into accurate output tables.
-        let mut head = pipeline.stages.clone();
+        let mut head = pipeline.stages().to_vec();
         let mut post = None;
         if let Some(Stage::InvCurves(cs)) = head.last()
             && cs.len() == outputs
@@ -147,8 +147,13 @@ impl Transform {
                 head.pop();
             }
         }
-        let head_pipe = Pipeline::new(inputs, head.clone());
-        let mid = head_pipe.outputs;
+        let head_pipe = Pipeline::new(inputs, head.clone())?;
+        let mid = head_pipe.outputs();
+        let sampled = |grid: Vec<usize>| match Clut::sample(grid, mid, |i, o| head_pipe.run(i, o)) {
+            Ok(c) => Core::Grid(c),
+            // More outputs than a table holds: evaluate exactly.
+            Err(_) => Core::Exact,
+        };
         let core = match head.as_slice() {
             [] => Core::Shaper { curves8: Vec::new(), curves: Vec::new(), matrix: None },
             [Stage::Curves(cs)] if cs.len() == inputs => shaper(cs, None),
@@ -158,10 +163,10 @@ impl Transform {
             // a grid would amplify interpolation error through steep output curves.
             _ if !head.iter().any(|s| matches!(s, Stage::Clut(_))) => Core::Exact,
             _ => match inputs {
-                1 => Core::Grid(Clut::sample(vec![TABLE_1D], mid, |i, o| head_pipe.eval(i, o))),
-                3 => Core::Grid(Clut::sample(vec![GRID_3D; 3], mid, |i, o| head_pipe.eval(i, o))),
-                4 => Core::Grid(Clut::sample(vec![GRID_4D; 4], mid, |i, o| head_pipe.eval(i, o))),
-                2 => Core::Grid(Clut::sample(vec![GRID_3D; 2], mid, |i, o| head_pipe.eval(i, o))),
+                1 => sampled(vec![TABLE_1D]),
+                3 => sampled(vec![GRID_3D; 3]),
+                4 => sampled(vec![GRID_4D; 4]),
+                2 => sampled(vec![GRID_3D; 2]),
                 _ => Core::Exact,
             },
         };
@@ -179,7 +184,7 @@ impl Transform {
                 .collect(),
             _ => Vec::new(),
         };
-        Transform { inputs, outputs, opts, pipeline, core, post, grid8 }
+        Ok(Transform { inputs, outputs, opts, pipeline, core, post, grid8 })
     }
 
     /// White preservation: the device-link node at the source's device white gets exactly the
@@ -226,24 +231,38 @@ impl Transform {
         &self.pipeline
     }
 
-    /// Exact evaluation of one colour (`inputs` → `outputs` normalised values).
-    #[inline]
-    pub fn eval(&self, input: &[f32], out: &mut [f32]) {
-        self.pipeline.eval(input, out);
+    /// Exact evaluation of one colour: `input` holds at least `inputs` normalised values, `out`
+    /// receives `outputs` values.
+    pub fn eval(&self, input: &[f32], out: &mut [f32]) -> Result<(), CmsError> {
+        self.check_io(input, out)?;
+        self.pipeline.run(input, out);
+        Ok(())
     }
 
-    /// Lookup-table evaluation of one colour (what integer buffers use).
+    /// Lookup-table evaluation of one colour (what integer buffers use); slices as in
+    /// [`Transform::eval`].
+    pub fn eval_fast(&self, input: &[f32], out: &mut [f32]) -> Result<(), CmsError> {
+        self.check_io(input, out)?;
+        self.fast(input, out);
+        Ok(())
+    }
+
+    fn check_io(&self, input: &[f32], out: &[f32]) -> Result<(), CmsError> {
+        check_len("transform input", input.len(), self.inputs)?;
+        check_len("transform output", out.len(), self.outputs)
+    }
+
     #[inline]
-    pub fn eval_fast(&self, input: &[f32], out: &mut [f32]) {
+    fn fast(&self, input: &[f32], out: &mut [f32]) {
         let mut mid = [0.0f32; 16];
         match &self.core {
-            Core::Exact => return self.pipeline.eval(input, out),
+            Core::Exact => return self.pipeline.run(input, out),
             Core::Grid(c) => {
                 let mut inp = [0.0f32; 16];
                 for (d, s) in inp.iter_mut().zip(&input[..self.inputs]) {
                     *d = s.clamp(0.0, 1.0);
                 }
-                c.eval(&inp[..self.inputs], &mut mid[..c.outputs]);
+                c.interp(&inp[..self.inputs], &mut mid[..c.outputs]);
             }
             Core::Shaper { curves, matrix, .. } => {
                 let mut v = [0.0f32; 16];
@@ -269,20 +288,24 @@ impl Transform {
     }
 
     /// Converts float pixels. `src`/`dst` hold whole pixels of `src_stride`/`dst_stride`
-    /// values; colour channels come first. Trailing channels are copied when `copy_extra`.
-    pub fn convert_f32(&self, src: &[f32], src_stride: usize, dst: &mut [f32], dst_stride: usize, copy_extra: bool) {
-        self.check(src_stride, dst_stride);
+    /// values (strides at least `inputs`/`outputs`); colour channels come first. `dst` holds at
+    /// least as many pixels as `src`; pixels past that are left alone. Trailing channels are
+    /// copied when `copy_extra`. Buffers that do not fit are refused with
+    /// [`CmsError::InvalidArgument`] before any pixel is written.
+    pub fn convert_f32(&self, src: &[f32], src_stride: usize, dst: &mut [f32], dst_stride: usize, copy_extra: bool) -> Result<(), CmsError> {
+        self.check_buffers(src.len(), src_stride, dst.len(), dst_stride)?;
         let extra = extra_channels(self, src_stride, dst_stride, copy_extra);
         par_rows(src, src_stride, dst, dst_stride, |s, d| self.run_f32(s, src_stride, d, dst_stride, extra));
+        Ok(())
     }
 
     fn run_f32(&self, s: &[f32], ss: usize, d: &mut [f32], ds: usize, extra: usize) {
         let precise = self.opts.precise_float || matches!(self.core, Core::Exact);
         for (sp, dp) in s.chunks_exact(ss).zip(d.chunks_exact_mut(ds)) {
             if precise {
-                self.pipeline.eval(sp, dp);
+                self.pipeline.run(sp, dp);
             } else {
-                self.eval_fast(sp, dp);
+                self.fast(sp, dp);
             }
             for e in 0..extra {
                 dp[self.outputs + e] = sp[self.inputs + e];
@@ -290,29 +313,37 @@ impl Transform {
         }
     }
 
-    /// In-place float conversion; `stride ≥ max(inputs, outputs)`.
-    pub fn apply(&self, buf: &mut [f32], stride: usize) {
-        assert!(stride >= self.inputs.max(self.outputs), "stride too small");
+    /// In-place float conversion of whole pixels of `stride ≥ max(inputs, outputs)` values.
+    pub fn apply(&self, buf: &mut [f32], stride: usize) -> Result<(), CmsError> {
+        let need = self.inputs.max(self.outputs);
+        if stride < need {
+            return Err(invalid_arg(format!("pixel stride {stride} is below the channel count {need}")));
+        }
+        if !buf.len().is_multiple_of(stride) {
+            return Err(invalid_arg(format!("buffer of {} values is not whole pixels of {stride}", buf.len())));
+        }
         let precise = self.opts.precise_float || matches!(self.core, Core::Exact);
         let body = |chunk: &mut [f32]| {
             let mut out = [0.0f32; 16];
             for p in chunk.chunks_exact_mut(stride) {
                 if precise {
-                    self.pipeline.eval(p, &mut out);
+                    self.pipeline.run(p, &mut out);
                 } else {
-                    self.eval_fast(p, &mut out);
+                    self.fast(p, &mut out);
                 }
                 p[..self.outputs].copy_from_slice(&out[..self.outputs]);
             }
         };
         par_inplace(buf, stride, body);
+        Ok(())
     }
 
     /// Converts 8-bit pixels (see [`Transform::convert_f32`] for the layout).
-    pub fn convert_u8(&self, src: &[u8], src_stride: usize, dst: &mut [u8], dst_stride: usize, copy_extra: bool) {
-        self.check(src_stride, dst_stride);
+    pub fn convert_u8(&self, src: &[u8], src_stride: usize, dst: &mut [u8], dst_stride: usize, copy_extra: bool) -> Result<(), CmsError> {
+        self.check_buffers(src.len(), src_stride, dst.len(), dst_stride)?;
         let extra = extra_channels(self, src_stride, dst_stride, copy_extra);
         par_rows(src, src_stride, dst, dst_stride, |s, d| self.run_u8(s, src_stride, d, dst_stride, extra));
+        Ok(())
     }
 
     fn run_u8(&self, s: &[u8], ss: usize, d: &mut [u8], ds: usize, extra: usize) {
@@ -384,7 +415,7 @@ impl Transform {
                     for k in 0..self.inputs {
                         inp[k] = sp[k] as f32 / 255.0;
                     }
-                    self.eval_fast(&inp, &mut out);
+                    self.fast(&inp, &mut out);
                     for k in 0..self.outputs {
                         dp[k] = q(out[k]);
                     }
@@ -397,10 +428,11 @@ impl Transform {
     }
 
     /// Converts 16-bit pixels (see [`Transform::convert_f32`] for the layout).
-    pub fn convert_u16(&self, src: &[u16], src_stride: usize, dst: &mut [u16], dst_stride: usize, copy_extra: bool) {
-        self.check(src_stride, dst_stride);
+    pub fn convert_u16(&self, src: &[u16], src_stride: usize, dst: &mut [u16], dst_stride: usize, copy_extra: bool) -> Result<(), CmsError> {
+        self.check_buffers(src.len(), src_stride, dst.len(), dst_stride)?;
         let extra = extra_channels(self, src_stride, dst_stride, copy_extra);
         par_rows(src, src_stride, dst, dst_stride, |s, d| self.run_u16(s, src_stride, d, dst_stride, extra));
+        Ok(())
     }
 
     fn run_u16(&self, s: &[u16], ss: usize, d: &mut [u16], ds: usize, extra: usize) {
@@ -410,7 +442,7 @@ impl Transform {
             for k in 0..self.inputs {
                 inp[k] = sp[k] as f32 / 65535.0;
             }
-            self.eval_fast(&inp, &mut out);
+            self.fast(&inp, &mut out);
             for k in 0..self.outputs {
                 dp[k] = (out[k].clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
             }
@@ -422,9 +454,27 @@ impl Transform {
 
     /// Converts many independent buffers of native-endian samples in one parallel pass (e.g.
     /// all tiles of a surface): far cheaper than one parallel call per small buffer. Each job
-    /// is `(src bytes, dst bytes)` holding whole pixels of `src_stride`/`dst_stride` samples.
-    pub fn convert_bytes_many(&self, sample: SampleKind, jobs: Vec<(&[u8], &mut [u8])>, src_stride: usize, dst_stride: usize, copy_extra: bool) {
-        self.check(src_stride, dst_stride);
+    /// is `(src bytes, dst bytes)` holding whole pixels of `src_stride`/`dst_stride` samples,
+    /// as in [`Transform::convert_f32`]. Every job is checked before any is converted.
+    pub fn convert_bytes_many(
+        &self,
+        sample: SampleKind,
+        jobs: Vec<(&[u8], &mut [u8])>,
+        src_stride: usize,
+        dst_stride: usize,
+        copy_extra: bool,
+    ) -> Result<(), CmsError> {
+        let size = match sample {
+            SampleKind::U8 => 1,
+            SampleKind::U16 => 2,
+            SampleKind::F32 => 4,
+        };
+        for (s, d) in &jobs {
+            if !s.len().is_multiple_of(size) || !d.len().is_multiple_of(size) {
+                return Err(invalid_arg(format!("byte buffers of {}/{} bytes are not whole {size}-byte samples", s.len(), d.len())));
+            }
+            self.check_buffers(s.len() / size, src_stride, d.len() / size, dst_stride)?;
+        }
         let extra = extra_channels(self, src_stride, dst_stride, copy_extra);
         let run = |(s, d): (&[u8], &mut [u8])| match sample {
             SampleKind::U8 => self.run_u8(s, src_stride, d, dst_stride, extra),
@@ -452,10 +502,21 @@ impl Transform {
         }
         #[cfg(target_arch = "wasm32")]
         jobs.into_iter().for_each(run);
+        Ok(())
     }
 
-    fn check(&self, ss: usize, ds: usize) {
-        assert!(ss >= self.inputs && ds >= self.outputs, "pixel stride smaller than the channel count");
+    /// Checks a conversion's buffers once per call, so the per-pixel loops need no checks.
+    fn check_buffers(&self, src_len: usize, ss: usize, dst_len: usize, ds: usize) -> Result<(), CmsError> {
+        if ss < self.inputs || ds < self.outputs {
+            return Err(invalid_arg(format!("pixel strides {ss}/{ds} are below the channel counts {}/{}", self.inputs, self.outputs)));
+        }
+        if !src_len.is_multiple_of(ss) || !dst_len.is_multiple_of(ds) {
+            return Err(invalid_arg(format!("buffers of {src_len}/{dst_len} samples are not whole pixels of {ss}/{ds} samples")));
+        }
+        if dst_len / ds < src_len / ss {
+            return Err(invalid_arg(format!("destination holds {} pixels, source {}", dst_len / ds, src_len / ss)));
+        }
+        Ok(())
     }
 }
 
@@ -644,21 +705,21 @@ pub fn black_point(p: &Profile, intent: Intent, _input: bool) -> Result<f64, Cms
     if lut_based && p.version.0 >= 4 && matches!(intent, Intent::Perceptual | Intent::Saturation) {
         return Ok(PERCEPTUAL_BLACK[1]);
     }
-    let pcs_y = |st: Vec<Stage>, pcs: Pcs, dev: &[f32]| -> f64 {
-        let pipe = Pipeline::new(p.channels(), st);
+    let pcs_y = |st: Vec<Stage>, pcs: Pcs, dev: &[f32]| -> Result<f64, CmsError> {
+        let pipe = Pipeline::new(p.channels(), st)?;
         let mut o = [0.0f32; 16];
-        pipe.eval(dev, &mut o);
+        pipe.eval(dev, &mut o)?;
         let y = match pcs {
             Pcs::Xyz => o[1] as f64,
             Pcs::Lab => math::lab_to_xyz([o[0] as f64, 0.0, 0.0], math::D50)[1],
         };
-        y.clamp(0.0, 0.5)
+        Ok(y.clamp(0.0, 0.5))
     };
     let (to_pcs, pcs) = p.device_to_pcs(intent)?;
     let additive = matches!(p.color_space, ColorSpace::Rgb | ColorSpace::Gray);
     if additive || !lut_based {
         let zero = vec![0.0f32; p.channels()];
-        return Ok(pcs_y(to_pcs, pcs, &zero));
+        return pcs_y(to_pcs, pcs, &zero);
     }
     // Subtractive LUT profile: darkest reachable colour.
     let colorimetric = if intent == Intent::Saturation { Intent::Saturation } else { Intent::RelativeColorimetric };
@@ -669,14 +730,14 @@ pub fn black_point(p: &Profile, intent: Intent, _input: bool) -> Result<f64, Cms
                 st.push(Stage::LabToXyz);
             }
             st.extend(from_pcs);
-            let pipe = Pipeline::new(3, st);
+            let pipe = Pipeline::new(3, st)?;
             let mut dev = [0.0f32; 16];
-            pipe.eval(&[0.0, 0.0, 0.0], &mut dev);
-            Ok(pcs_y(to_pcs, pcs, &dev[..p.channels()]))
+            pipe.eval(&[0.0, 0.0, 0.0], &mut dev)?;
+            pcs_y(to_pcs, pcs, dev.get(..p.channels()).unwrap_or(&dev))
         }
         Err(_) => {
             let ones = vec![1.0f32; p.channels()];
-            Ok(pcs_y(to_pcs, pcs, &ones))
+            pcs_y(to_pcs, pcs, &ones)
         }
     }
 }

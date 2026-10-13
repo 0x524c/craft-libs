@@ -83,7 +83,7 @@ impl Intent {
     }
 }
 
-/// Errors from parsing profiles or building transforms.
+/// Errors from parsing profiles, building transforms, or arguments that do not fit an operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CmsError {
     Truncated,
@@ -91,6 +91,10 @@ pub enum CmsError {
     BadSignature,
     Invalid(String),
     Unsupported(String),
+    /// A caller argument does not fit the operation: a pixel stride below the channel count, a
+    /// buffer that is not whole pixels or is too short, a slice shorter than the channel count,
+    /// or table dimensions out of range.
+    InvalidArgument(String),
 }
 
 impl std::fmt::Display for CmsError {
@@ -100,8 +104,18 @@ impl std::fmt::Display for CmsError {
             CmsError::BadSignature => write!(f, "not an ICC profile (missing 'acsp' signature)"),
             CmsError::Invalid(m) => write!(f, "invalid ICC profile: {m}"),
             CmsError::Unsupported(m) => write!(f, "unsupported ICC feature: {m}"),
+            CmsError::InvalidArgument(m) => write!(f, "invalid argument: {m}"),
         }
     }
 }
 
 impl std::error::Error for CmsError {}
+
+pub(crate) fn invalid_arg(m: impl Into<String>) -> CmsError {
+    CmsError::InvalidArgument(m.into())
+}
+
+/// Checks that `slice` holds at least `n` values (single-colour evaluation).
+pub(crate) fn check_len(what: &str, len: usize, n: usize) -> Result<(), CmsError> {
+    if len < n { Err(invalid_arg(format!("{what} has {len} values, {n} needed"))) } else { Ok(()) }
+}

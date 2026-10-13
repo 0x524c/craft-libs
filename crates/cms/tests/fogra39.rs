@@ -84,7 +84,7 @@ fn profile_lab(profile: &Profile) -> impl Fn([f64; 4]) -> [f64; 3] {
     let t = Transform::new(profile, Builtin::LabD50.profile(), Intent::RelativeColorimetric, false).unwrap();
     move |c| {
         let mut o = [0.0f32; 3];
-        t.eval(&c.map(|v| v as f32), &mut o);
+        t.eval(&c.map(|v| v as f32), &mut o).unwrap();
         [o[0] as f64 * 100.0, o[1] as f64 * 255.0 - 128.0, o[2] as f64 * 255.0 - 128.0]
     }
 }
@@ -444,7 +444,7 @@ fn in_gamut_lab_round_trips() {
             let target = to_lab(p.cmyk);
             let enc = [(target[0] / 100.0) as f32, ((target[1] + 128.0) / 255.0) as f32, ((target[2] + 128.0) / 255.0) as f32];
             let mut c = [0.0f32; 4];
-            to_cmyk.eval(&enc, &mut c);
+            to_cmyk.eval(&enc, &mut c).unwrap();
             assert!(c.iter().map(|v| *v as f64).sum::<f64>() <= 3.3 + 0.02, "{target:?} -> {c:?}");
             delta_e2000(to_lab(c.map(f64::from)), target)
         })
@@ -473,7 +473,7 @@ fn to_srgb(profile: &Profile) -> impl Fn([f64; 4]) -> [u8; 3] {
     let t = Transform::new(profile, Builtin::Srgb.profile(), Intent::RelativeColorimetric, true).unwrap();
     move |c| {
         let mut o = [0.0f32; 3];
-        t.eval(&c.map(|v| v as f32), &mut o);
+        t.eval(&c.map(|v| v as f32), &mut o).unwrap();
         o.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
     }
 }
@@ -481,7 +481,7 @@ fn to_srgb(profile: &Profile) -> impl Fn([f64; 4]) -> [u8; 3] {
 fn srgb_lab(rgb: [u8; 3]) -> [f64; 3] {
     let t = Transform::new(Builtin::Srgb.profile(), Builtin::LabD50.profile(), Intent::RelativeColorimetric, false).unwrap();
     let mut o = [0.0f32; 3];
-    t.eval(&rgb.map(|v| v as f32 / 255.0), &mut o);
+    t.eval(&rgb.map(|v| v as f32 / 255.0), &mut o).unwrap();
     [o[0] as f64 * 100.0, o[1] as f64 * 255.0 - 128.0, o[2] as f64 * 255.0 - 128.0]
 }
 

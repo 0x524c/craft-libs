@@ -1,34 +1,50 @@
 //! 3D lookup tables for applying a display transform on the GPU.
 
-use crate::Transform;
+use crate::lutfile::MAX_SIZE;
+use crate::{CmsError, Transform, invalid_arg};
 
 /// An `size³` RGBA lookup table: entry `r + g·size + b·size²` holds the output for input
 /// `(r, g, b) / (size − 1)`, alpha 1. This is the memory order of a 3D texture whose x axis is
 /// red, so it uploads directly (sample at `(c·(size−1) + 0.5) / size` with linear filtering).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lut3d {
-    pub size: usize,
-    pub data: Vec<[f32; 4]>,
+    size: usize,
+    data: Vec<[f32; 4]>,
 }
 
 impl Lut3d {
-    /// Samples a 3-input transform (1-output transforms are replicated to gray).
-    pub fn from_transform(t: &Transform, size: usize) -> Lut3d {
-        assert!(t.inputs() == 3 && (t.outputs() == 3 || t.outputs() == 1), "display LUTs need a 3→3 or 3→1 transform");
-        assert!(size >= 2, "LUT size");
+    /// Samples a 3-input transform (1-output transforms are replicated to gray) on a `size`³
+    /// grid, `size` from 2 to [`MAX_SIZE`].
+    pub fn from_transform(t: &Transform, size: usize) -> Result<Lut3d, CmsError> {
+        if t.inputs() != 3 || !(t.outputs() == 3 || t.outputs() == 1) {
+            return Err(invalid_arg(format!("display LUTs need a 3→3 or 3→1 transform, not {}→{}", t.inputs(), t.outputs())));
+        }
+        if !(2..=MAX_SIZE).contains(&size) {
+            return Err(invalid_arg(format!("3D LUT size {size} (2 to {MAX_SIZE})")));
+        }
         let mut data = vec![[0.0f32, 0.0, 0.0, 1.0]; size * size * size];
         let s = (size - 1) as f32;
         let mut out = [0.0f32; 16];
         for b in 0..size {
             for g in 0..size {
                 for r in 0..size {
-                    t.eval(&[r as f32 / s, g as f32 / s, b as f32 / s], &mut out);
+                    t.eval(&[r as f32 / s, g as f32 / s, b as f32 / s], &mut out)?;
                     let v = if t.outputs() == 1 { [out[0]; 3] } else { [out[0], out[1], out[2]] };
                     data[r + g * size + b * size * size] = [v[0], v[1], v[2], 1.0];
                 }
             }
         }
-        Lut3d { size, data }
+        Ok(Lut3d { size, data })
+    }
+
+    /// Edge length.
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    /// `size`³ RGBA entries, red fastest.
+    pub fn data(&self) -> &[[f32; 4]] {
+        &self.data
     }
 
     /// Trilinear lookup (what GPU filtering computes).

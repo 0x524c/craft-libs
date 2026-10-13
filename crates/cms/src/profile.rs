@@ -252,9 +252,9 @@ impl Profile {
                 k /= steps;
             }
             let (mut la, mut lb) = ([0f32; 3], [0f32; 3]);
-            a.eval(&input[..n], &mut la);
-            b.eval(&input[..n], &mut lb);
-            math::delta_e76(decode(la), decode(lb)) <= SAME_COLORS_MAX_DELTA_E
+            a.eval(&input[..n], &mut la).is_ok()
+                && b.eval(&input[..n], &mut lb).is_ok()
+                && math::delta_e76(decode(la), decode(lb)) <= SAME_COLORS_MAX_DELTA_E
         })
     }
 
@@ -438,7 +438,7 @@ fn sig(s: &[u8; 4]) -> u32 {
 }
 
 /// Upper bound on CLUT nodes × outputs we accept, to reject hostile files.
-const MAX_CLUT_VALUES: usize = 16 * 1024 * 1024;
+const MAX_CLUT_VALUES: usize = crate::clut::MAX_VALUES;
 
 fn parse_profile(bytes: &[u8]) -> Result<Profile, CmsError> {
     let r = Reader { b: bytes };
@@ -674,7 +674,7 @@ fn parse_lut(d: &[u8], a2b: bool) -> Result<Lut, CmsError> {
                 stages.push(Stage::matrix3(&m));
             }
             stages.push(Stage::Curves(in_curves));
-            stages.push(Stage::Clut(Clut::new(vec![g; i], o, data)));
+            stages.push(Stage::Clut(Clut::new(vec![g; i], o, data)?));
             stages.push(Stage::Curves(out_curves));
             Ok(Lut { kind: if wide { LutKind::Lut16 } else { LutKind::Lut8 }, inputs: i, outputs: o, stages })
         }
@@ -712,7 +712,7 @@ fn parse_lut(d: &[u8], a2b: bool) -> Result<Lut, CmsError> {
                     2 => r.slice(off + 20, total * 2)?.as_chunks::<2>().0.iter().map(|c| u16::from_be_bytes([c[0], c[1]]) as f32 / 65535.0).collect(),
                     _ => return Err(CmsError::Invalid(format!("CLUT precision {prec}"))),
                 };
-                Ok(Stage::Clut(Clut::new(grid, cout, data)))
+                Ok(Stage::Clut(Clut::new(grid, cout, data)?))
             };
             let mut stages = Vec::new();
             if ty == b"mAB " {

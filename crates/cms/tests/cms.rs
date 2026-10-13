@@ -26,7 +26,7 @@ fn enc(l: [f64; 3]) -> [f32; 3] {
 fn to_lab(p: &Profile, dev: &[f32], intent: Intent) -> [f64; 3] {
     let t = Transform::new(p, lab(), intent, false).unwrap();
     let mut o = [0.0f32; 3];
-    t.eval(dev, &mut o);
+    t.eval(dev, &mut o).unwrap();
     dec(&o)
 }
 
@@ -83,16 +83,16 @@ fn rgb_lab_rgb_roundtrip_8bit_and_float() {
     }
     let f: Vec<f32> = src8.iter().map(|v| *v as f32 / 255.0).collect();
     let mut labf = vec![0.0f32; f.len()];
-    to.convert_f32(&f, 3, &mut labf, 3, false);
+    to.convert_f32(&f, 3, &mut labf, 3, false).unwrap();
     let mut rgbf = vec![0.0f32; f.len()];
-    back.convert_f32(&labf, 3, &mut rgbf, 3, false);
+    back.convert_f32(&labf, 3, &mut rgbf, 3, false).unwrap();
     for (a, b) in src8.iter().zip(&rgbf) {
         assert!((*a as f32 - b * 255.0).abs() <= 1.0, "{a} vs {}", b * 255.0);
     }
     // 8-bit RGB stored as 16-bit Lab then back to 8-bit through the lookup tables.
     let lab16: Vec<u16> = labf.iter().map(|v| (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16).collect();
     let mut rgb16 = vec![0u16; lab16.len()];
-    back.convert_u16(&lab16, 3, &mut rgb16, 3, false);
+    back.convert_u16(&lab16, 3, &mut rgb16, 3, false).unwrap();
     for (a, b) in src8.iter().zip(&rgb16) {
         assert!((*a as f32 - *b as f32 / 257.0).abs() <= 1.0, "{a} vs {}", *b as f32 / 257.0);
     }
@@ -102,7 +102,7 @@ fn rgb_lab_rgb_roundtrip_8bit_and_float() {
     }
     // Fast 8-bit path: RGB8 → Lab8-grid → compare with exact within 1 level of Lab encoding.
     let mut lab8 = vec![0u8; src8.len()];
-    to.convert_u8(&src8, 3, &mut lab8, 3, false);
+    to.convert_u8(&src8, 3, &mut lab8, 3, false).unwrap();
     for (q, e) in lab8.iter().zip(&labf) {
         assert!((*q as f32 - e * 255.0).abs() <= 1.0);
     }
@@ -115,10 +115,10 @@ fn rgb_to_rgb_matrix_shaper_paths_agree() {
         let t = Transform::new(srgb(), dst.profile(), Intent::RelativeColorimetric, false).unwrap();
         let src: Vec<u8> = (0..=255u8).flat_map(|v| [v, v / 2, 255 - v]).collect();
         let mut out = vec![0u8; src.len()];
-        t.convert_u8(&src, 3, &mut out, 3, false);
+        t.convert_u8(&src, 3, &mut out, 3, false).unwrap();
         for (px, o) in src.chunks(3).zip(out.chunks(3)) {
             let mut e = [0.0f32; 3];
-            t.eval(&[px[0] as f32 / 255.0, px[1] as f32 / 255.0, px[2] as f32 / 255.0], &mut e);
+            t.eval(&[px[0] as f32 / 255.0, px[1] as f32 / 255.0, px[2] as f32 / 255.0], &mut e).unwrap();
             for k in 0..3 {
                 assert!((o[k] as f32 - e[k].clamp(0.0, 1.0) * 255.0).abs() <= 0.6, "{dst:?} {px:?}: {o:?} vs {e:?}");
             }
@@ -131,7 +131,7 @@ fn identity_transform_is_identity() {
     let t = Transform::new(srgb(), srgb(), Intent::RelativeColorimetric, true).unwrap();
     let src: Vec<u8> = (0..=255u8).flat_map(|v| [v, 255 - v, v / 3, 77]).collect();
     let mut out = vec![0u8; src.len()];
-    t.convert_u8(&src, 4, &mut out, 4, true);
+    t.convert_u8(&src, 4, &mut out, 4, true).unwrap();
     assert_eq!(src, out);
 }
 
@@ -162,13 +162,13 @@ fn cmyk_profile_is_monotonic_and_in_range() {
         for v in (0..=255).rev().step_by(5) {
             let g = v as f32 / 255.0;
             let mut o = [0.0f32; 4];
-            t.eval(&[g, g, g], &mut o);
+            t.eval(&[g, g, g], &mut o).unwrap();
             assert!(o.iter().all(|c| (-1e-6..=1.0 + 1e-6).contains(c)), "{o:?}");
             assert!(o.iter().sum::<f32>() <= 3.0 + 0.02, "TAC {o:?}");
             assert!(o[3] >= prev_k - 0.01, "{intent:?} K not monotonic at {v}: {o:?}");
             prev_k = o[3];
             let mut l = [0.0f32; 3];
-            back.eval(&o, &mut l);
+            back.eval(&o, &mut l).unwrap();
             let lab = dec(&l);
             assert!(lab[0] <= prev_l + 0.3, "{intent:?} L* not monotonic at {v}: {lab:?}");
             assert!(lab[1].abs() < 3.0 && lab[2].abs() < 3.0, "{intent:?} gray {v} not neutral: {lab:?}");
@@ -179,7 +179,7 @@ fn cmyk_profile_is_monotonic_and_in_range() {
     let t = Transform::new(srgb(), p, Intent::RelativeColorimetric, true).unwrap();
     let src: Vec<u8> = (0..4096u32).flat_map(|i| [(i * 37 % 256) as u8, (i * 91 % 256) as u8, (i * 13 % 256) as u8]).collect();
     let mut out = vec![0u8; 4096 * 4];
-    t.convert_u8(&src, 3, &mut out, 4, false);
+    t.convert_u8(&src, 3, &mut out, 4, false).unwrap();
     for px in out.chunks(4) {
         assert!(px.iter().map(|v| *v as u32).sum::<u32>() <= 3 * 255 + 8, "{px:?}");
     }
@@ -191,9 +191,9 @@ fn in_gamut_colours_survive_cmyk_roundtrip() {
     let back = Transform::new(cmyk(), lab(), Intent::RelativeColorimetric, false).unwrap();
     for target in [[50.0, 0.0, 0.0], [70.0, 10.0, 10.0], [60.0, -20.0, -20.0], [80.0, 0.0, 40.0], [40.0, 30.0, -10.0]] {
         let mut c = [0.0f32; 4];
-        to.eval(&enc(target), &mut c);
+        to.eval(&enc(target), &mut c).unwrap();
         let mut l = [0.0f32; 3];
-        back.eval(&c, &mut l);
+        back.eval(&c, &mut l).unwrap();
         assert!(delta_e76(dec(&l), target) < 2.0, "{target:?} -> {c:?} -> {:?}", dec(&l));
     }
 }
@@ -205,9 +205,9 @@ fn intents_differ_as_expected() {
     let sat = Transform::new(srgb(), cmyk(), Intent::Saturation, false).unwrap();
     let (mut a, mut b, mut s) = ([0.0f32; 4], [0.0f32; 4], [0.0f32; 4]);
     // Out-of-gamut sRGB blue: perceptual compresses, relative clips: different separations.
-    per.eval(&[0.0, 0.2, 1.0], &mut a);
-    rel.eval(&[0.0, 0.2, 1.0], &mut b);
-    sat.eval(&[0.0, 0.2, 1.0], &mut s);
+    per.eval(&[0.0, 0.2, 1.0], &mut a).unwrap();
+    rel.eval(&[0.0, 0.2, 1.0], &mut b).unwrap();
+    sat.eval(&[0.0, 0.2, 1.0], &mut s).unwrap();
     let d: f32 = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).sum();
     assert!(d > 0.03, "perceptual {a:?} vs relative {b:?}");
     assert_eq!(a, s, "saturation shares the perceptual table");
@@ -216,8 +216,8 @@ fn intents_differ_as_expected() {
     let rel = Transform::new(cmyk(), srgb(), Intent::RelativeColorimetric, false).unwrap();
     let abs = Transform::new(cmyk(), srgb(), Intent::AbsoluteColorimetric, false).unwrap();
     let (mut w1, mut w2) = ([0.0f32; 3], [0.0f32; 3]);
-    rel.eval(&[0.0; 4], &mut w1);
-    abs.eval(&[0.0; 4], &mut w2);
+    rel.eval(&[0.0; 4], &mut w1).unwrap();
+    abs.eval(&[0.0; 4], &mut w2).unwrap();
     assert!(w1.iter().all(|v| *v > 0.995), "{w1:?}");
     assert!(w2[0] < 0.97 && w2[2] > w2[0], "{w2:?}");
     let l = to_lab(cmyk(), &[0.0; 4], Intent::AbsoluteColorimetric);
@@ -259,7 +259,7 @@ fn absolute_colorimetric_refuses_a_degenerate_media_white() {
                 Err(e) => panic!("{name}: wrong error {e}"),
                 Ok(t) => {
                     let mut out = [0.0f32; 3];
-                    t.eval(&[0.2, 0.4, 0.6], &mut out);
+                    t.eval(&[0.2, 0.4, 0.6], &mut out).unwrap();
                     panic!("{name}: built a transform that gives {out:?}");
                 }
             }
@@ -270,17 +270,17 @@ fn absolute_colorimetric_refuses_a_degenerate_media_white() {
         // Without paper simulation the proof leg is relative colorimetric and stays finite.
         let t = Transform::proof(srgb(), bad, srgb(), Intent::RelativeColorimetric, true, false).unwrap();
         let mut out = [0.0f32; 3];
-        t.eval(&[0.2, 0.4, 0.6], &mut out);
+        t.eval(&[0.2, 0.4, 0.6], &mut out).unwrap();
         assert!(out.iter().all(|v| v.is_finite()), "{name}: {out:?}");
         let t = Transform::new(srgb(), bad, Intent::RelativeColorimetric, false).unwrap();
-        t.eval(&[0.2, 0.4, 0.6], &mut out);
+        t.eval(&[0.2, 0.4, 0.6], &mut out).unwrap();
         assert!(out.iter().all(|v| v.is_finite()), "{name}: {out:?}");
     }
     // A sane patched white still builds and scales.
     let d50 = srgb_with_wtpt([0xF6D6, 0x10000, 0xD32D]);
     let t = Transform::new(srgb(), &d50, Intent::AbsoluteColorimetric, false).unwrap();
     let mut out = [0.0f32; 3];
-    t.eval(&[0.2, 0.4, 0.6], &mut out);
+    t.eval(&[0.2, 0.4, 0.6], &mut out).unwrap();
     assert!(out.iter().all(|v| v.is_finite()), "{out:?}");
 }
 
@@ -297,9 +297,9 @@ fn black_point_compensation() {
     let back = Transform::new(cmyk(), lab(), Intent::RelativeColorimetric, false).unwrap();
     let l_of = |t: &Transform, v: f32| {
         let mut c = [0.0f32; 4];
-        t.eval(&[v, v, v], &mut c);
+        t.eval(&[v, v, v], &mut c).unwrap();
         let mut l = [0.0f32; 3];
-        back.eval(&c, &mut l);
+        back.eval(&c, &mut l).unwrap();
         dec(&l)[0]
     };
     let (w0, w1) = (l_of(&with, 0.0), l_of(&with, 0.08));
@@ -309,14 +309,14 @@ fn black_point_compensation() {
     // CMYK → sRGB: with BPC the darkest CMYK maps to (near) sRGB black.
     let dark = {
         let mut c = [0.0f32; 4];
-        with.eval(&[0.0, 0.0, 0.0], &mut c);
+        with.eval(&[0.0, 0.0, 0.0], &mut c).unwrap();
         c
     };
     let rgb_with = Transform::new(cmyk(), srgb(), Intent::RelativeColorimetric, true).unwrap();
     let rgb_without = Transform::new(cmyk(), srgb(), Intent::RelativeColorimetric, false).unwrap();
     let (mut a, mut b) = ([0.0f32; 3], [0.0f32; 3]);
-    rgb_with.eval(&dark, &mut a);
-    rgb_without.eval(&dark, &mut b);
+    rgb_with.eval(&dark, &mut a).unwrap();
+    rgb_without.eval(&dark, &mut b).unwrap();
     assert!(a[1] < 0.03 && b[1] > a[1] + 0.03, "with {a:?} without {b:?}");
 }
 
@@ -324,7 +324,7 @@ fn black_point_compensation() {
 fn tetrahedral_beats_trilinear() {
     // Sample sRGB → Lab on a coarse grid and compare interpolation against the exact pipeline.
     let exact = Transform::new(srgb(), lab(), Intent::RelativeColorimetric, false).unwrap();
-    let clut = Clut::sample(vec![9, 9, 9], 3, |i, o| exact.eval(i, o));
+    let clut = Clut::sample(vec![9, 9, 9], 3, |i, o| exact.eval(i, o).unwrap()).unwrap();
     let (mut tet_max, mut tri_max, mut tet_sum, mut tri_sum, mut tet_neutral, mut tri_neutral) = (0.0f64, 0.0f64, 0.0, 0.0, 0.0f64, 0.0f64);
     let mut n = 0.0;
     let mut seed = 12345u32;
@@ -340,9 +340,9 @@ fn tetrahedral_beats_trilinear() {
             [rnd(), rnd(), rnd()]
         };
         let (mut e, mut a, mut b) = ([0.0f32; 3], [0.0f32; 3], [0.0f32; 3]);
-        exact.eval(&p, &mut e);
-        clut.eval(&p, &mut a);
-        clut.eval_trilinear(&p, &mut b);
+        exact.eval(&p, &mut e).unwrap();
+        clut.eval(&p, &mut a).unwrap();
+        clut.eval_trilinear(&p, &mut b).unwrap();
         let (da, db) = (delta_e76(dec(&a), dec(&e)), delta_e76(dec(&b), dec(&e)));
         if i < 200 {
             tet_neutral = tet_neutral.max(dec(&a)[1].abs().max(dec(&a)[2].abs()));
@@ -366,24 +366,24 @@ fn proof_and_display_lut() {
     let p = Transform::proof(srgb(), cmyk(), srgb(), Intent::RelativeColorimetric, true, false).unwrap();
     let mut o = [0.0f32; 3];
     // Neutral gray stays (nearly) neutral through the proof.
-    p.eval(&[0.5, 0.5, 0.5], &mut o);
+    p.eval(&[0.5, 0.5, 0.5], &mut o).unwrap();
     assert!((o[0] - o[1]).abs() < 0.02 && (o[1] - o[2]).abs() < 0.03, "{o:?}");
     // Saturated blue is desaturated by the CMYK gamut.
-    p.eval(&[0.0, 0.0, 1.0], &mut o);
+    p.eval(&[0.0, 0.0, 1.0], &mut o).unwrap();
     assert!(o[0] > 0.1 || o[1] > 0.1, "{o:?}");
     // Paper simulation darkens white.
     let sim = Transform::proof(srgb(), cmyk(), srgb(), Intent::RelativeColorimetric, true, true).unwrap();
-    sim.eval(&[1.0, 1.0, 1.0], &mut o);
+    sim.eval(&[1.0, 1.0, 1.0], &mut o).unwrap();
     assert!(o[0] < 0.97, "{o:?}");
 
     let t = Transform::new(srgb(), Builtin::DisplayP3.profile(), Intent::RelativeColorimetric, false).unwrap();
-    let lut = Lut3d::from_transform(&t, 33);
+    let lut = Lut3d::from_transform(&t, 33).unwrap();
     assert_eq!(lut.to_rgba16f_bytes().len(), 33 * 33 * 33 * 8);
     let mut worst = 0.0f32;
     for i in 0..500u32 {
         let c = [(i * 7 % 101) as f32 / 100.0, (i * 13 % 101) as f32 / 100.0, (i * 29 % 101) as f32 / 100.0];
         let mut e = [0.0f32; 3];
-        t.eval(&c, &mut e);
+        t.eval(&c, &mut e).unwrap();
         let s = lut.sample(c);
         for k in 0..3 {
             worst = worst.max((s[k] - e[k]).abs());
@@ -397,16 +397,16 @@ fn gray_profiles() {
     let t = Transform::new(Builtin::SGray.profile(), srgb(), Intent::RelativeColorimetric, false).unwrap();
     for v in [0.0f32, 0.2, 0.5, 0.9, 1.0] {
         let mut o = [0.0f32; 3];
-        t.eval(&[v], &mut o);
+        t.eval(&[v], &mut o).unwrap();
         for c in o {
             assert!((c - v).abs() < 1e-3, "sGray {v} -> {o:?}");
         }
     }
     let t = Transform::new(srgb(), Builtin::GrayGamma22.profile(), Intent::RelativeColorimetric, false).unwrap();
     let mut o = [0.0f32; 1];
-    t.eval(&[1.0, 1.0, 1.0], &mut o);
+    t.eval(&[1.0, 1.0, 1.0], &mut o).unwrap();
     assert!((o[0] - 1.0).abs() < 1e-3);
-    t.eval(&[0.0, 0.0, 0.0], &mut o);
+    t.eval(&[0.0, 0.0, 0.0], &mut o).unwrap();
     assert!(o[0].abs() < 1e-3);
 }
 
@@ -423,8 +423,8 @@ fn hdr_floats_survive_matrix_transforms() {
     let src = [4.0f32, 2.0, 0.5];
     let mut mid = [0.0f32; 3];
     let mut out = [0.0f32; 3];
-    t.eval(&src, &mut mid);
-    back.eval(&mid, &mut out);
+    t.eval(&src, &mut mid).unwrap();
+    back.eval(&mid, &mut out).unwrap();
     for k in 0..3 {
         assert!((out[k] - src[k]).abs() < 1e-3 * src[k].max(1.0), "{src:?} -> {mid:?} -> {out:?}");
     }
@@ -482,9 +482,12 @@ fn a_light_black_cmyk_lut_has_the_known_relative_ramp() {
         outputs: 3,
         stages: vec![
             Stage::Curves(vec![Curve::Identity; 4]),
-            Stage::Clut(Clut::sample(vec![2; 4], 3, |ink, out| {
-                out.copy_from_slice(&enc([100.0 - 52.0 * f64::from(ink[3]), 0.0, 0.0]));
-            })),
+            Stage::Clut(
+                Clut::sample(vec![2; 4], 3, |ink, out| {
+                    out.copy_from_slice(&enc([100.0 - 52.0 * f64::from(ink[3]), 0.0, 0.0]));
+                })
+                .unwrap(),
+            ),
             Stage::Curves(vec![Curve::Identity; 3]),
         ],
     });
@@ -557,7 +560,7 @@ fn system_profiles() {
                     let t = Transform::new(&p, lab(), intent, true).unwrap_or_else(|e| panic!("{} {intent:?}: {e}", path.display()));
                     let n = p.channels();
                     let mut o = [0.0f32; 3];
-                    t.eval(&vec![0.5; n], &mut o);
+                    t.eval(&vec![0.5; n], &mut o).unwrap();
                     assert!(o.iter().all(|v| v.is_finite()), "{}", path.display());
                 }
                 // Additive white is (near) L* 100 for display profiles in relative colorimetric.
@@ -576,9 +579,9 @@ fn system_profiles() {
                     let to = Transform::new(lab(), &p, Intent::RelativeColorimetric, false).unwrap();
                     let back = Transform::new(&p, lab(), Intent::RelativeColorimetric, false).unwrap();
                     let mut c = [0.0f32; 4];
-                    to.eval(&enc([60.0, 10.0, -10.0]), &mut c);
+                    to.eval(&enc([60.0, 10.0, -10.0]), &mut c).unwrap();
                     let mut l = [0.0f32; 3];
-                    back.eval(&c, &mut l);
+                    back.eval(&c, &mut l).unwrap();
                     assert!(delta_e76(dec(&l), [60.0, 10.0, -10.0]) < 3.0, "{}: {:?}", path.display(), dec(&l));
                 }
             }
@@ -601,7 +604,7 @@ fn oracle_moxcms_rgb() {
         mt.transform(&src, &mut theirs).unwrap();
         let ours_t = Transform::new(srgb(), dst.profile(), Intent::RelativeColorimetric, false).unwrap();
         let mut ours = vec![0u8; src.len()];
-        ours_t.convert_u8(&src, 3, &mut ours, 3, false);
+        ours_t.convert_u8(&src, 3, &mut ours, 3, false).unwrap();
         let worst = ours.iter().zip(&theirs).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
         assert!(worst <= 2, "{dst:?}: max diff {worst}");
     }
@@ -622,7 +625,7 @@ fn oracle_moxcms_system_cmyk() {
     mt.transform(&src, &mut theirs).unwrap();
     let t = Transform::new(&ours_p, srgb(), Intent::RelativeColorimetric, false).unwrap();
     let mut ours = vec![0u8; 2048 * 3];
-    t.convert_u8(&src, 4, &mut ours, 3, false);
+    t.convert_u8(&src, 4, &mut ours, 3, false).unwrap();
     let diffs: Vec<i32> = ours.iter().zip(&theirs).map(|(a, b)| (*a as i32 - *b as i32).abs()).collect();
     let worst = *diffs.iter().max().unwrap();
     let mean = diffs.iter().sum::<i32>() as f64 / diffs.len() as f64;
@@ -823,4 +826,70 @@ fn device_links_parse_and_are_reported_unsupported() {
     }
     // The output space still bounds the tag: a CMYK→CMYK link with a 4→3 table is malformed.
     assert!(matches!(Profile::parse(&device_link(b"CMYK", b"CMYK", 4, 3)), Err(craft_cms::CmsError::Invalid(_))));
+}
+
+fn is_arg_err<T: std::fmt::Debug>(r: Result<T, craft_cms::CmsError>) -> bool {
+    matches!(r, Err(craft_cms::CmsError::InvalidArgument(_)))
+}
+
+/// Strides, buffer lengths and slices that do not fit are refused before anything is written.
+#[test]
+fn transform_rejects_bad_buffers() {
+    let t = Transform::new(srgb(), cmyk(), Intent::RelativeColorimetric, true).unwrap();
+    let src = [255u8; 12];
+    let mut dst = [7u8; 16];
+    assert!(is_arg_err(t.convert_u8(&src, 2, &mut dst, 4, false)), "source stride below 3 inputs");
+    assert!(is_arg_err(t.convert_u8(&src, 3, &mut dst, 3, false)), "destination stride below 4 outputs");
+    assert!(is_arg_err(t.convert_u8(&src[..11], 3, &mut dst, 4, false)), "partial source pixel");
+    assert!(is_arg_err(t.convert_u8(&src, 3, &mut dst[..15], 4, false)), "partial destination pixel");
+    assert!(is_arg_err(t.convert_u8(&src, 3, &mut dst[..12], 4, false)), "destination too short");
+    assert_eq!(dst, [7u8; 16], "refused calls write nothing");
+    t.convert_u8(&src, 3, &mut dst, 4, false).unwrap();
+    assert!(is_arg_err(t.convert_u16(&[0u16; 6], 3, &mut [0u16; 4], 4, false)));
+    assert!(is_arg_err(t.convert_f32(&[0.0; 7], 3, &mut [0.0; 12], 4, false)));
+    assert!(is_arg_err(t.apply(&mut [0.0; 12], 3)), "in-place stride below 4 outputs");
+    assert!(is_arg_err(t.apply(&mut [0.0; 10], 4)), "partial in-place pixel");
+    let (s, mut d) = ([0u8; 6], [0u8; 7]);
+    assert!(is_arg_err(t.convert_bytes_many(craft_cms::SampleKind::U16, vec![(&s[..], &mut d[..])], 3, 4, false)));
+    let mut out = [0.0f32; 4];
+    assert!(is_arg_err(t.eval(&[1.0, 1.0], &mut out)));
+    assert!(is_arg_err(t.eval(&[1.0; 3], &mut out[..3])));
+    assert!(is_arg_err(t.eval_fast(&[1.0, 1.0], &mut out)));
+    let g = craft_cms::GamutCheck::new(srgb(), cmyk(), 4.0).unwrap();
+    assert!(is_arg_err(g.delta_e(&[0.5, 0.5])));
+    assert!(is_arg_err(Lut3d::from_transform(&t, 33)), "3→4 transform");
+    let d = Transform::new(srgb(), Builtin::DisplayP3.profile(), Intent::RelativeColorimetric, true).unwrap();
+    assert!(is_arg_err(Lut3d::from_transform(&d, 1)));
+    assert!(is_arg_err(Lut3d::from_transform(&d, 100_000)));
+}
+
+/// Table and pipeline dimensions that do not fit are refused.
+#[test]
+fn tables_and_pipelines_reject_bad_dimensions() {
+    use craft_cms::pipeline::{Pipeline, Stage};
+    assert!(is_arg_err(Clut::new(vec![2, 2], 3, vec![0.0; 11])), "data length");
+    assert!(is_arg_err(Clut::new(vec![2, 0], 3, Vec::new())), "zero grid points");
+    assert!(is_arg_err(Clut::new(vec![2; 16], 1, vec![0.0; 1 << 16])), "16 inputs");
+    assert!(is_arg_err(Clut::new(vec![2], 0, Vec::new())), "no outputs");
+    assert!(is_arg_err(Clut::sample(vec![usize::MAX; 3], 3, |_, _| {})), "overflowing grid");
+    assert!(is_arg_err(Clut::sample(vec![1000; 3], 3, |_, _| {})), "grid over the size limit");
+    let c = Clut::sample(vec![2; 4], 3, |_, _| {}).unwrap();
+    assert!(is_arg_err(c.eval(&[0.0; 3], &mut [0.0; 3])));
+    assert!(is_arg_err(c.eval(&[0.0; 4], &mut [0.0; 2])));
+    assert!(is_arg_err(c.eval_trilinear(&[0.0; 4], &mut [0.0; 3])), "trilinear needs 3 inputs");
+    assert!(is_arg_err(Pipeline::new(0, Vec::new())));
+    assert!(is_arg_err(Pipeline::new(17, Vec::new())));
+    let bad = Stage::Matrix { rows: 3, cols: 3, m: vec![1.0; 8], offset: vec![0.0; 3] };
+    assert!(is_arg_err(Pipeline::new(3, vec![bad.clone()])), "matrix data shorter than its shape");
+    let wide = Stage::Matrix { rows: 40, cols: 1, m: vec![1.0; 40], offset: vec![0.0; 40] };
+    assert!(is_arg_err(Pipeline::new(1, vec![wide])), "too many rows");
+    let mut p = Pipeline::new(3, vec![Stage::Clamp01]).unwrap();
+    assert!(is_arg_err(p.extend([bad])));
+    assert_eq!(p.stages().len(), 1, "a refused extend leaves the pipeline unchanged");
+    assert!(is_arg_err(p.eval(&[0.0; 2], &mut [0.0; 3])));
+    assert!(craft_cms::lutfile::LutFile::from_fn("x", 1, |c| c).is_err());
+    assert!(craft_cms::lutfile::LutFile::identity(1 << 20).is_err());
+    let params = |a2b, b2a| craft_cms::synth::CmykParams { grid_a2b: a2b, grid_b2a: b2a, ..Default::default() };
+    assert!(is_arg_err(craft_cms::synth::cmyk_profile(&params(1, 21))));
+    assert!(is_arg_err(craft_cms::synth::cmyk_profile(&params(11, 100_000))));
 }
