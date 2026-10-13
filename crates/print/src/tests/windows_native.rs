@@ -412,16 +412,30 @@ fn windows_jobs_reach_the_spooler() {
     let listed = spool::printers().into_iter().find(|p| p.name == name);
     let mixed = test_pdf(&[LETTER, LETTER_LANDSCAPE, LETTER], true);
     let job = Job { printer: Some(name.into()), title: "mixed.pdf".into(), ..Job::default() };
-    let sent = spool::submit(&mixed, &job);
+    let caller = std::thread::current().id();
+    // Rc proves callers are not required to make their callback Send just because native
+    // printing uses a COM worker. Counts describe accepted PDF sheets.
+    let processed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let observed = std::rc::Rc::clone(&processed);
+    let sent = spool::submit_with_progress(&mixed, &job, &mut move |done, total| {
+        assert_eq!(std::thread::current().id(), caller);
+        observed.borrow_mut().push((done, total));
+    });
+    let mut duplex_progress = Vec::new();
     let duplex_refused = if listed.as_ref().is_some_and(|p| p.two_sided == Some(false)) {
-        Some(spool::submit(&mixed, &Job { duplex: Some(Duplex::LongEdge), ..job.clone() }))
+        Some(spool::submit_with_progress(&mixed, &Job { duplex: Some(Duplex::LongEdge), ..job.clone() }, &mut |done, total| {
+            duplex_progress.push((done, total));
+        }))
     } else {
         None
     };
     let tabloid = test_pdf(&[TABLOID, LETTER], false);
     let shrink = Job { printer: Some(name.into()), scaling: Scaling::ShrinkToFit, title: "shrink".into(), ..Job::default() };
     let shrunk = spool::submit(&tabloid, &shrink);
-    let exact_refused = spool::submit(&tabloid, &Job { printer: Some(name.into()), ..Job::default() });
+    let mut refused_progress = Vec::new();
+    let exact_refused = spool::submit_with_progress(&tabloid, &Job { printer: Some(name.into()), ..Job::default() }, &mut |done, total| {
+        refused_progress.push((done, total));
+    });
     let queued = windows_powershell(
         "@(Get-PrintJob -PrinterName $name | Sort-Object Id | ForEach-Object { $_.DocumentName + ' ' + $_.TotalPages }) -join '|'",
         name,
@@ -437,8 +451,11 @@ fn windows_jobs_reach_the_spooler() {
     if let Some(refused) = duplex_refused {
         assert!(matches!(refused, Err(Error::Spool(ref m)) if m.contains("simplex/duplex") && m.contains("nothing was sent")), "{refused:?}");
     }
+    assert_eq!(*processed.borrow(), [(0, 3), (1, 3), (2, 3), (3, 3)]);
+    assert!(duplex_progress.is_empty(), "driver refusal before submission has no progress");
     assert_eq!(shrunk.as_deref(), Ok("spooled 2 sheet(s)"), "{shrunk:?}");
     assert!(matches!(exact_refused, Err(Error::Spool(ref m)) if m.contains("one paper size")), "{exact_refused:?}");
+    assert!(refused_progress.is_empty(), "rejection before a job starts has no progress: {refused_progress:?}");
     assert_eq!(queued.as_deref().map(str::trim), Ok("mixed.pdf 3|shrink.pdf 2"), "one job each, all sheets, in the paused queue: {queued:?}");
     assert!(cleaned.is_ok(), "the test printer is removed again: {cleaned:?}");
     // Asking for a printer that isn't there is an error, never a job on another one.
