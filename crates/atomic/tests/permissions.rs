@@ -42,7 +42,7 @@ fn child(dir: &Path, mask: &str, expected: &str, check_acl: bool) -> io::Result<
 }
 
 #[test]
-fn normal_creation_respects_umask_and_preserves_private_staging() -> io::Result<()> {
+fn normal_creation_matches_os_permissions() -> io::Result<()> {
     for (mask, expected) in [("000", "666"), ("002", "664"), ("022", "644"), ("027", "640"), ("077", "600")] {
         let dir = TempDir::new()?;
         child(&dir.0, mask, expected, false)?;
@@ -58,18 +58,17 @@ fn permission_child() -> io::Result<()> {
     let ordinary = dir.join("ordinary");
     fs::write(&ordinary, b"ordinary")?;
     assert_eq!(mode(&ordinary)?, expected);
-    let options = WriteOptions { new_file_permissions: NewFilePermissions::PlatformDefault };
+    let options = WriteOptions::default();
     let payload = b"document bytes";
     for (tag, streaming, exclusive) in
         [("replace", false, false), ("replace-stream", true, false), ("exclusive", false, true), ("exclusive-stream", true, true)]
     {
         let path = dir.join(tag);
         let fill = |f: &mut File| {
-            assert_eq!(f.metadata()?.permissions().mode() & 0o777, 0o600, "private before writing");
+            assert_eq!(f.metadata()?.permissions().mode() & 0o777, expected, "normal creation before writing");
             f.write_all(payload)?;
-            assert_eq!(f.metadata()?.permissions().mode() & 0o777, 0o600, "private during writing");
-            // Normal creation policy is applied after the callback, just as an existing mode is.
-            f.set_permissions(Permissions::from_mode(0o600))
+            assert_eq!(f.metadata()?.permissions().mode() & 0o777, expected, "normal creation during writing");
+            Ok(())
         };
         match (streaming, exclusive) {
             (false, false) => options.atomic_write(&path, payload)?,
@@ -96,14 +95,23 @@ fn permission_child() -> io::Result<()> {
             assert_eq!(mode(&path)?, 0o660, "preserve existing mode regardless of current umask");
         }
     }
-    for (tag, write) in [
-        ("private", atomic_write as fn(&Path, &[u8]) -> io::Result<()>),
-        ("private-exclusive", write_new),
-        ("private-options", |p: &Path, b: &[u8]| WriteOptions::default().atomic_write(p, b)),
-        ("private-options-exclusive", |p: &Path, b: &[u8]| WriteOptions::default().write_new(p, b)),
-    ] {
+    for (tag, write) in [("default", atomic_write as fn(&Path, &[u8]) -> io::Result<()>), ("default-exclusive", write_new)] {
         let p = dir.join(tag);
-        write(&p, b"private")?;
+        write(&p, b"document")?;
+        assert_eq!(mode(&p)?, expected);
+    }
+    let private = WriteOptions::default().with_new_file_permissions(NewFilePermissions::Private);
+    for exclusive in [false, true] {
+        let p = dir.join(format!("private-{exclusive}"));
+        let fill = |f: &mut File| {
+            assert_eq!(f.metadata()?.permissions().mode() & 0o077, 0, "private from creation");
+            f.write_all(b"private")
+        };
+        if exclusive {
+            private.write_new_with(&p, fill)?;
+        } else {
+            private.atomic_write_with(&p, fill)?;
+        }
         assert_eq!(mode(&p)?, 0o600);
     }
     for exclusive in [false, true] {
