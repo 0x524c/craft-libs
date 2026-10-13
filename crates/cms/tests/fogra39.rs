@@ -347,6 +347,7 @@ fn regen_coated_fogra39() {
         copyright: craft_cms::builtin::COATED_FOGRA39_COPYRIGHT.into(),
         tac: 3.3,
         grid_b2a: 33,
+        white_on_node: true,
         ..CmykParams::default()
     };
     let profile = synth::cmyk_profile_from_model(&f, paper(&p), &params).unwrap();

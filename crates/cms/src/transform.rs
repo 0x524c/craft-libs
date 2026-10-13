@@ -91,6 +91,18 @@ pub struct Transform {
     post: Option<Post>,
     /// Pre-located grid coordinates per 8-bit code: (offset contribution, fraction) per input.
     grid8: Vec<[(u32, f32); 256]>,
+    white: Option<White>,
+}
+
+/// Device white in and out, for transforms that map white to white exactly (every intent but
+/// absolute colorimetric).
+#[derive(Debug)]
+struct White {
+    src: Vec<f32>,
+    dst: Vec<f32>,
+    /// 8-bit codes of `src` when the 8-bit grid path must check for it (white is not a node of
+    /// the grid, e.g. Lab's a* = b* = 0).
+    src8: Option<Vec<u8>>,
 }
 
 impl Transform {
@@ -103,7 +115,7 @@ impl Transform {
         let stages = link_stages(src, dst, opts.intent, opts.bpc)?;
         let mut t = Self::from_pipeline(Pipeline::new(src.channels(), stages)?, opts)?;
         if opts.intent != Intent::AbsoluteColorimetric {
-            t.fix_white(src.color_space, dst.color_space);
+            t.keep_white(src.color_space, dst.color_space);
         }
         Ok(t)
     }
@@ -111,13 +123,18 @@ impl Transform {
     /// Soft-proof transform `src → proof → dst` (Photoshop View › Proof Setup): `intent`/`bpc`
     /// apply to the document → proof step; the proof → display step is relative colorimetric
     /// with BPC, or absolute colorimetric without BPC when `simulate_paper` is set (paper
-    /// colour and black ink simulated).
+    /// colour and black ink simulated). Without paper simulation, and unless `intent` is
+    /// absolute colorimetric, device white maps to device white.
     pub fn proof(src: &Profile, proof: &Profile, dst: &Profile, intent: Intent, bpc: bool, simulate_paper: bool) -> Result<Transform, CmsError> {
         let mut stages = link_stages(src, proof, intent, bpc)?;
         stages.push(Stage::Clamp01);
         let (i2, b2) = if simulate_paper { (Intent::AbsoluteColorimetric, false) } else { (Intent::RelativeColorimetric, true) };
         stages.extend(link_stages(proof, dst, i2, b2)?);
-        Self::from_pipeline(Pipeline::new(src.channels(), stages)?, TransformOptions { intent, bpc, precise_float: true })
+        let mut t = Self::from_pipeline(Pipeline::new(src.channels(), stages)?, TransformOptions { intent, bpc, precise_float: true })?;
+        if !simulate_paper && intent != Intent::AbsoluteColorimetric {
+            t.keep_white(src.color_space, dst.color_space);
+        }
+        Ok(t)
     }
 
     /// Builds a transform from an arbitrary pipeline over normalised values.
@@ -184,24 +201,38 @@ impl Transform {
                 .collect(),
             _ => Vec::new(),
         };
-        Ok(Transform { inputs, outputs, opts, pipeline, core, post, grid8 })
+        Ok(Transform { inputs, outputs, opts, pipeline, core, post, grid8, white: None })
     }
 
-    /// White preservation: the device-link node at the source's device white gets exactly the
-    /// destination's device white, so paper/white survive table quantization (e.g. the PCS
-    /// white is not a node of a legacy-encoded Lab grid).
-    fn fix_white(&mut self, src: ColorSpace, dst: ColorSpace) {
-        let (Some(sw), Some(mut dw)) = (device_white(src), device_white(dst)) else { return };
+    /// White preservation: the source's device white maps to exactly the destination's device
+    /// white. LUT profiles rarely put white on a grid node (the legacy Lab encoding puts L* 100
+    /// at 0.996 and a* = 0 at 0.50001), so interpolation would give a trace of ink or an
+    /// additive white slightly off 1. Every other colour is left as the profiles give it.
+    ///
+    /// The device-link node at white is set to the destination white (`fix_white`),
+    /// and the per-pixel paths that do not read that node exactly (the exact pipeline, float
+    /// interpolation, 8-bit lookups when white is no node) compare each pixel with white.
+    fn keep_white(&mut self, src: ColorSpace, dst: ColorSpace) {
+        let (Some(sw), Some(dw)) = (device_white(src), device_white(dst)) else { return };
+        if sw.len() != self.inputs || dw.len() != self.outputs {
+            return;
+        }
+        let on_node = self.fix_white(&sw, &dw);
+        let src8 = (!on_node && matches!(self.core, Core::Grid(_))).then(|| sw.iter().map(|v| (v * 255.0).round() as u8).collect());
+        self.white = Some(White { src: sw, dst: dw, src8 });
+    }
+
+    /// Sets the device-link node at `sw` to `dw`; `false` when `sw` is no grid node.
+    fn fix_white(&mut self, sw: &[f32], dw: &[f32]) -> bool {
         if self.post.is_some() {
             // Output curves map 1 → 1 for additive spaces; the grid holds pre-curve values.
-            if !matches!(dst, ColorSpace::Rgb | ColorSpace::Gray) {
-                return;
+            if dw.iter().any(|v| *v != 1.0) {
+                return false;
             }
-            dw.iter_mut().for_each(|v| *v = 1.0);
         }
-        let Core::Grid(c) = &mut self.core else { return };
+        let Core::Grid(c) = &mut self.core else { return false };
         if c.inputs != sw.len() || c.outputs != dw.len() {
-            return;
+            return false;
         }
         let mut off = 0usize;
         let mut stride = c.outputs;
@@ -209,12 +240,28 @@ impl Transform {
             let n = c.grid[d];
             let pos = sw[d] * (n - 1) as f32;
             if (pos - pos.round()).abs() > 1e-6 {
-                return;
+                return false;
             }
             off += pos.round() as usize * stride;
             stride *= n;
         }
-        c.data[off..off + c.outputs].copy_from_slice(&dw);
+        c.data[off..off + c.outputs].copy_from_slice(dw);
+        true
+    }
+
+    /// The destination white when `input` is exactly the source's device white.
+    #[inline]
+    fn white_for(&self, input: &[f32]) -> Option<&[f32]> {
+        self.white.as_ref().filter(|w| input[..self.inputs] == w.src[..]).map(|w| &w.dst[..])
+    }
+
+    /// The exact pipeline, with device white kept exact.
+    #[inline]
+    fn exact(&self, input: &[f32], out: &mut [f32]) {
+        match self.white_for(input) {
+            Some(w) => out[..self.outputs].copy_from_slice(w),
+            None => self.pipeline.run(input, out),
+        }
     }
 
     pub fn inputs(&self) -> usize {
@@ -235,7 +282,7 @@ impl Transform {
     /// receives `outputs` values.
     pub fn eval(&self, input: &[f32], out: &mut [f32]) -> Result<(), CmsError> {
         self.check_io(input, out)?;
-        self.pipeline.run(input, out);
+        self.exact(input, out);
         Ok(())
     }
 
@@ -256,8 +303,11 @@ impl Transform {
     fn fast(&self, input: &[f32], out: &mut [f32]) {
         let mut mid = [0.0f32; 16];
         match &self.core {
-            Core::Exact => return self.pipeline.run(input, out),
+            Core::Exact => return self.exact(input, out),
             Core::Grid(c) => {
+                if let Some(w) = self.white_for(input) {
+                    return out[..self.outputs].copy_from_slice(w);
+                }
                 let mut inp = [0.0f32; 16];
                 for (d, s) in inp.iter_mut().zip(&input[..self.inputs]) {
                     *d = s.clamp(0.0, 1.0);
@@ -303,7 +353,7 @@ impl Transform {
         let precise = self.opts.precise_float || matches!(self.core, Core::Exact);
         for (sp, dp) in s.chunks_exact(ss).zip(d.chunks_exact_mut(ds)) {
             if precise {
-                self.pipeline.run(sp, dp);
+                self.exact(sp, dp);
             } else {
                 self.fast(sp, dp);
             }
@@ -327,7 +377,7 @@ impl Transform {
             let mut out = [0.0f32; 16];
             for p in chunk.chunks_exact_mut(stride) {
                 if precise {
-                    self.pipeline.run(p, &mut out);
+                    self.exact(p, &mut out);
                 } else {
                     self.fast(p, &mut out);
                 }
@@ -355,10 +405,16 @@ impl Transform {
                 let (g0, g1, g2) = (&self.grid8[0], &self.grid8[1], &self.grid8[2]);
                 let s1 = c.outputs * c.grid[2];
                 let s0 = s1 * c.grid[1];
+                let white8 = self.white.as_ref().and_then(|w| Some((w.src8.as_deref()?, &w.dst[..])));
                 for (sp, dp) in s.chunks_exact(ss).zip(d.chunks_exact_mut(ds)) {
-                    let (a, b, cc) = (g0[sp[0] as usize], g1[sp[1] as usize], g2[sp[2] as usize]);
-                    c.tetra_pub((a.0 + b.0 + cc.0) as usize, [s0, s1, c.outputs], [a.1, b.1, cc.1], &mut mid);
-                    self.finish(&mid, &mut out);
+                    match white8 {
+                        Some((w8, w)) if sp[..3] == *w8 => out[..self.outputs].copy_from_slice(w),
+                        _ => {
+                            let (a, b, cc) = (g0[sp[0] as usize], g1[sp[1] as usize], g2[sp[2] as usize]);
+                            c.tetra_pub((a.0 + b.0 + cc.0) as usize, [s0, s1, c.outputs], [a.1, b.1, cc.1], &mut mid);
+                            self.finish(&mid, &mut out);
+                        }
+                    }
                     for k in 0..self.outputs {
                         dp[k] = q(out[k]);
                     }
@@ -520,13 +576,15 @@ impl Transform {
     }
 }
 
+/// Normalised device values of white: full additive signal, no ink, or Lab L* 100,
+/// a* = b* = 0 in the v4 encoding Lab device values use.
 fn device_white(cs: ColorSpace) -> Option<Vec<f32>> {
     Some(match cs {
         ColorSpace::Rgb => vec![1.0; 3],
         ColorSpace::Gray => vec![1.0],
         ColorSpace::Cmyk => vec![0.0; 4],
         ColorSpace::Cmy => vec![0.0; 3],
-        ColorSpace::Lab => vec![1.0, 0.5, 0.5],
+        ColorSpace::Lab => vec![1.0, 128.0 / 255.0, 128.0 / 255.0],
         _ => return None,
     })
 }

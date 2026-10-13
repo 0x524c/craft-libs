@@ -54,6 +54,12 @@ pub struct CmykParams {
     /// Grid points of the AToB (4D) and BToA (3D) tables.
     pub grid_a2b: usize,
     pub grid_b2a: usize,
+    /// Map paper and PCS white onto each other exactly: the AToB maps no ink to L* 100,
+    /// a* = b* = 0, and the BToA input curves put that white on a grid node (`grid_b2a` must
+    /// be odd), which holds no ink. Without them white falls between nodes of the legacy Lab
+    /// encoding and separates to a trace of ink. Off by default, which keeps the bytes of the
+    /// shipped Photocraft profile.
+    pub white_on_node: bool,
 }
 
 impl Default for CmykParams {
@@ -68,6 +74,7 @@ impl Default for CmykParams {
             tvi: [0.14, 0.14, 0.14, 0.17],
             grid_a2b: 11,
             grid_b2a: 21,
+            white_on_node: false,
         }
     }
 }
@@ -404,21 +411,34 @@ fn par_map<T: Send>(n: usize, f: impl Fn(usize) -> T + Sync + Send) -> Vec<T> {
     (0..n).map(f).collect()
 }
 
+/// Grid coordinate of a legacy-encoded PCS value through the [`CmykParams::white_on_node`]
+/// input curves: L* 0–100 spans the L axis (higher L* clips to the top node) and a*/b* −128 to
+/// +128 span theirs, so L* 100, a* = b* = 0 is the top centre node of an odd grid.
+fn white_node_curve(l_axis: bool, x: f64) -> f64 {
+    if l_axis { (x * 65535.0 / 65280.0).min(1.0) } else { x * 65535.0 / 65536.0 }
+}
+
 fn b2a_table<F: Forward + ?Sized>(model: &F, p: &CmykParams, gbd: Option<&Gbd>) -> Result<Clut, CmsError> {
     let n = p.grid_b2a.max(2);
     let nodes = n * n * n;
+    let step = (n - 1) as f64;
     let vals = par_map(n * n, |row| {
         // One (L, a) row along b, warm-starting each solve from its neighbour.
         let (li, ai) = (row / n, row % n);
         let mut warm = None;
         let mut out = Vec::with_capacity(n * 4);
         for bi in 0..n {
-            let lab = decode_v2([lab_node_legacy(li, n), lab_node_legacy(ai, n), lab_node_legacy(bi, n)]);
+            let lab = if p.white_on_node {
+                // The inverse of `white_node_curve` at the node.
+                [100.0 * li as f64 / step, 256.0 * ai as f64 / step - 128.0, 256.0 * bi as f64 / step - 128.0]
+            } else {
+                decode_v2([lab_node_legacy(li, n), lab_node_legacy(ai, n), lab_node_legacy(bi, n)])
+            };
             let target = match gbd {
                 Some(g) => g.compress(lab),
                 None => lab,
             };
-            let (cmyk, _) = separate(model, p, target, warm);
+            let (cmyk, _) = if p.white_on_node && lab == [100.0, 0.0, 0.0] { ([0.0; 4], 0.0) } else { separate(model, p, target, warm) };
             warm = Some(cmyk);
             out.extend(cmyk.map(|v| v as f32));
         }
@@ -437,16 +457,27 @@ fn check_grids(p: &CmykParams) -> Result<(), CmsError> {
     if !fits(p.grid_a2b, 4, 3) || !fits(p.grid_b2a, 3, 4) {
         return Err(invalid_arg(format!("CMYK profile grids {}⁴/{}³ need at least 2 nodes and must fit a CLUT", p.grid_a2b, p.grid_b2a)));
     }
+    if p.white_on_node && p.grid_b2a.is_multiple_of(2) {
+        return Err(invalid_arg(format!("white on a node needs an odd BToA grid, not {}", p.grid_b2a)));
+    }
     Ok(())
 }
 
-fn lut16(clut: Clut) -> Lut {
+/// Input curves of a `lut16` table: identity, or the [`white_node_curve`]s for a BToA table.
+fn lut16(clut: Clut, white_on_node: bool) -> Lut {
     let (i, o) = (clut.inputs, clut.outputs);
+    let input = if white_on_node {
+        // mft2's longest input tables; white lies between samples, within a u16 step of its node.
+        let table = |l_axis: bool| Curve::Table((0..4096).map(|j| white_node_curve(l_axis, j as f64 / 4095.0) as f32).collect());
+        vec![table(true), table(false), table(false)]
+    } else {
+        vec![Curve::Table(vec![0.0, 1.0]); i]
+    };
     Lut {
         kind: LutKind::Lut16,
         inputs: i,
         outputs: o,
-        stages: vec![Stage::Curves(vec![Curve::Table(vec![0.0, 1.0]); i]), Stage::Clut(clut), Stage::Curves(vec![Curve::Table(vec![0.0, 1.0]); o])],
+        stages: vec![Stage::Curves(input), Stage::Clut(clut), Stage::Curves(vec![Curve::Table(vec![0.0, 1.0]); o])],
     }
 }
 
@@ -454,15 +485,19 @@ fn lut16(clut: Clut) -> Lut {
 pub fn cmyk_profile(p: &CmykParams) -> Result<Profile, CmsError> {
     check_grids(p)?;
     let model = CmykModel::coated(p.tvi);
-    let a2b = sample_a2b(&model, p.grid_a2b)?;
+    let a2b = sample_a2b(&model, p)?;
     lut_profile(&model, a2b, model.paper, p)
 }
 
-/// Samples a forward model into an AToB table with `grid`⁴ nodes (at least 2⁴) and legacy Lab
+/// Samples a forward model into an AToB table with `p.grid_a2b`⁴ nodes and legacy Lab
 /// encoding.
-fn sample_a2b<F: Forward + ?Sized>(model: &F, grid: usize) -> Result<Clut, CmsError> {
-    Clut::sample(vec![grid.max(2); 4], 3, |inp, out| {
-        let lab = model.lab([inp[0] as f64, inp[1] as f64, inp[2] as f64, inp[3] as f64]);
+fn sample_a2b<F: Forward + ?Sized>(model: &F, p: &CmykParams) -> Result<Clut, CmsError> {
+    Clut::sample(vec![p.grid_a2b.max(2); 4], 3, |inp, out| {
+        let lab = if p.white_on_node && inp.iter().all(|v| *v == 0.0) {
+            [100.0, 0.0, 0.0]
+        } else {
+            model.lab([inp[0] as f64, inp[1] as f64, inp[2] as f64, inp[3] as f64])
+        };
         out.copy_from_slice(&encode_v2(lab));
     })
 }
@@ -477,7 +512,7 @@ pub fn cmyk_profile_from_model<F: Forward + ?Sized>(model: &F, paper: [f64; 3], 
     if !paper.iter().all(|v| v.is_finite() && *v > 0.0) {
         return Err(invalid_arg(format!("paper XYZ {paper:?}")));
     }
-    let a2b = sample_a2b(model, p.grid_a2b)?;
+    let a2b = sample_a2b(model, p)?;
     let forward = TableForward(a2b.clone());
     lut_profile(&forward, a2b, paper, p)
 }
@@ -486,8 +521,8 @@ fn lut_profile<F: Forward + ?Sized>(model: &F, a2b: Clut, paper: [f64; 3], p: &C
     let gbd = Gbd::new(model, p);
     let colorimetric = b2a_table(model, p, None)?;
     let perceptual = b2a_table(model, p, Some(&gbd))?;
-    let a2b = lut16(a2b);
-    let (b0, b1) = (lut16(perceptual), lut16(colorimetric));
+    let a2b = lut16(a2b, false);
+    let (b0, b1) = (lut16(perceptual, p.white_on_node), lut16(colorimetric, p.white_on_node));
     Ok(Profile {
         version: (4, 0x30),
         class: ProfileClass::Output,

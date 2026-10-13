@@ -893,3 +893,71 @@ fn tables_and_pipelines_reject_bad_dimensions() {
     assert!(is_arg_err(craft_cms::synth::cmyk_profile(&params(1, 21))));
     assert!(is_arg_err(craft_cms::synth::cmyk_profile(&params(11, 100_000))));
 }
+
+/// sRGB white separates to no ink on every evaluation path, for every intent but absolute
+/// colorimetric, and CMYK paper comes back as sRGB white; other colours keep the profile's values.
+#[test]
+fn white_is_exact_on_every_path() {
+    let none = [0.0f32; 4];
+    for cmyk in [Builtin::CoatedCmyk, Builtin::CoatedFogra39] {
+        for intent in [Intent::Perceptual, Intent::RelativeColorimetric, Intent::Saturation] {
+            for bpc in [false, true] {
+                for precise_float in [false, true] {
+                    let opts = TransformOptions { intent, bpc, precise_float };
+                    let at = format!("{cmyk:?} {opts:?}");
+                    let t = Transform::with_options(srgb(), cmyk.profile(), opts).unwrap();
+                    let (mut e, mut f) = ([1.0f32; 4], [1.0f32; 4]);
+                    t.eval(&[1.0; 3], &mut e).unwrap();
+                    t.eval_fast(&[1.0; 3], &mut f).unwrap();
+                    assert_eq!((e, f), (none, none), "{at}: eval / eval_fast");
+                    let mut f32s = [1.0f32; 8];
+                    t.convert_f32(&[1.0; 6], 3, &mut f32s, 4, false).unwrap();
+                    assert_eq!(f32s, [0.0; 8], "{at}: convert_f32");
+                    let mut inplace = [1.0f32; 4];
+                    t.apply(&mut inplace, 4).unwrap();
+                    assert_eq!(inplace, none, "{at}: apply");
+                    let (mut u8s, mut u16s) = ([9u8; 4], [9u16; 4]);
+                    t.convert_u8(&[255; 3], 3, &mut u8s, 4, false).unwrap();
+                    t.convert_u16(&[65535; 3], 3, &mut u16s, 4, false).unwrap();
+                    assert_eq!((u8s, u16s), ([0; 4], [0; 4]), "{at}: convert_u8 / convert_u16");
+
+                    let back = Transform::with_options(cmyk.profile(), srgb(), opts).unwrap();
+                    let (mut e, mut f) = ([0.0f32; 3], [0.0f32; 3]);
+                    back.eval(&none, &mut e).unwrap();
+                    back.eval_fast(&none, &mut f).unwrap();
+                    assert_eq!((e, f), ([1.0; 3], [1.0; 3]), "{at}: paper to sRGB");
+
+                    // Near white: the last step to white exceeds the step before it by the ink
+                    // the profile itself puts at white: 2·10⁻⁵ for Coated FOGRA39, whose white
+                    // is a grid node, and up to 0.8 % (C + M + Y) for the Photocraft profile,
+                    // whose white falls between nodes (as with lcms's white-node fix).
+                    let ink = |g: f32| {
+                        let mut o = [0.0f32; 4];
+                        t.eval(&[g / 255.0; 3], &mut o).unwrap();
+                        o.iter().sum::<f32>()
+                    };
+                    let (before, last) = (ink(253.0) - ink(254.0), ink(254.0) - ink(255.0));
+                    let allowed = if cmyk == Builtin::CoatedFogra39 { 1e-4 } else { 0.01 };
+                    assert!(before > 0.0 && (last - before).abs() < allowed, "{at}: ink steps {before} then {last}");
+                }
+            }
+            let proof = Transform::proof(srgb(), cmyk.profile(), srgb(), intent, true, false).unwrap();
+            let (mut e, mut f) = ([0.0f32; 3], [0.0f32; 3]);
+            proof.eval(&[1.0; 3], &mut e).unwrap();
+            proof.eval_fast(&[1.0; 3], &mut f).unwrap();
+            assert_eq!((e, f), ([1.0; 3], [1.0; 3]), "{cmyk:?} {intent:?}: proof");
+        }
+        // Lab white is no node of the device-link grid; it is still exact.
+        let from_lab = Transform::new(lab(), cmyk.profile(), Intent::RelativeColorimetric, false).unwrap();
+        let (mut e, mut f, mut u) = ([1.0f32; 4], [1.0f32; 4], [9u8; 4]);
+        from_lab.eval(&enc([100.0, 0.0, 0.0]), &mut e).unwrap();
+        from_lab.eval_fast(&enc([100.0, 0.0, 0.0]), &mut f).unwrap();
+        from_lab.convert_u8(&[255, 128, 128], 3, &mut u, 4, false).unwrap();
+        assert_eq!((e, f, u), (none, none, [0; 4]), "{cmyk:?}: Lab white");
+        // Absolute colorimetric keeps the paper colour.
+        let abs = Transform::new(cmyk.profile(), srgb(), Intent::AbsoluteColorimetric, false).unwrap();
+        let mut o = [0.0f32; 3];
+        abs.eval(&none, &mut o).unwrap();
+        assert!(o[2] < 0.99, "{cmyk:?}: absolute paper {o:?}");
+    }
+}
