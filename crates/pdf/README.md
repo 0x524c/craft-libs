@@ -194,5 +194,8 @@ and enables the contracts on native and WASM. Locally, run
 `python3 scripts/fetch-pdf-test-fonts.py /absolute/path/to/licensed-fonts` to provision
 them. `tests/upstream_reading.rs` uses the same Inter fixture to verify TrueType
 WinAnsi fallback with missing or partial ToUnicode maps, explicit Encoding and
-Differences precedence, and a ToUnicode override. Without fixtures those reader
+Differences precedence, and a ToUnicode override. The fallback changes extraction
+only: existing nonsymbolic glyph selection can still choose StandardEncoding glyphs
+or `.notdef`. Tests pin that distinction and the upstream WinAnsi unused-code bullet
+mapping; fallback text is not proof of the original author's text. Without fixtures those reader
 contracts are also compiled and explicitly ignored; provisioned CI executes them.

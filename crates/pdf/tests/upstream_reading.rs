@@ -16,6 +16,7 @@ const INTER: &[u8] = include_bytes!(concat!(env!("CRAFT_PDF_TEST_FONT_DIR"), "/I
 struct TextDevice {
     text: String,
     embedded_glyphs: usize,
+    glyph_ids: Vec<u32>,
 }
 
 impl Device<'_> for TextDevice {
@@ -28,6 +29,7 @@ impl Device<'_> for TextDevice {
         let Glyph::Outline(outline) = glyph else { panic!("expected an embedded TrueType font") };
         assert!(outline.font_data().unwrap().data.as_ref().as_ref() == fixture_font(), "a fallback font must not satisfy this contract");
         self.embedded_glyphs += 1;
+        self.glyph_ids.push(outline.glyph_id().to_u32());
         match glyph.as_unicode() {
             Some(BfString::Char(c)) => self.text.push(c),
             Some(BfString::String(s)) => self.text.push_str(&s),
@@ -50,7 +52,7 @@ fn fixture_font() -> &'static [u8] {
     }
 }
 
-fn encoded_text(flags: u8, encoding: &str, unicode_map: Option<&str>, codes: &[u8]) -> String {
+fn interpreted_text(flags: u8, encoding: &str, unicode_map: Option<&str>, codes: &[u8]) -> TextDevice {
     let font = fixture_font();
     let mut content = b"BT /F1 14 Tf 1 0 0 1 20 200 Tm (".to_vec();
     content.extend_from_slice(codes);
@@ -92,7 +94,11 @@ fn encoded_text(flags: u8, encoding: &str, unicode_map: Option<&str>, codes: &[u
     let mut device = TextDevice::default();
     craft_pdf::interpret_page(page, &mut context, &mut device).unwrap();
     assert_eq!(device.embedded_glyphs, codes.len());
-    device.text
+    device
+}
+
+fn encoded_text(flags: u8, encoding: &str, unicode_map: Option<&str>, codes: &[u8]) -> String {
+    interpreted_text(flags, encoding, unicode_map, codes).text
 }
 
 #[cfg_attr(not(craft_pdf_unicode_fixtures), ignore = "requires hash-verified external fonts and craft_pdf_unicode_fixtures cfg")]
@@ -117,5 +123,35 @@ fn explicit_encoding_differences_and_to_unicode_override_the_fallback() {
         assert_eq!(encoded_text(flags, differences, None, b"\xe9"), "C");
         let map = "1 beginbfchar <E9> <03A9> endbfchar";
         assert_eq!(encoded_text(flags, differences, Some(map), b"\xe9"), "Ω");
+    }
+}
+
+#[cfg_attr(not(craft_pdf_unicode_fixtures), ignore = "requires hash-verified external fonts and craft_pdf_unicode_fixtures cfg")]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn unicode_fallback_preserves_the_existing_nonsymbolic_glyph_selection() {
+    let fallback = interpreted_text(32, "", None, b"\xe9\xfc");
+    let standard = interpreted_text(32, "/Encoding /StandardEncoding", None, b"\xe9\xfc");
+    let ansi = interpreted_text(32, "/Encoding /WinAnsiEncoding", None, b"\xe9\xfc");
+    assert_eq!(fallback.text, "éü");
+    // The upstream port repairs extraction only. With no encoding, drawing still uses
+    // StandardEncoding: Oslash for 0xE9 and .notdef for 0xFC. Do not claim a rendering fix.
+    assert_eq!(fallback.glyph_ids, standard.glyph_ids);
+    assert_ne!(fallback.glyph_ids[0], 0);
+    assert_eq!(fallback.glyph_ids[1], 0);
+    assert_eq!(ansi.text, "éü");
+    assert!(ansi.glyph_ids.iter().all(|id| *id != 0));
+    assert_ne!(fallback.glyph_ids[0], ansi.glyph_ids[0]);
+}
+
+#[cfg_attr(not(craft_pdf_unicode_fixtures), ignore = "requires hash-verified external fonts and craft_pdf_unicode_fixtures cfg")]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn unicode_fallback_uses_the_upstream_win_ansi_bullet_mapping() {
+    // The upstream fallback uses the complete WinAnsi mapping, including its unused-code
+    // bullet rule. This is a fallback policy, not proof of the original author's text.
+    for flags in [4, 32] {
+        assert_eq!(encoded_text(flags, "", None, b"\x81"), "•");
+        assert_eq!(encoded_text(flags, "/Encoding /WinAnsiEncoding", None, b"\x81"), "•");
     }
 }
