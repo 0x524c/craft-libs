@@ -54,6 +54,14 @@ is closed and requests cancellation. Calls into a driver and interactive output-
 are not covered by this notification timeout. Windows answers when the job is in
 the queue ("spooled 3 sheet(s)"): a paused queue or an offline printer keeps it there. CUPS jobs
 never use a PDF temporary file. Printing is synchronous; UI callers should submit on a worker.
+`submit_with_progress` reports `(processed, sheets)` before the first Windows sheet and after
+each sheet is successfully added to the native print job. These are source PDF sheets, excluding
+copies and duplex; the events describe sheet processing, and do not confirm physical output.
+The callback runs on the thread calling submission, can capture non-`Send` state, and should
+return promptly. It is never retained. Keep waiting for the final `Result` even at full progress:
+the job can still fail. The API does not provide cancellation. CUPS reports no progress.
+UI callers must forward events to their own progress state; adopting the API alone does not
+change an application's UI.
 Receipts are backend messages, not portable job IDs. `Job::duplex = None` preserves the queue's
 duplex default; `Some(Duplex::Off)` forces simplex. `Job::scaling` defaults to `Scaling::Exact`;
 callers exporting arbitrary document sizes can choose `Scaling::ShrinkToFit`. Exact mode reports
