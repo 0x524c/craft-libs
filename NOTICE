@@ -89,7 +89,20 @@ Upstream licence texts are retained in licenses/pdf-writer.
 The optional writer embeds Compact ICC Profiles by Clinton Ingram
 (https://github.com/saucecontrol/Compact-ICC-Profiles), under CC0-1.0.
 See licenses/pdf-writer/LICENSE-ICC.txt and ATTRIBUTION.md for sources and hashes.
-No font files are copied into this repository. The four existing writer ICC profiles are retained under vendor/krilla/icc.
+The writer adds no font files. Its four existing ICC profiles are retained under vendor/krilla/icc.
 
 Krilla is vendored with a native unwind-cleanup patch; see vendor/krilla/README.craft.md
 and vendor/krilla/SOURCE.json. Its upstream MIT/Apache-2.0 licences and CC0 profiles are unchanged.
+
+Optional PDF reader
+
+Hayro 0.7.1, hayro-interpret 0.7.0, hayro-syntax 0.7.2 and hayro-jbig2 0.3.0
+(https://github.com/LaurenzV/hayro), MIT OR Apache-2.0, retain their upstream licence files.
+These patched sources are transferred from PdfCraft revision
+7437bde378f43856eada40af25b983812e615e8a (https://github.com/storytold/pdfcraft).
+See vendor/README.craft-reader.md and each crate's SOURCE.json for provenance and local changes.
+The reader retains the existing Foxit/PDFium standard-14 font assets (BSD-3-Clause),
+Compact ICC Profiles by Clinton Ingram (CC0-1.0), and dependency CMaps (BSD-3-Clause).
+Their licences and per-file hashes are retained in vendor/hayro-interpret/assets,
+licenses/pdf-backend and ATTRIBUTION.md. These are existing reader dependency assets;
+applications retain their own document-font selection and licensing policy.
