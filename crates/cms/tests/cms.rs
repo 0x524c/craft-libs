@@ -641,6 +641,36 @@ fn oracle_moxcms_system_cmyk() {
     assert!(mean < 1.5 && p99 <= 6, "max {worst} p99 {p99} mean {mean}");
 }
 
+/// The CMYK oracle with the built-in Coated FOGRA39 bytes, so it runs on every platform: the
+/// same comparison as [`oracle_moxcms_system_cmyk`] (CMYK → sRGB, 8-bit, relative colorimetric
+/// without BPC).
+#[test]
+fn oracle_moxcms_builtin_cmyk() {
+    use moxcms::{ColorProfile, Layout, RenderingIntent, TransformOptions as MoxOpts};
+    let cmyk = Builtin::CoatedFogra39.profile();
+    let theirs_p = ColorProfile::new_from_slice(&cmyk.to_bytes()).unwrap();
+    let s = ColorProfile::new_from_slice(&srgb().to_bytes()).unwrap();
+    let opts = MoxOpts { rendering_intent: RenderingIntent::RelativeColorimetric, ..Default::default() };
+    let mt = theirs_p.create_transform_8bit(Layout::Rgba, &s, Layout::Rgb, opts).unwrap();
+    let src: Vec<u8> = (0..2048u32).flat_map(|i| [(i * 37 % 256) as u8, (i * 91 % 256) as u8, (i * 13 % 256) as u8, (i * 57 % 256) as u8]).collect();
+    let mut theirs = vec![0u8; 2048 * 3];
+    mt.transform(&src, &mut theirs).unwrap();
+    let t = Transform::new(cmyk, srgb(), Intent::RelativeColorimetric, false).unwrap();
+    let mut ours = vec![0u8; 2048 * 3];
+    t.convert_u8(&src, 4, &mut ours, 3, false).unwrap();
+    let mut diffs: Vec<i32> = ours.iter().zip(&theirs).map(|(a, b)| (*a as i32 - *b as i32).abs()).collect();
+    let mean = diffs.iter().sum::<i32>() as f64 / diffs.len() as f64;
+    let wi = diffs.iter().enumerate().max_by_key(|(_, d)| **d).map_or(0, |(i, _)| i / 3);
+    diffs.sort_unstable();
+    let (p99, worst) = (diffs[diffs.len() * 99 / 100], diffs[diffs.len() - 1]);
+    eprintln!("Coated FOGRA39 → sRGB vs moxcms: max {worst}, p99 {p99}, mean {mean:.3}");
+    eprintln!("worst px cmyk {:?}: ours {:?} theirs {:?}", &src[wi * 4..wi * 4 + 4], &ours[wi * 3..wi * 3 + 3], &theirs[wi * 3..wi * 3 + 3]);
+    // Measured: max 10, p99 5, mean 0.89. The largest differences are dark, steep sRGB values;
+    // the worst (CMYK 237/147/21/33, Lab 37.95/−4.24/−38.55) is red 25.1 by an independent
+    // float computation, as ours (25), where moxcms gives 15.
+    assert!(mean < 1.2 && p99 <= 6 && worst <= 12, "max {worst} p99 {p99} mean {mean}");
+}
+
 #[test]
 fn builtin_all_in_declaration_order() {
     // `Builtin::profile` indexes its cache by discriminant.
