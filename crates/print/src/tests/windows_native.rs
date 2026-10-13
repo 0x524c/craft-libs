@@ -411,8 +411,13 @@ fn windows_jobs_reach_the_spooler() {
     }
     let listed = spool::printers().into_iter().find(|p| p.name == name);
     let mixed = test_pdf(&[LETTER, LETTER_LANDSCAPE, LETTER], true);
-    let job = Job { printer: Some(name.into()), copies: 2, duplex: Some(Duplex::LongEdge), title: "mixed.pdf".into(), ..Job::default() };
+    let job = Job { printer: Some(name.into()), title: "mixed.pdf".into(), ..Job::default() };
     let sent = spool::submit(&mixed, &job);
+    let duplex_refused = if listed.as_ref().is_some_and(|p| p.two_sided == Some(false)) {
+        Some(spool::submit(&mixed, &Job { duplex: Some(Duplex::LongEdge), ..job.clone() }))
+    } else {
+        None
+    };
     let tabloid = test_pdf(&[TABLOID, LETTER], false);
     let shrink = Job { printer: Some(name.into()), scaling: Scaling::ShrinkToFit, title: "shrink".into(), ..Job::default() };
     let shrunk = spool::submit(&tabloid, &shrink);
@@ -429,6 +434,9 @@ fn windows_jobs_reach_the_spooler() {
     );
     assert!(listed.as_ref().is_some_and(|p| p.two_sided.is_some()), "the new printer is listed, its duplex support known: {listed:?}");
     assert_eq!(sent.as_deref(), Ok("spooled 3 sheet(s)"), "{sent:?}");
+    if let Some(refused) = duplex_refused {
+        assert!(matches!(refused, Err(Error::Spool(ref m)) if m.contains("simplex/duplex") && m.contains("nothing was sent")), "{refused:?}");
+    }
     assert_eq!(shrunk.as_deref(), Ok("spooled 2 sheet(s)"), "{shrunk:?}");
     assert!(matches!(exact_refused, Err(Error::Spool(ref m)) if m.contains("one paper size")), "{exact_refused:?}");
     assert_eq!(queued.as_deref().map(str::trim), Ok("mixed.pdf 3|shrink.pdf 2"), "one job each, all sheets, in the paused queue: {queued:?}");

@@ -113,3 +113,10 @@ with `ICM_DONE_OUTSIDEDC`, reapplied after `StartPage`; driver-managed RGB uses 
 Vendor driver automatic color correction remains a driver setting and requires qualification.
 Other platforms return `rgb::PrintError::Unsupported`. The Windows PDF backend and its existing
 completion dependency pin are independent of this additional MIT OR Apache-2.0 API.
+
+Native Windows PDF submission checks the driver's validated copy count and explicit
+simplex/duplex and grayscale requests before sending. Collation must be retained when both
+the page count and copy count exceed one. A driver that drops or changes these options is
+refused; select supported options or flatten grayscale into the print-ready page content.
+Without an explicit duplex request, the queue default applies. Normal color output retains
+the driver's color policy. Single-page or single-copy jobs have no collating order to check.
