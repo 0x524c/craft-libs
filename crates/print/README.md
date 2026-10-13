@@ -64,6 +64,12 @@ does not provide PostScript output, separations, trapping or colour-managed devi
 Windows shrink-to-fit refuses pages with annotations when their geometry needs fitting.
 Callers must flatten annotation appearances into page content first. Exact-size printing and
 rotation retain the annotations. This avoids losing printed comments, forms or other marks.
+The Windows renderer uses viewer visibility. Native submission therefore accepts only plain
+visible printable annotation flags (`F=4`); annotations without Print, with NoView, or with
+other visibility/rotation flags require caller flattening. This prevents printing comments
+that were marked nonprinting or omitting print-only marks. A visible Square appearance with
+`F=4` was rendered in the Windows qualification fixture; other appearance types still need
+their own fidelity checks.
 
 `cargo test -p craft-print` tests CUPS transport (including pipe-sized jobs and refusal),
 printer parsing, PPD options and argument mapping, and on every platform the Windows pieces that

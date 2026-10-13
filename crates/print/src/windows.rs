@@ -126,6 +126,7 @@ fn imageable_margin(device: &PrinterDevice, ticket: &PrintTicket) -> f64 {
 /// queue: a paused queue or an offline printer keeps the job there, as with any program.
 pub(crate) fn submit(pdf: &[u8], job: &Job) -> Result<String, Error> {
     let read = sheets::read(pdf)?;
+    read.check_print_annotations()?;
     let count = read.sheets.len();
     let first = read.sheets.first().map(sheets::Sheet::size).ok_or_else(|| spool_error("the print-ready PDF has no pages"))?;
     let landscape = first.0 > first.1 + SAME;

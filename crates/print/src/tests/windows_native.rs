@@ -293,6 +293,22 @@ fn shrink_to_fit_refuses_to_drop_annotation_appearances() {
 }
 
 #[test]
+fn annotation_print_visibility_is_checked_before_native_submission() {
+    for flags in [0, 4, 6, 36, 20] {
+        let annotations = format!("[<< /Subtype /Square /Rect [36 36 72 72] /F {flags} >>]");
+        let pdf = test_pdf_with_annotations(&[LETTER], false, Some(&annotations));
+        let sheets = crate::sheets::read(&pdf).unwrap();
+        assert_eq!(sheets.check_print_annotations().is_ok(), flags == 4, "flags={flags}");
+    }
+    for annotations in ["[]", "null"] {
+        let pdf = test_pdf_with_annotations(&[LETTER], false, Some(annotations));
+        assert!(crate::sheets::read(&pdf).unwrap().check_print_annotations().is_ok());
+    }
+    let pdf = test_pdf(&[LETTER], false);
+    assert!(crate::sheets::read(&pdf).unwrap().check_print_annotations().is_ok());
+}
+
+#[test]
 fn an_encrypted_file_is_turned_but_not_reframed() {
     // An /Encrypt entry is all it takes: new content streams would have to be encrypted too.
     let pdf = test_pdf(&[LETTER, LETTER_LANDSCAPE], false);
