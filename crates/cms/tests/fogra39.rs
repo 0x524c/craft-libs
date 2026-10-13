@@ -459,7 +459,7 @@ fn in_gamut_lab_round_trips() {
 
 /// Reference sRGB values for CMYK in Coated FOGRA39 (relative colorimetric with black point
 /// compensation).
-const REFERENCE_SRGB: [([f64; 4], [u8; 3]); 8] = [
+const REFERENCE_SRGB: [([f64; 4], [u8; 3]); 15] = [
     ([0.0, 0.5, 1.0, 0.0], [243, 146, 0]),
     ([0.0, 0.6, 1.0, 0.0], [239, 125, 0]),
     ([1.0, 0.0, 0.0, 0.0], [0, 159, 227]),
@@ -468,6 +468,15 @@ const REFERENCE_SRGB: [([f64; 4], [u8; 3]); 8] = [
     ([0.0, 0.0, 0.0, 1.0], [29, 29, 27]),
     ([1.0, 1.0, 0.0, 0.0], [49, 39, 131]),
     ([0.0, 1.0, 1.0, 0.0], [227, 6, 19]),
+    // Reported DesignCraft orange: shown as 245,144,25 by the uncalibrated formula.
+    ([0.0, 0.41, 0.9, 0.04], [239, 161, 35]),
+    // Grey, rich black, tint, skin tone, green and a near-neutral.
+    ([0.0, 0.0, 0.0, 0.5], [157, 157, 156]),
+    ([0.6, 0.4, 0.4, 1.0], [2, 10, 10]),
+    ([0.1, 0.05, 0.0, 0.0], [233, 238, 249]),
+    ([0.05, 0.3, 0.4, 0.0], [241, 192, 157]),
+    ([1.0, 0.0, 1.0, 0.0], [0, 150, 64]),
+    ([0.4, 0.3, 0.3, 0.1], [157, 158, 159]),
 ];
 
 fn to_srgb(profile: &Profile) -> impl Fn([f64; 4]) -> [u8; 3] {
