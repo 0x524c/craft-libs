@@ -11,6 +11,7 @@ No feature is enabled by default.
 | `raster` | `interpret` plus premultiplied RGBA8 rendering |
 | `write` | Guarded Krilla authoring; no shared reader dependency |
 | `write-pdf` | `write` plus Krilla's embedded-PDF support |
+| `write-simple-text` | `write` plus Krilla's optional text shaper and `draw_text` |
 
 ## Reading and rendering
 
@@ -86,6 +87,11 @@ These backend checks supplement the root workspace gates; excluded vendor crates
 covered by `cargo test --workspace` alone.
 
 ## Writing
+
+Plain `write` retains Krilla raster images without its optional text shaper. Applications
+that supply shaped glyphs do not need that shaper. Adapters that call `draw_text`, such as
+DeckCraft, also need `write-simple-text` when adopting this revision. `write-pdf` adds
+embedded-PDF support independently of text shaping.
 
 The writer pins Krilla 0.8.2, with a local unwind-cleanup patch documented in
 [`vendor/krilla/README.craft.md`](../../vendor/krilla/README.craft.md). Successful

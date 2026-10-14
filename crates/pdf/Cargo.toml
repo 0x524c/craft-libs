@@ -17,6 +17,7 @@ interpret = ["read", "dep:hayro-interpret"]
 raster = ["interpret", "dep:hayro", "dep:bytemuck"]
 write = ["dep:krilla", "dep:thiserror"]
 write-pdf = ["write", "krilla/pdf"]
+write-simple-text = ["write", "krilla/simple-text"]
 
 [dependencies]
 hayro-syntax = { workspace = true, optional = true }
