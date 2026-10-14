@@ -5,10 +5,12 @@ layout, shaping, font selection and licensing, tagging, colour policy, print pre
 export presets and postprocessing. There is no GUI or application dependency.
 
 Features are explicit: `default = []`; `write` enables authoring; `write-pdf` additionally
-supports embedding existing PDF pages. WordCraft, DeckCraft and VectorCraft use `write`.
+supports embedding existing PDF pages. WordCraft and VectorCraft use `write`.
+Applications that call Krilla's `draw_text`, such as DeckCraft, also need `write-simple-text`.
 DesignCraft uses `write-pdf` for placed PDF pages and book composition. Plain `write` does
-not enable Hayro parsing, interpretation or its image codecs; Krilla's existing raster-image
-and simple-text support remain enabled. Reading dependencies used to inspect test outputs
+not enable Hayro parsing, interpretation or its image codecs. Krilla's raster-image support
+remains enabled, while its optional text shaper is enabled only by `write-simple-text`.
+Applications that supply shaped glyphs do not need that feature. Reading dependencies used to inspect test outputs
 are dev-only. A reader migration can be reviewed and adopted separately.
 
 The writer pins Krilla 0.8.2, with a local unwind-cleanup patch documented in
