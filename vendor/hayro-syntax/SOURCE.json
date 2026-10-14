@@ -56,7 +56,7 @@
       "path": "src/byte_reader.rs",
       "source_sha256": "aa8495ca920d5d1f27db8ec98557fd1dc6376a3b6823c1cf8bbd6ed9b9b0c8cf",
       "source_git_blob": "78b282c8f3df43ee43faee63c944b922539b2ec8",
-      "sha256": "aa8495ca920d5d1f27db8ec98557fd1dc6376a3b6823c1cf8bbd6ed9b9b0c8cf"
+      "sha256": "296cee7a0095b399685128f4ee5d854156597c745847e04db12e398f2afb24cc"
     },
     {
       "path": "src/content/gen_ops.py",
@@ -212,7 +212,7 @@
       "path": "src/object/array.rs",
       "source_sha256": "6fbddf05724848db2389068a0504cff6b0783e35baa58e64bf2a31d48a1042ea",
       "source_git_blob": "d39230f7dbf114dd202a16b21f7a6bb70be5ead3",
-      "sha256": "6fbddf05724848db2389068a0504cff6b0783e35baa58e64bf2a31d48a1042ea"
+      "sha256": "36e937b44ca020e1b4846a47e8126bcf141d8fe1ba084690f17a4878861f7f7d"
     },
     {
       "path": "src/object/bool.rs",
@@ -230,7 +230,7 @@
       "path": "src/object/dict.rs",
       "source_sha256": "bcfefabe931614b79ea54940d02fce534eb2363f1b75a03d6428fd7a04c57981",
       "source_git_blob": "1e016b567e8ec17801fa8282c47f653092839cb5",
-      "sha256": "bcfefabe931614b79ea54940d02fce534eb2363f1b75a03d6428fd7a04c57981"
+      "sha256": "c53c686b05163fcb714d1ddacc8c55d340f745c29fead38f38d3c6b691673730"
     },
     {
       "path": "src/object/indirect.rs",
@@ -260,7 +260,7 @@
       "path": "src/object/number.rs",
       "source_sha256": "4bc2df257241ccb66450b7176bcab20d780bc9e22469cec588ebee5fac272905",
       "source_git_blob": "bd37b19c3053317dabbfa38d3473618631e6b669",
-      "sha256": "4bc2df257241ccb66450b7176bcab20d780bc9e22469cec588ebee5fac272905"
+      "sha256": "85598a27cf730aa9d2fe6a7094a2b375e67c4fed588de86b47cb8ebf38a702fa"
     },
     {
       "path": "src/object/rect.rs",
@@ -296,7 +296,7 @@
       "path": "src/page.rs",
       "source_sha256": "19d0e7604a3a692956e523128022d07944253b308793598795e09595cb04e79e",
       "source_git_blob": "7d63931a324f5faf90bb37e0a90670643567dace",
-      "sha256": "7b6b9fb746f18d926ede44563b6cc8bc2fd5bdf59c851d4f8c210fad96c855d4"
+      "sha256": "681681016eda0d1cdbec10d2cb0305c5f439724ec5d0b3be218a18e99b5e72b8"
     },
     {
       "path": "src/pdf.rs",
@@ -346,5 +346,30 @@
       "source_git_blob": null,
       "sha256": "758bee2a3fb1c0ac59a4f9747f153d8d2ae7d44f5cdcea13d8a084b04b368283"
     }
+  ],
+  "compatibility_reference": {
+    "repository": "https://github.com/LaurenzV/hayro",
+    "revision": "ea9c81dc70cde40c64205986fdcfcd481fe934d8",
+    "version": "0.8.0",
+    "license": "Apache-2.0 OR MIT",
+    "archive_sha256": "6cdc818d8d265dcb42081d488f7599df4f73fb79e9d347ecedcd3c23809d2026",
+    "reference_files": [
+      "src/object/mod.rs",
+      "src/object/array.rs",
+      "src/object/dict.rs",
+      "src/page.rs"
+    ],
+    "changes": [
+      "Bound direct arrays and dictionaries to 64 levels using the existing guarded reader, including decoded streams.",
+      "Add Resources::from_scope and use whole-dictionary resource replacement in page-tree and page construction.",
+      "Preserve iterative indirect page-tree traversal, sibling order and reference deduplication under a 100,000-entry work cap; budget and fallible frame/page reservation failures reject loading without brute-force fallback."
+    ],
+    "preserved": [
+      "Existing bounded decoding, streaming, parser repair, cache and allocation safeguards."
+    ]
+  },
+  "local_safety_repairs": [
+    "Match existing standalone-plus-as-zero tolerance in number parsing while retaining regular-character terminator rejection and numeric overflow guards.",
+    "End raw array iteration on object parse failure instead of panicking when validation and parsing differ."
   ]
 }

@@ -3,9 +3,8 @@
 use core::cell::Cell;
 use core::ops::Range;
 
-/// PdfCraft patch: how deeply direct arrays and dictionaries may nest (the same cap as `pdfcraft-cos`; a
-/// chain of 64 direct stitching functions is exactly this deep).
-const MAX_CONTAINER_DEPTH: usize = 128;
+/// Direct arrays and dictionaries may nest at most 64 levels, including in decoded streams.
+const MAX_CONTAINER_DEPTH: usize = 64;
 
 /// A reader for reading bytes and PDF objects.
 #[derive(Clone, Debug)]
@@ -277,10 +276,44 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 mod tests {
     use super::Reader;
+    use crate::object::{Array, Dict};
+    use crate::reader::ReaderExt;
+    use alloc::format;
+    use alloc::string::String;
 
     #[test]
     fn peek_bytes_rejects_overflowing_len() {
         let reader = Reader::new(b"abc");
         assert!(reader.peek_bytes(usize::MAX).is_none());
+    }
+
+    #[test]
+    fn direct_container_limit_is_sixty_four_and_unwinds_after_failure() {
+        for depth in [1, 63, 64, 65, 128, 129] {
+            let array = format!("{}0{}", "[".repeat(depth), "]".repeat(depth));
+            let dictionary = format!("{}0{}", "<< /A ".repeat(depth), " >>".repeat(depth));
+            for in_content in [false, true] {
+                let mut reader = Reader::new(array.as_bytes());
+                assert_eq!(reader.skip::<Array<'_>>(in_content).is_some(), depth <= 64, "array {depth}");
+                assert_eq!(reader.skip_depth, 0, "a rejected array must unwind its depth");
+
+                let mut reader = Reader::new(dictionary.as_bytes());
+                assert_eq!(reader.skip::<Dict<'_>>(in_content).is_some(), depth <= 64, "dictionary {depth}");
+                assert_eq!(reader.skip_depth, 0, "a rejected dictionary must unwind its depth");
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_arrays_and_dictionaries_share_the_same_limit() {
+        for depth in [64, 65] {
+            let mut data = String::from("0");
+            for level in 0..depth {
+                data = if level % 2 == 0 { format!("<< /A {data} >>") } else { format!("[{data}]") };
+            }
+            let mut reader = Reader::new(data.as_bytes());
+            assert_eq!(reader.skip::<crate::object::Object<'_>>(true).is_some(), depth <= 64);
+            assert_eq!(reader.skip_depth, 0);
+        }
     }
 }

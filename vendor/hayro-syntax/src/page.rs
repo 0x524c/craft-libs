@@ -7,7 +7,8 @@ use crate::object::Name;
 use crate::object::Rect;
 use crate::object::Stream;
 use crate::object::dict::keys::*;
-use crate::object::{Object, ObjectLike};
+use crate::object::{MaybeRef, Object, ObjectLike};
+use crate::object::array::ArrayIter;
 use crate::reader::ReaderContext;
 use crate::sync::OnceLock;
 use crate::transform::Transform;
@@ -18,7 +19,6 @@ use crate::object::stream::Incremental;
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::collections::{BTreeSet, VecDeque};
-use crate::object::ObjectIdentifier;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Deref;
@@ -48,27 +48,17 @@ pub struct Pages<'a> {
 }
 
 impl<'a> Pages<'a> {
-    /// Create a new `Pages` object.
-    pub(crate) fn new(
+    /// Create a new `Pages` object within a bounded amount of page-tree work.
+    fn new(
         pages_dict: &Dict<'a>,
         ctx: &ReaderContext<'a>,
         xref: &'a XRef,
-    ) -> Option<Self> {
+        work_limit: usize,
+    ) -> Result<Self, PageTreeError> {
         let mut pages = vec![];
-        let pages_ctx = PagesContext::new();
-        // PdfCraft patch: guard against page-tree cycles (a `/Kids` entry pointing back up
-        // the tree), which otherwise recurse until the stack overflows.
-        let mut visited = BTreeSet::new();
-        resolve_pages(
-            pages_dict,
-            &mut pages,
-            pages_ctx,
-            Resources::new(Dict::empty(), None, ctx),
-            &mut visited,
-            0,
-        )?;
+        resolve_pages(pages_dict, &mut pages, ctx, work_limit)?;
 
-        Some(Self { pages, xref })
+        Ok(Self { pages, xref })
     }
 
     /// Create a new `Pages` object by bruteforce-searching.
@@ -112,8 +102,35 @@ impl<'a> Deref for Pages<'a> {
     }
 }
 
-/// PdfCraft patch: maximum page-tree depth (direct dictionaries have no id to track).
-const MAX_PAGE_TREE_DEPTH: usize = 256;
+/// Craft patch: bound traversal work, not valid indirect page-tree depth. The root
+/// and every raw `/Kids` entry consume one unit, including malformed, direct and
+/// repeated entries. This also bounds the stack, visited set and returned pages.
+/// Budget exhaustion or failed frame/page reservation rejects the whole traversal;
+/// it must not trigger the unbounded brute-force page-repair fallback.
+const MAX_PAGE_TREE_WORK: usize = 100_000;
+
+#[derive(Debug, PartialEq, Eq)]
+enum PageTreeError {
+    Malformed,
+    Limit,
+}
+
+struct PageTreeFrame<'a> {
+    kids: ArrayIter<'a>,
+    ctx: PagesContext,
+    resources: Resources<'a>,
+}
+
+impl<'a> PageTreeFrame<'a> {
+    fn new(dict: &Dict<'a>, mut ctx: PagesContext, resources: Resources<'a>) -> Option<Self> {
+        ctx.media_box = dict.get::<Rect>(MEDIA_BOX).or(ctx.media_box);
+        ctx.crop_box = dict.get::<Rect>(CROP_BOX).or(ctx.crop_box);
+        ctx.rotate = dict.get::<i32>(ROTATE).or(ctx.rotate);
+        let resources = Resources::from_scope(dict.get::<Dict<'a>>(RESOURCES), resources);
+
+        Some(Self { kids: dict.get::<Array<'a>>(KIDS)?.raw_iter(), ctx, resources })
+    }
+}
 
 /// PdfCraft patch: the largest `/UserUnit` honoured, as in Acrobat (a larger value counts as
 /// this one).
@@ -122,55 +139,64 @@ const MAX_USER_UNIT: f64 = 75_000.0;
 fn resolve_pages<'a>(
     pages_dict: &Dict<'a>,
     entries: &mut Vec<Page<'a>>,
-    mut ctx: PagesContext,
-    resources: Resources<'a>,
-    visited: &mut BTreeSet<ObjectIdentifier>,
-    depth: usize,
-) -> Option<()> {
-    // PdfCraft patch: skip nodes already visited and absurdly deep trees.
-    if depth > MAX_PAGE_TREE_DEPTH {
-        return None;
+    reader_ctx: &ReaderContext<'a>,
+    work_limit: usize,
+) -> Result<(), PageTreeError> {
+    let mut remaining = work_limit.checked_sub(1).ok_or(PageTreeError::Limit)?;
+    let root =
+        PageTreeFrame::new(pages_dict, PagesContext::new(), Resources::new(Dict::empty(), None, reader_ctx)).ok_or(PageTreeError::Malformed)?;
+    let mut visited = BTreeSet::new();
+    if let Some(id) = pages_dict.obj_id() {
+        visited.insert(id);
     }
-    if let Some(id) = pages_dict.obj_id()
-        && !visited.insert(id)
-    {
-        return None;
-    }
-    if let Some(media_box) = pages_dict.get::<Rect>(MEDIA_BOX) {
-        ctx.media_box = Some(media_box);
-    }
+    let mut stack = Vec::new();
+    stack.try_reserve(1).map_err(|_| PageTreeError::Limit)?;
+    stack.push(root);
 
-    if let Some(crop_box) = pages_dict.get::<Rect>(CROP_BOX) {
-        ctx.crop_box = Some(crop_box);
-    }
+    while let Some(frame) = stack.last_mut() {
+        let Some(kid) = frame.kids.next() else {
+            stack.pop();
+            continue;
+        };
+        remaining = remaining.checked_sub(1).ok_or(PageTreeError::Limit)?;
 
-    if let Some(rotate) = pages_dict.get::<i32>(ROTATE) {
-        ctx.rotate = Some(rotate);
-    }
+        let dict = match kid {
+            MaybeRef::Ref(id) => {
+                // Check raw references before resolution: resolving a cyclic or
+                // invalid reference through a typed iterator can end that iterator
+                // and hide all later siblings. Leaves are deduplicated as well.
+                if !visited.insert(id.into()) {
+                    continue;
+                }
+                // Resolve each indirect child with the original document context,
+                // preserving decode limits without accumulating an ancestor chain.
+                reader_ctx.xref().get_with::<Dict<'a>>(id.into(), reader_ctx)
+            }
+            MaybeRef::NotRef(object) => object.into_dict(),
+        };
+        let Some(dict) = dict else {
+            continue;
+        };
 
-    let resources = Resources::from_parent(
-        pages_dict.get::<Dict<'_>>(RESOURCES).unwrap_or_default(),
-        resources.clone(),
-    );
-
-    let kids = pages_dict.get::<Array<'a>>(KIDS)?;
-
-    for dict in kids.iter::<Dict<'_>>() {
         match dict.get::<Name<'_>>(TYPE).as_deref() {
             Some(PAGES) => {
-                resolve_pages(&dict, entries, ctx.clone(), resources.clone(), visited, depth + 1);
+                if let Some(child) = PageTreeFrame::new(&dict, frame.ctx.clone(), frame.resources.clone()) {
+                    stack.try_reserve(1).map_err(|_| PageTreeError::Limit)?;
+                    stack.push(child);
+                }
             }
             // Let's be lenient and assume it's a `Page` in case it's `None` or something else
             // (see corpus test case 0083781).
             _ => {
-                if let Some(page) = Page::new(&dict, &ctx, resources.clone(), false) {
+                if let Some(page) = Page::new(&dict, &frame.ctx, frame.resources.clone(), false) {
+                    entries.try_reserve(1).map_err(|_| PageTreeError::Limit)?;
                     entries.push(page);
                 }
             }
         }
     }
 
-    Some(())
+    Ok(())
 }
 
 /// The rotation of the page.
@@ -448,8 +474,8 @@ impl<'a> Page<'a> {
             .map_or(1.0, |u| u.min(MAX_USER_UNIT) as f32);
 
         let ctx = resources.ctx.clone();
-        let resources = Resources::from_parent(
-            dict.get::<Dict<'_>>(RESOURCES).unwrap_or_default(),
+        let resources = Resources::from_scope(
+            dict.get::<Dict<'_>>(RESOURCES),
             resources,
         );
 
@@ -703,6 +729,18 @@ pub struct Resources<'a> {
 }
 
 impl<'a> Resources<'a> {
+    /// Use an object's entire resource dictionary, or inherit the enclosing scope when absent.
+    ///
+    /// An explicit dictionary, including an empty one, replaces the enclosing resources;
+    /// missing names do not fall back individually. The enclosing reader context is retained
+    /// so indirect resources keep the document's cross-references and decode limits.
+    pub fn from_scope(resources: Option<Dict<'a>>, parent: Self) -> Self {
+        match resources {
+            Some(resources) => Self::new(resources, None, &parent.ctx),
+            None => parent,
+        }
+    }
+
     /// Create a new `Resources` object from a dictionary with a parent.
     pub fn from_parent(resources: Dict<'a>, parent: Self) -> Self {
         let ctx = parent.ctx.clone();
@@ -794,7 +832,7 @@ pub const A4: Rect = Rect {
 };
 
 pub(crate) mod cached {
-    use crate::page::Pages;
+    use crate::page::{MAX_PAGE_TREE_WORK, PageTreeError, Pages};
     use crate::reader::ReaderContext;
     use crate::xref::XRef;
     use core::ops::Deref;
@@ -816,6 +854,10 @@ pub(crate) mod cached {
 
     impl CachedPages {
         pub(crate) fn new(xref: Arc<XRef>) -> Option<Self> {
+            Self::new_with_limit(xref, MAX_PAGE_TREE_WORK)
+        }
+
+        pub(super) fn new_with_limit(xref: Arc<XRef>, work_limit: usize) -> Option<Self> {
             // SAFETY:
             // - The XRef's location is stable in memory:
             //   - We wrapped it in a `Arc` (or `Rc` in `no_std`), which implements `StableDeref`.
@@ -826,16 +868,166 @@ pub(crate) mod cached {
             let xref_reference: &'static XRef = unsafe { core::mem::transmute(xref.deref()) };
 
             let ctx = ReaderContext::new(xref_reference, false);
-            let pages = xref_reference
-                .get_with(xref.trailer_data().pages_ref, &ctx)
-                .and_then(|p| Pages::new(&p, &ctx, xref_reference))
-                .or_else(|| Pages::new_brute_force(&ctx, xref_reference))?;
+            let pages = match xref_reference.get_with(xref.trailer_data().pages_ref, &ctx) {
+                Some(p) => match Pages::new(&p, &ctx, xref_reference, work_limit) {
+                    Ok(pages) => pages,
+                    Err(PageTreeError::Malformed) => Pages::new_brute_force(&ctx, xref_reference)?,
+                    // A limit is a failed load, never permission to bypass the bound
+                    // or return a partially walked page tree through repair.
+                    Err(PageTreeError::Limit) => return None,
+                },
+                None => Pages::new_brute_force(&ctx, xref_reference)?,
+            };
 
             Some(Self { pages, _xref: xref })
         }
 
         pub(crate) fn get(&self) -> &Pages<'_> {
             &self.pages
+        }
+    }
+}
+
+#[cfg(test)]
+mod page_tree_tests {
+    use super::{MAX_PAGE_TREE_WORK, Rotation, cached};
+    use crate::object::{FromBytes, Name};
+    use crate::{DecodeLimits, Pdf};
+    use core::fmt::Write;
+
+    // Real xref offsets keep repair from masking page-tree traversal failures.
+    fn pdf_bytes(objects: &[String]) -> Vec<u8> {
+        let mut data = String::from("%PDF-1.7\n");
+        let mut offsets = vec![0];
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(data.len());
+            writeln!(data, "{} 0 obj\n{object}\nendobj", index + 1).unwrap();
+        }
+        let xref = data.len();
+        writeln!(data, "xref\n0 {}\n0000000000 65535 f ", offsets.len()).unwrap();
+        for offset in offsets.iter().skip(1) {
+            writeln!(data, "{offset:010} 00000 n ").unwrap();
+        }
+        writeln!(data, "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF", offsets.len()).unwrap();
+        data.into_bytes()
+    }
+
+    fn cached_with_limit(objects: &[String], limit: usize) -> Option<cached::CachedPages> {
+        let xref = crate::xref::root_xref(pdf_bytes(objects).into(), b"", DecodeLimits::default()).unwrap();
+        cached::CachedPages::new_with_limit(cached::Arc::new(xref), limit)
+    }
+
+    fn assert_deep_tree() {
+        let depth = 1024;
+        let font_id = depth + 3;
+        let mut objects = vec!["<< /Type /Catalog /Pages 2 0 R >>".to_string()];
+        for level in 0..depth {
+            let attributes = if level == 0 {
+                "/MediaBox [0 0 100 200] /CropBox [2 3 90 180] /Rotate 90 /Resources << /Font << /Old << /BaseFont /Helvetica >> >> /ExtGState << /G << /CA 0.5 >> >> >>".to_string()
+            } else if level == depth / 2 {
+                format!("/MediaBox [0 0 300 400] /Rotate 180 /Resources << /Font << /New {font_id} 0 R >> >>")
+            } else {
+                String::new()
+            };
+            objects.push(format!("<< /Type /Pages /Kids [{} 0 R] /Count 1 {attributes} >>", level + 3));
+        }
+        objects.push(format!("<< /Type /Page /Parent {} 0 R >>", depth + 1));
+        objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>".to_string());
+        let limits = DecodeLimits::default().with_max_decoded_stream(31);
+        let pdf = Pdf::new_with_limits(pdf_bytes(&objects), limits).unwrap();
+        assert_eq!(pdf.pages().len(), 1);
+        let page = &pdf.pages()[0];
+        assert_eq!(page.raw().obj_id().unwrap().obj_number, (depth + 2) as i32);
+        let media = page.media_box();
+        assert_eq!((media.x0, media.y0, media.x1, media.y1), (0.0, 0.0, 300.0, 400.0));
+        let crop = page.crop_box();
+        assert_eq!((crop.x0, crop.y0, crop.x1, crop.y1), (2.0, 3.0, 90.0, 180.0));
+        assert!(matches!(page.rotation(), Rotation::Flipped));
+        let old = Name::from_bytes(b"/Old").unwrap();
+        let new = Name::from_bytes(b"/New").unwrap();
+        let state = Name::from_bytes(b"/G").unwrap();
+        assert!(page.resources().get_font(&old).is_none());
+        assert!(page.resources().get_ext_g_state(&state).is_none());
+        assert_eq!(page.resources().get_font(&new).unwrap().get::<Name<'_>>(b"BaseFont").unwrap().as_ref(), b"Courier");
+        assert_eq!(page.ctx.decode_limits().max_decoded_stream(), 31);
+    }
+
+    #[test]
+    fn deeply_nested_indirect_page_tree_preserves_inheritance() {
+        assert_deep_tree();
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::Builder::new().stack_size(1 << 20).spawn(assert_deep_tree).unwrap().join().unwrap();
+    }
+
+    #[test]
+    fn cycles_invalid_children_and_duplicates_keep_later_siblings_in_order() {
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R 4 0 R 3 0 R 7 0 R 5 0 R] /Count 4 /MediaBox [0 0 200 300] /Rotate 90 >>",
+            "<< /Type /Pages /Kids [2 0 R 999 0 R null 5 0 R 6 0 R] /Rotate 180 >>",
+            "<< /Type /Page /MediaBox [0 0 40 40] >>",
+            "<< /Type /Page /MediaBox [0 0 50 50] >>",
+            "<< /Type /Pages /Kids [3 0 R 8 0 R] /Rotate 270 >>",
+            "<< /Type /Page /MediaBox [0 0 70 70] >>",
+            "<< /Type /Page /MediaBox [0 0 80 80] >>",
+        ]
+        .map(str::to_string);
+        let pages = cached_with_limit(&objects, MAX_PAGE_TREE_WORK).unwrap();
+        let ids: Vec<_> = pages.get().iter().map(|page| page.raw().obj_id().unwrap().obj_number).collect();
+        assert_eq!(ids, [5, 8, 4, 7]);
+        assert!(matches!(pages.get()[0].rotation(), Rotation::Flipped));
+        assert!(matches!(pages.get()[1].rotation(), Rotation::FlippedHorizontal));
+        assert!(matches!(pages.get()[2].rotation(), Rotation::Horizontal));
+        assert!(matches!(pages.get()[3].rotation(), Rotation::Horizontal));
+    }
+
+    #[test]
+    fn work_limit_counts_root_and_every_entry_and_never_repairs_partial_pages() {
+        for kids in ["3 0 R 3 0 R", "999 0 R 3 0 R", "null 3 0 R", "7 << /Type /Page /MediaBox [0 0 40 40] /Contents [] >>"] {
+            let objects = [
+                "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+                format!("<< /Type /Pages /Kids [{kids}] /Count 1 >>"),
+                // The fallback would find this page even after an exhausted walk.
+                "<< /Type /Page /MediaBox [0 0 40 40] /Contents [] >>".to_string(),
+            ];
+            for limit in 0..=2 {
+                assert!(cached_with_limit(&objects, limit).is_none(), "{kids}: limit {limit} must fail closed");
+            }
+            assert_eq!(cached_with_limit(&objects, 3).unwrap().get().len(), 1, "{kids}");
+        }
+    }
+
+    #[test]
+    fn malformed_root_keeps_existing_brute_force_repair() {
+        let objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Count 1 >>", "<< /Type /Page /MediaBox [0 0 40 40] /Contents [] >>"]
+            .map(str::to_string);
+        let repaired = cached_with_limit(&objects, 1).unwrap();
+        assert_eq!(repaired.get().len(), 1);
+        assert_eq!(repaired.get()[0].raw().obj_id().unwrap().obj_number, 3);
+    }
+}
+
+#[cfg(test)]
+mod resources_scope_tests {
+    use super::Resources;
+    use crate::object::{Dict, FromBytes, Name};
+    use crate::reader::ReaderContext;
+
+    #[test]
+    fn explicit_scope_replaces_all_categories_and_absence_inherits() {
+        let enclosing = Dict::from_bytes(b"<< /Font << /F << /BaseFont /Helvetica >> >> /ExtGState << /G << /CA 0.5 >> >> >>").unwrap();
+        let parent = Resources::new(enclosing, None, ReaderContext::dummy_ref());
+        let font = Name::from_bytes(b"/F").unwrap();
+        let state = Name::from_bytes(b"/G").unwrap();
+        let inherited = Resources::from_scope(None, parent.clone());
+        assert!(inherited.get_font(&font).is_some());
+        assert!(inherited.get_ext_g_state(&state).is_some());
+
+        for bytes in [b"<< >>".as_slice(), b"<< /ProcSet [/PDF] >>", b"<< /Font << /Other << /BaseFont /Courier >> >> >>"] {
+            let own = Resources::from_scope(Some(Dict::from_bytes(bytes).unwrap()), parent.clone());
+            assert!(own.get_font(&font).is_none(), "an explicit scope must not borrow a font");
+            assert!(own.get_ext_g_state(&state).is_none(), "nor another missing resource category");
+            assert!(own.parent().is_none());
         }
     }
 }

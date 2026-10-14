@@ -129,12 +129,13 @@ impl<'a> Iterator for ArrayIter<'a> {
         self.reader.skip_white_spaces_and_comments();
 
         if !self.reader.at_end() {
-            // Objects are already guaranteed to be valid.
-            let item = self
-                .reader
-                .read_with_context::<MaybeRef<Object<'_>>>(&self.ctx)
-                .unwrap();
-            return Some(item);
+            // Validation and object parsing can differ on malformed input. End
+            // iteration on failure rather than relying on that parser invariant.
+            let item = self.reader.read_with_context::<MaybeRef<Object<'_>>>(&self.ctx);
+            if item.is_none() {
+                self.reader.jump_to_end();
+            }
+            return item;
         }
 
         None
@@ -333,6 +334,27 @@ mod tests {
         Reader::new(data)
             .read_with_context::<Array<'_>>(&ReaderContext::new(XRef::dummy(), false))
             .map(|a| a.raw_iter().collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn raw_iteration_accepts_standalone_plus_and_preserves_later_items() {
+        // The array validator accepts '+', but the old Number reader rejected it,
+        // making raw iteration panic before reaching the following number.
+        for bytes in [b"[+ 3]".as_slice(), b"[- 3]", b"[. 3]", b"[+. 3]", b"[-. 3]"] {
+            let values = array_ref_impl(bytes).unwrap();
+            assert_eq!(values.len(), 2);
+            assert!(matches!(values[0], MaybeRef::NotRef(Object::Number(n)) if n.as_i64() == 0));
+            assert!(matches!(values[1], MaybeRef::NotRef(Object::Number(n)) if n.as_i64() == 3));
+        }
+    }
+
+    #[test]
+    fn raw_iteration_ends_on_object_parse_failure_without_panicking() {
+        // Exercise the defensive branch directly, independently of validation.
+        let mut iter = super::ArrayIter::new(b"+abc 3", ReaderContext::dummy_ref());
+        assert!(iter.next().is_none());
+        assert!(iter.reader.at_end());
+        assert!(iter.next().is_none());
     }
 
     #[test]

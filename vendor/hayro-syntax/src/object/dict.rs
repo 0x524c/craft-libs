@@ -379,9 +379,16 @@ fn parse_dict_with<'a, F>(
 where
     F: FnMut(Name<'a>, usize, &Reader<'a>) -> Option<()>,
 {
-    r.enter_container()?;
+    // An inline image dictionary has no enclosing << >> pair; count only actual
+    // containers. Its array/dictionary operands still enter the same depth guard.
+    let container = start_tag.is_some();
+    if container {
+        r.enter_container()?;
+    }
     let result = parse_dict_with_inner(r, ctx, start_tag, end_tag, on_entry);
-    r.leave_container();
+    if container {
+        r.leave_container();
+    }
     result
 }
 
@@ -475,6 +482,15 @@ mod lazy_index_tests {
     use super::*;
     use crate::object::{Array, FromBytes};
     use alloc::string::String;
+
+    #[test]
+    fn inline_image_operands_count_only_their_actual_containers() {
+        for depth in [63, 64, 65] {
+            let data = format!("/Value {}0{} ID", "[".repeat(depth), "]".repeat(depth));
+            let mut reader = Reader::new(data.as_bytes());
+            assert_eq!(InlineImageDict::read(&mut reader, &ReaderContext::dummy()).is_some(), depth <= 64);
+        }
+    }
 
     fn entries() -> String {
         let mut data = String::new();

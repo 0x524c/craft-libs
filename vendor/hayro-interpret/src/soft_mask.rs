@@ -33,6 +33,21 @@ pub enum MaskType {
 pub struct TransferFunction(Function);
 
 impl TransferFunction {
+    /// Apply the transfer function to byte opacity values.
+    ///
+    /// Inputs and outputs use the same rounded 8-bit samples as the renderer. A function
+    /// that cannot evaluate a sample leaves it unchanged.
+    pub fn apply_to(&self, values: &mut [u8]) {
+        for value in values {
+            if let Some(output) = self.0.eval(smallvec![f32::from(*value) / 255.0])
+                .and_then(|v| v.first().copied())
+                .filter(|output| output.is_finite())
+            {
+                *value = (output.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+            }
+        }
+    }
+
     /// Apply the transfer function to the given value.
     ///
     /// The input value needs to be between 0 and 1 and the return value is
@@ -211,4 +226,58 @@ fn resources_cache_key(resources: &Resources<'_>) -> u128 {
         resources.shadings.obj_id(),
     );
     hash128(&(local, resources.parent().map(resources_cache_key)))
+}
+
+#[cfg(test)]
+mod transfer_tests {
+    use super::*;
+    use hayro_syntax::object::FromBytes;
+
+    fn transfer(bytes: &[u8]) -> TransferFunction {
+        let dict = Dict::from_bytes(bytes).expect("synthetic function dictionary");
+        TransferFunction(Function::new(&Object::Dict(dict)).expect("synthetic function"))
+    }
+
+    #[test]
+    fn byte_transfer_rounds_near_equal_endpoints() {
+        let function = transfer(b"<< /FunctionType 2 /Domain [0 1] /C0 [0.5001] /C1 [0.5] /N 1 >>");
+        assert!(function.apply(0.0) > function.apply(1.0));
+        let mut ends = [0, 255];
+        function.apply_to(&mut ends);
+        assert_eq!(ends, [128, 128], "sub-byte differences do not invert a byte mask");
+    }
+
+    #[test]
+    fn byte_transfer_preserves_identity_and_maps_inversion() {
+        for (function, expected) in [
+            (b"<< /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >>".as_slice(), [0, 1, 127, 128, 254, 255]),
+            (b"<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>".as_slice(), [255, 254, 128, 127, 1, 0]),
+        ] {
+            let mut values = [0, 1, 127, 128, 254, 255];
+            transfer(function).apply_to(&mut values);
+            assert_eq!(values, expected);
+        }
+    }
+
+    #[test]
+    fn byte_transfer_keeps_a_sample_when_the_function_has_no_output() {
+        let function = transfer(b"<< /FunctionType 2 /Domain [0 1] /C0 [] /C1 [] /N 1 >>");
+        let mut values = [0, 17, 127, 255];
+        function.apply_to(&mut values);
+        assert_eq!(values, [0, 17, 127, 255]);
+    }
+
+    #[test]
+    fn byte_transfer_keeps_samples_when_malformed_functions_are_not_finite() {
+        // Fractional powers of a negative domain produce NaN; finite coefficients can
+        // also overflow during interpolation. Neither is a byte opacity value.
+        for bytes in [
+            b"<< /FunctionType 2 /Domain [-1 -0.5] /C0 [0] /C1 [1] /N 0.5 >>".as_slice(),
+            b"<< /FunctionType 2 /Domain [0 1] /C0 [-300000000000000000000000000000000000000] /C1 [300000000000000000000000000000000000000] /N 1 >>",
+        ] {
+            let mut values = [0, 17, 127, 255];
+            transfer(bytes).apply_to(&mut values);
+            assert_eq!(values, [0, 17, 127, 255]);
+        }
+    }
 }

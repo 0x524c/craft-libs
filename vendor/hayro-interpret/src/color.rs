@@ -1183,3 +1183,23 @@ pub(crate) trait ToRgb {
         ))
     }
 }
+
+#[cfg(test)]
+mod device_color_compatibility_tests {
+    use super::ColorSpace;
+
+    #[test]
+    fn device_rgb_rounds_components_and_opacity_to_bytes() {
+        let space = ColorSpace::device_rgb();
+        assert_eq!(space.to_rgba(&[0.0, 0.5, 1.0], 0.5, false).to_rgba8(), [0, 128, 255, 128]);
+        assert_eq!(space.to_rgba(&[-1.0, 2.0, f32::NAN], 1.0, false).to_rgba8(), [0, 255, 0, 255]);
+        assert_eq!(space.to_rgba(&[0.5], 1.0, false).to_rgba8(), [128, 0, 0, 255]);
+    }
+
+    #[test]
+    fn device_gray_uses_the_same_rounding_and_missing_component_default() {
+        let space = ColorSpace::device_gray();
+        assert_eq!(space.to_rgba(&[0.5], 0.5, false).to_rgba8(), [128, 128, 128, 128]);
+        assert_eq!(space.to_rgba(&[], 1.0, false).to_rgba8(), [0, 0, 0, 255]);
+    }
+}

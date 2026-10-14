@@ -19,6 +19,28 @@ the transferred decoder patches.
 Synthetic unit tests cover these boundaries; two version tests and the introductory doctest
 use synthetic PDFs so they do not rely on the absent upstream corpus. No corpus is copied.
 
+Compatibility patches follow the resource scopes and text-showing order in
+[Hayro 0.8.0, revision ea9c81dc70cde40c64205986fdcfcd481fe934d8](https://github.com/LaurenzV/hayro/tree/ea9c81dc70cde40c64205986fdcfcd481fe934d8),
+under the same MIT OR Apache-2.0 licence. Explicit page and nested-object resource
+dictionaries replace the enclosing dictionary as a whole. Missing Form resources inherit
+the caller; tiling patterns use only their own resources. Direct arrays and dictionaries
+are limited to 64 levels in raw and decoded content. Page-tree traversal is iterative,
+retains cycle detection and inheritance, and fails closed when its 100,000-entry work
+budget or a fallible frame/page allocation fails. Text-showing operations fill the
+whole run before stroking it, including strings separated by adjustments in `TJ`.
+The implementation replays bounded source operands without allocating a glyph buffer.
+The existing Type 3 single-paint behavior and incomplete-content diagnostics remain.
+Raw array iteration now ends safely if validation and object parsing disagree;
+standalone sign tokens retain the reader's zero tolerance.
+Byte transfer-function samples use rounded 8-bit values; failed or non-finite evaluations
+leave the sample unchanged. Historical source hashes remain in each `SOURCE.json`,
+alongside local hashes and the compatibility reference.
+
+This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
+floating component precision and codec versions, rather than claiming full 0.8
+equivalence. The independent color oracles, backend tests and facade contracts cover
+these retained policies separately from the compatibility changes.
+
 All other source and asset files remain unchanged. Upstream licence texts, Foxit/PDFium
 standard-14 fonts and the CMYK ICC profile are retained. Attribution is in the root NOTICE
 and ATTRIBUTION.md. The removed LAB.icc profile remains absent. Lopdf is not part of this

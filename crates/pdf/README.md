@@ -60,6 +60,16 @@ The shared reader vendors the current patched Hayro trees from PdfCraft revision
 [`vendor/README.craft-reader.md`](../../vendor/README.craft-reader.md) for the transfer and
 local patches. Lopdf, COS editing, inspection fallback and application caches remain app-owned.
 
+The patched 0.7 reader also carries focused compatibility changes from Hayro 0.8:
+whole-dictionary resource scopes, a 64-level direct-container limit, whole-run text
+fill/stroke order and byte transfer-function sampling. It retains the existing Lab
+Bradford and floating-color behavior, Type 3 handling, decoding limits and streaming
+completion diagnostics. Iterative page-tree traversal preserves deep valid trees and
+valid siblings around cycles, with a 100,000-entry work budget that fails closed rather
+than exposing a partial page list. These changes do not imply full equivalence to the 0.8 backend;
+the vendor notes record the boundaries. Existing consumers remain on their immutable
+revision until they explicitly adopt a new one.
+
 Consumers pin `craft-pdf` and their required root `[patch.crates-io]` entries to the same full
 `https://github.com/storytold/craft-libs` revision. Cargo ignores dependency-local patches.
 Reader consumers patch `hayro-syntax`, `hayro-interpret` and `hayro-jbig2`; raster consumers

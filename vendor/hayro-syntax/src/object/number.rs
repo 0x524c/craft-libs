@@ -113,7 +113,9 @@ impl Readable<'_> for Number {
 
 #[inline(always)]
 fn read_inner(r: &mut Reader<'_>) -> Option<Number> {
-    let negative = match r.peek_byte()? {
+    let first = r.peek_byte()?;
+    let has_sign = matches!(first, b'+' | b'-');
+    let negative = match first {
         b'-' => {
             r.forward();
             true
@@ -164,17 +166,17 @@ fn read_inner(r: &mut Reader<'_>) -> Option<Number> {
         }
     }
 
-    if !has_digits {
-        if negative || has_dot {
-            // Treat numbers like just `-`, `+` or `-.` as zero.
-            return Some(Number(InternalNumber::Integer(0)));
-        }
+    // See issue 994. Don't accept numbers that are followed by a regular character
+    // without any white space in-between. Check tolerant zero tokens as well.
+    if r.peek_byte().is_some_and(is_regular_character) {
         return None;
     }
 
-    // See issue 994. Don't accept numbers that are followed by a regular character
-    // without any white space in-between.
-    if r.peek_byte().is_some_and(is_regular_character) {
+    if !has_digits {
+        if has_sign || has_dot {
+            // Treat numbers like just `-`, `+` or `-.` as zero, consistently with skip.
+            return Some(Number(InternalNumber::Integer(0)));
+        }
         return None;
     }
 
@@ -347,6 +349,29 @@ mod tests {
     use crate::object::Number;
     use crate::reader::Reader;
     use crate::reader::ReaderExt;
+
+    #[test]
+    fn tolerant_signed_and_dot_zero_tokens_match_skip() {
+        for token in ["+", "-", ".", "+.", "-.", "0", "+0", "-0", "0.", "+0.", "-0."] {
+            let bytes = format!("{token} 3");
+            let mut skipped = Reader::new(bytes.as_bytes());
+            assert!(skipped.skip::<Number>(false).is_some(), "{token}");
+            let mut read = Reader::new(bytes.as_bytes());
+            assert_eq!(read.read_without_context::<Number>().unwrap().as_f64(), 0.0, "{token}");
+            assert_eq!(read.offset(), token.len(), "{token}");
+            assert_eq!(read.offset(), skipped.offset(), "{token}");
+        }
+    }
+
+    #[test]
+    fn tolerant_zero_tokens_still_require_number_terminators() {
+        for token in ["+abc", "-abc", ".abc", "+.abc", "-.abc", "+1abc", "-1abc", "1.2abc"] {
+            let mut read = Reader::new(token.as_bytes());
+            assert!(read.read_without_context::<Number>().is_none(), "{token}");
+            assert_eq!(read.offset(), 0, "failed reads restore their offset");
+            assert!(Reader::new(token.as_bytes()).skip::<Number>(false).is_none(), "{token}");
+        }
+    }
 
     #[test]
     fn int_1() {

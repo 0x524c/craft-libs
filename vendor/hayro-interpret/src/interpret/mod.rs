@@ -715,17 +715,7 @@ fn interpret_window<'a>(
                     .map(TextStateFont::Fallback);
                 }
 
-                for obj in s.0.iter::<Object<'_>>() {
-                    match obj {
-                        Object::Number(num) => {
-                            context.get_mut().text_state.apply_adjustment(num.as_f32());
-                        }
-                        Object::String(text) => {
-                            text::show_text_string(context, device, resources, &text);
-                        }
-                        _ => {}
-                    }
-                }
+                text::show_text_array(context, device, resources, s.0);
             }
             TypedInstruction::HorizontalScaling(h) => {
                 context.get_mut().text_state.horizontal_scaling = h.0.as_f32();

@@ -182,7 +182,7 @@
       "path": "src/color.rs",
       "source_sha256": "c78cad4124e7bb203e0763f6bea36c542280fd0a8abfa3f7b3ea0bd728adb73b",
       "source_git_blob": "dd2edf241d60f146ddb8ea4cbd4ad12a127fa0a7",
-      "sha256": "c78cad4124e7bb203e0763f6bea36c542280fd0a8abfa3f7b3ea0bd728adb73b"
+      "sha256": "bc9b67008e8f7e5ba7bd96a9b49b6ec5d2818eedc44e003212342d8bc259cc36"
     },
     {
       "path": "src/context.rs",
@@ -320,7 +320,7 @@
       "path": "src/font/type3.rs",
       "source_sha256": "257f7a2c8780c8e565f46dfd7dd1e3d50bef1e2c44aae5777994addb0ca26d62",
       "source_git_blob": "ccfeeb766472f16f15b04710bab711f669b94adf",
-      "sha256": "257f7a2c8780c8e565f46dfd7dd1e3d50bef1e2c44aae5777994addb0ca26d62"
+      "sha256": "5bd99e9a219c4ed437f964b3b81e10381ad4f0bfdee8b2f9be1a6d3940fcd9b4"
     },
     {
       "path": "src/function/mod.rs",
@@ -344,7 +344,7 @@
       "path": "src/function/type3.rs",
       "source_sha256": "2153a517d8365fabf8b43d867572d7463cabcdbcdee28eea7f23e122af1bd0cc",
       "source_git_blob": "37950f89c912865e05d849526dbf0c04d4439099",
-      "sha256": "2153a517d8365fabf8b43d867572d7463cabcdbcdee28eea7f23e122af1bd0cc"
+      "sha256": "53a0000544aa56cc753d02ccdead174f61cfae2ff92ac60d87b5144ff4232115"
     },
     {
       "path": "src/function/type4.rs",
@@ -362,7 +362,7 @@
       "path": "src/interpret/mod.rs",
       "source_sha256": "2b286df0c34b8194e1bdd1b63c1e08354d24f8389958fd782f42e2cabf364673",
       "source_git_blob": "931b3388cef188cee0a5a1d495b69a6ff04f5e51",
-      "sha256": "2b286df0c34b8194e1bdd1b63c1e08354d24f8389958fd782f42e2cabf364673"
+      "sha256": "6ae30906c8e6d0e869e0fac8ece4d97e0ac08d8abd7042c0242a069d4e609351"
     },
     {
       "path": "src/interpret/path.rs",
@@ -380,7 +380,7 @@
       "path": "src/interpret/text.rs",
       "source_sha256": "35eafa80147aea635bdef127c33ace20e1695e11e87c7bfe1e035c886806ff30",
       "source_git_blob": "ddec0400ea7a639c14769ac9ee7e137d000b3efd",
-      "sha256": "35eafa80147aea635bdef127c33ace20e1695e11e87c7bfe1e035c886806ff30"
+      "sha256": "239ca1ac3ad2a34bfce3d70935ea3483dbb5c5a689c44cd7c5a22693dab51b75"
     },
     {
       "path": "src/lib.rs",
@@ -404,7 +404,7 @@
       "path": "src/pattern.rs",
       "source_sha256": "17b49a465275c20e6645dea9443f2cb3a64c594925fd860e74b80b44d5344e37",
       "source_git_blob": "9295f51709f8915951d7b9afca9411651d65a1f8",
-      "sha256": "17b49a465275c20e6645dea9443f2cb3a64c594925fd860e74b80b44d5344e37"
+      "sha256": "24ac7a1cfd9a55b7d40d572120f52743bd390fab0007603aec64034ae7d2fd23"
     },
     {
       "path": "src/shading.rs",
@@ -416,7 +416,7 @@
       "path": "src/soft_mask.rs",
       "source_sha256": "6cd9c59c0cff580879c1f06ff40f3537c04b719bdb3ea59008fa1ab7559db5dd",
       "source_git_blob": "4d97d565b53c820fa927fbba8c3dda6acead7f34",
-      "sha256": "6cd9c59c0cff580879c1f06ff40f3537c04b719bdb3ea59008fa1ab7559db5dd"
+      "sha256": "780ffbf73567a7ae33f2fb673676840e0a29cb6b59f1d8b625034f42c4d17a22"
     },
     {
       "path": "src/types.rs",
@@ -434,7 +434,35 @@
       "path": "src/x_object.rs",
       "source_sha256": "b325843a8f4088cdb1cc1d471971bd88932fb1e538d06a20a1cc2bee138d5624",
       "source_git_blob": "68d97d55554888b9afe6c16d08ab2cbaca61924e",
-      "sha256": "b325843a8f4088cdb1cc1d471971bd88932fb1e538d06a20a1cc2bee138d5624"
+      "sha256": "93539c173b193aa740aa7a839ec05c9676a89cbee404726767cf82b63f19bda6"
     }
+  ],
+  "compatibility_reference": {
+    "repository": "https://github.com/LaurenzV/hayro",
+    "revision": "ea9c81dc70cde40c64205986fdcfcd481fe934d8",
+    "version": "0.8.0",
+    "license": "Apache-2.0 OR MIT",
+    "archive_sha256": "ac9df074ff163a63864cec9b0bf640ccbff8abf4e44481df7369ce0ac172ffbe",
+    "reference_files": [
+      "src/x_object/form.rs",
+      "src/font/type3.rs",
+      "src/pattern.rs",
+      "src/interpret/text.rs",
+      "src/interpret/mod.rs",
+      "src/function/mod.rs",
+      "src/color/mod.rs"
+    ],
+    "changes": [
+      "Use whole-dictionary resource scopes for forms, Type 3 procedures and tiling patterns.",
+      "Paint the entire Tj or TJ fill pass before its stroke pass by bounded source replay, retaining the existing Device API.",
+      "Add rounded byte transfer evaluation with identity fallback on failed or non-finite samples."
+    ],
+    "preserved": [
+      "Existing Type 3 single-paint rendering-mode behavior, font handling, incomplete-content diagnostics and interpreter budgets.",
+      "Existing Bradford Lab conversion and full-precision calibrated and tint color conversion; no LAB.icc asset or broad color backend replacement."
+    ]
+  },
+  "local_test_updates": [
+    "Adjust direct stitching-function fixtures to the 32/33-function boundary imposed by the 64-container syntax cap and independently test unchanged 64/65-function construction limits with indirect references."
   ]
 }
