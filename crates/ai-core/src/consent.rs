@@ -5,7 +5,8 @@
 //! recorded in a [`ConsentLedger`] per app, connection, destination and capability, for the kinds
 //! of data it named, and optionally until a time. A configured connection never authorises an app
 //! by itself: pointing a connection at a different host, asking for a different capability or
-//! letting a timed agreement lapse all ask again. Records saved before capabilities were scoped
+//! letting a timed agreement lapse all ask again. Each kind of data lapses on its own: renewing
+//! text does not renew an image permission that has run out. Records saved before capabilities were scoped
 //! cover nothing, so they ask once more. The clock is the caller's (unix seconds). Local
 //! connections never need consent. The disclosure names exactly what this app sends, which is why
 //! consent stays in the app even when the key came from the launcher.
@@ -75,7 +76,9 @@ impl Disclosure {
     }
 }
 
-/// One saved agreement.
+/// One saved agreement: the kinds of data it covers, all lapsing together. Agreeing to a kind
+/// again moves it out of any record with a different expiry, so one kind's renewal never extends
+/// another's.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsentRecord {
     pub app: AppId,
@@ -117,8 +120,7 @@ impl ConsentLedger {
         if d.locality == Locality::Local {
             return false;
         }
-        let kinds = d.kinds();
-        !self.records.iter().any(|r| r.covers(d) && r.expires_at.is_none_or(|t| now < t) && kinds.iter().all(|k| r.kinds.contains(k)))
+        d.kinds().iter().any(|k| !self.records.iter().any(|r| r.covers(d) && r.expires_at.is_none_or(|t| now < t) && r.kinds.contains(k)))
     }
 
     /// Records agreement that holds until revoked.
@@ -131,18 +133,22 @@ impl ConsentLedger {
         self.record(d, Some(expires_at));
     }
 
-    /// Merges the kinds in `d` into the record for the same app, connection, destination and
-    /// capability. The latest agreement sets that record's expiry; other capabilities keep theirs.
+    /// Records the kinds in `d` with the given expiry for the same app, connection, destination
+    /// and capability. The latest agreement sets the expiry of the kinds it names; other kinds
+    /// and other capabilities keep theirs.
     fn record(&mut self, d: &Disclosure, expires_at: Option<u64>) {
         let kinds = d.kinds();
-        if let Some(r) = self.records.iter_mut().find(|r| r.covers(d)) {
+        for r in self.records.iter_mut().filter(|r| r.covers(d) && r.expires_at != expires_at) {
+            r.kinds.retain(|k| !kinds.contains(k));
+        }
+        self.records.retain(|r| !r.kinds.is_empty());
+        if let Some(r) = self.records.iter_mut().find(|r| r.covers(d) && r.expires_at == expires_at) {
             for k in kinds {
                 if !r.kinds.contains(&k) {
                     r.kinds.push(k);
                 }
             }
             r.kinds.sort();
-            r.expires_at = expires_at;
         } else {
             self.records.push(ConsentRecord {
                 app: d.app.clone(),
@@ -310,6 +316,32 @@ mod tests {
         ledger.grant_until(&disclosure_for(&upscale_req()), 1_000);
         assert!(!ledger.needs_consent(&disclosure_for(&req()), 5_000));
         assert!(ledger.needs_consent(&disclosure_for(&upscale_req()), 5_000));
+    }
+
+    fn text_only_req() -> Request {
+        Request::new(CapabilityId::parse("image.inpaint").unwrap()).with_input(InputRole::Prompt, Payload::text("a cat"))
+    }
+
+    #[test]
+    fn renewing_text_does_not_renew_an_expired_image_permission() {
+        let mut ledger = ConsentLedger::default();
+        ledger.grant_until(&disclosure_for(&req()), 1_000);
+        let text = disclosure_for(&text_only_req());
+        assert!(ledger.needs_consent(&text, 2_000));
+        ledger.grant_until(&text, 5_000);
+        assert!(!ledger.needs_consent(&text, 2_000));
+        assert!(ledger.needs_consent(&disclosure_for(&req()), 2_000), "image consent lapsed at 1000 and was not renewed");
+    }
+
+    #[test]
+    fn renewing_one_kind_leaves_the_others_on_their_own_expiry() {
+        let mut ledger = ConsentLedger::default();
+        ledger.grant_until(&disclosure_for(&req()), 1_000);
+        ledger.grant(&disclosure_for(&text_only_req()));
+        let both = disclosure_for(&req());
+        assert!(!ledger.needs_consent(&both, 999));
+        assert!(ledger.needs_consent(&both, 1_000));
+        assert!(!ledger.needs_consent(&disclosure_for(&text_only_req()), u64::MAX));
     }
 
     #[test]

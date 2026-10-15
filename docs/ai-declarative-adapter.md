@@ -108,7 +108,7 @@ live in the wasm-safe model crate so the launcher can check a spec as it is past
 
 ## Where it sits
 
-- `ai-model`: `spec.rs`, the types and the pure validator (wasm-safe, so the launcher can validate
+- `ai-core`: `spec.rs`, the types and the pure validator (wasm-safe, so the launcher can validate
   live). No I/O.
 - New native crate `craft-ai-declarative`: the runner that implements `Provider`, with the HTTP
   layer copied in shape from `craft-ai-bfl` (no redirects, redacted errors, capped bodies).
@@ -155,9 +155,9 @@ tests), none above 500.
 
 ## As built (13/10/2026)
 
-Code: `crates/ai-model/src/spec.rs` and `spec/` (types, checker, substitutions; wasm-safe),
+Code: `crates/ai-core/src/spec.rs` and `spec/` (types, checker, substitutions; wasm-safe),
 `crates/ai-declarative` (the runner), `crates/ai-client/src/declarative.rs` (the factory entry).
-Tests: `ai-model/tests/spec_*.rs`, `ai-declarative/tests/{queue,direct}.rs`,
+Tests: `ai-core/tests/spec_*.rs`, `ai-declarative/tests/{queue,direct}.rs`,
 `ai-client/tests/declarative.rs`. Deliberate-bug cases: group `u2` in
 `docs/research/phase2d/mutation_check.py` (cases in `mutation_u2.py`).
 

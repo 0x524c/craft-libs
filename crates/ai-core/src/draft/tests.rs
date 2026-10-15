@@ -175,6 +175,35 @@ fn models_follow_the_address() {
 }
 
 #[test]
+fn models_found_at_the_new_address_are_kept() {
+    let saved = saved_openai();
+    let found = vec![ModelInfo::new(crate::ids::ModelId::new("llama-x").unwrap(), "Llama X")];
+    let mut moved = ConnectionDraft::from_connection(&saved);
+    moved.endpoint = "https://other.example.com/v1".into();
+    moved.models = found.clone();
+    assert_eq!(moved.prepare(std::slice::from_ref(&saved)).unwrap().connection.models, found);
+}
+
+#[test]
+fn a_retest_that_finds_the_same_models_keeps_them() {
+    let saved = saved_openai();
+    let mut moved = ConnectionDraft::from_connection(&saved);
+    moved.endpoint = "https://other.example.com/v1".into();
+    moved.set_models(saved.models.clone());
+    assert_eq!(moved.prepare(std::slice::from_ref(&saved)).unwrap().connection.models, saved.models);
+}
+
+#[test]
+fn models_found_before_the_address_changed_are_dropped() {
+    let saved = saved_openai();
+    let found = vec![ModelInfo::new(crate::ids::ModelId::new("llama-x").unwrap(), "Llama X")];
+    let mut d = ConnectionDraft::from_connection(&saved);
+    d.set_models(found);
+    d.endpoint = "https://other.example.com/v1".into();
+    assert!(d.prepare(std::slice::from_ref(&saved)).unwrap().connection.models.is_empty());
+}
+
+#[test]
 fn editing_something_removed_elsewhere_is_an_error() {
     let saved = saved_openai();
     let d = ConnectionDraft::from_connection(&saved);

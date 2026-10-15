@@ -515,7 +515,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "craft-ai-model"
+name = "craft-ai-core"
 version = "0.1.0"
 dependencies = [
  "serde",

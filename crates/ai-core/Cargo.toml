@@ -1,5 +1,5 @@
 [package]
-name = "craft-ai-model"
+name = "craft-ai-core"
 description = "Shared data model for AI connections, roles, requests and jobs across the Craft apps"
 version.workspace = true
 edition.workspace = true
