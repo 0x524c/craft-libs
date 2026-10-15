@@ -572,14 +572,17 @@ fn parse_curve(d: &[u8]) -> Result<(Curve, usize), CmsError> {
     match r.slice(0, 4)? {
         b"curv" => {
             let n = r.u32(8)? as usize;
+            // Bounded before it is used: `n * 2` is computed next, and a count straight from the
+            // file overflows a 32-bit `usize` (wasm32) with overflow checks on, panicking before
+            // this guard could reject it.
+            if n > 1 << 20 {
+                return Err(CmsError::Invalid("curve too long".into()));
+            }
             let len = 12 + n * 2;
             match n {
                 0 => Ok((Curve::Identity, len)),
                 1 => Ok((Curve::Gamma(r.u16(12)? as f64 / 256.0), len)),
                 _ => {
-                    if n > 1 << 20 {
-                        return Err(CmsError::Invalid("curve too long".into()));
-                    }
                     let s = r.slice(12, n * 2)?;
                     let t = s.as_chunks::<2>().0.iter().map(|c| u16::from_be_bytes([c[0], c[1]]) as f32 / 65535.0).collect();
                     Ok((Curve::Table(t), len))
@@ -775,7 +778,10 @@ fn parse_text(d: &[u8]) -> String {
             let (Ok(n), Ok(size)) = (r.u32(8), r.u32(12)) else { return String::new() };
             let mut best: Option<(usize, usize)> = None;
             for k in 0..(n as usize).min(256) {
-                let o = 16 + k * size as usize;
+                // Checked: the record size comes from the file, and `16 + k * size` overflows a
+                // 32-bit `usize` at k = 1 for a size near u32::MAX (wrapping would read another
+                // record's bytes as the language, length and offset).
+                let Some(o) = k.checked_mul(size as usize).and_then(|k| 16usize.checked_add(k)) else { break };
                 let (Ok(lang), Ok(len), Ok(off)) = (r.u16(o), r.u32(o + 4), r.u32(o + 8)) else { break };
                 if best.is_none() || lang == u16::from_be_bytes(*b"en") {
                     best = Some((off as usize, len as usize));
@@ -790,5 +796,31 @@ fn parse_text(d: &[u8]) -> String {
             String::from_utf16_lossy(&units).trim_end_matches('\0').trim().to_string()
         }
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The count from a `curv` tag must be bounded before `12 + n * 2` is computed: on a 32-bit
+    /// target the multiplication panics with overflow checks on, which is what the guard exists
+    /// to prevent. Green on a 64-bit host either way; fails before the fix on a 32-bit build.
+    #[test]
+    fn a_curve_count_is_bounded_before_it_is_multiplied() {
+        let mut d = b"curv\0\0\0\0".to_vec();
+        d.extend_from_slice(&u32::MAX.to_be_bytes());
+        assert!(parse_curve(&d).is_err());
+    }
+
+    /// Same for the `mluc` record table: `16 + k * size` with a size from the file overflows a
+    /// 32-bit `usize` at k = 1.
+    #[test]
+    fn an_mluc_record_offset_is_computed_checked() {
+        let mut d = b"mluc\0\0\0\0".to_vec();
+        d.extend_from_slice(&2u32.to_be_bytes());
+        d.extend_from_slice(&u32::MAX.to_be_bytes());
+        d.extend_from_slice(&[0u8; 12]);
+        assert!(parse_text(&d).is_empty());
     }
 }
