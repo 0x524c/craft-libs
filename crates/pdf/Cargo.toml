@@ -1,6 +1,6 @@
 [package]
 name = "craft-pdf"
-description = "Shared optional PDF writing primitives for Craft apps"
+description = "Shared PDF reading, rendering and optional writing for Craft apps"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,11 +12,18 @@ workspace = true
 
 [features]
 default = []
+read = ["dep:hayro-syntax", "dep:thiserror"]
+interpret = ["read", "dep:hayro-interpret"]
+raster = ["interpret", "dep:hayro", "dep:bytemuck"]
 write = ["dep:krilla", "dep:thiserror"]
 write-pdf = ["write", "krilla/pdf"]
 write-simple-text = ["write", "krilla/simple-text"]
 
 [dependencies]
+hayro-syntax = { workspace = true, optional = true }
+hayro-interpret = { workspace = true, optional = true }
+hayro = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
 krilla = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 
