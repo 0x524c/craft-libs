@@ -42,6 +42,18 @@ fn local_paths() {
             "file:/C|/x",
             "file:///C:/My%20Pictures/a.png",
             "file:img/a.png",
+            "file://C:/x",
+            "file://c|/x",
+            r"file:\\C:\x",
+            "file:///C:/caf%E9.png",
+            "file:///C:/%FF",
+            "chapter1:intro.png",
+            "notes:v2.pdf",
+            "ab:c",
+            "img/fig:1.png",
+            r"C:\\host\share",
+            r"./\\host\share\x",
+            r"C:\a\.b:c",
         ],
     );
 }
@@ -135,8 +147,16 @@ fn url_links() {
             "webdav://h/x",
             "mailto:a@b",
             "svn+ssh://h/x",
-            "ab:c",
             "file:http://h/x",
+            r"http:\\h\x",
+            "data:image/png;base64,AAAA",
+            "javascript:alert(1)",
+            "VBScript:x",
+            "ms-excel:ofe|u|https://h/x.xlsx",
+            "search-ms:query=x&crumb=location:\\\\h\\s",
+            "shell:startup",
+            "tel:123",
+            "news:comp.lang.rust",
         ],
     );
 }
@@ -155,7 +175,6 @@ fn invalid_paths() {
             "file:",
             "file:///C:/a%00b",
             "file:///C:/a%0Ab",
-            "file:///C:/%FF",
             r"C:\..\x",
             r"C:\a\..\..\x",
             "/..",
@@ -166,6 +185,21 @@ fn invalid_paths() {
             r"C:\a\.. \b",
             r"C:\a\...\b",
             "a/. /b",
+            "file://",
+            "file://localhost",
+            "file://?x",
+            "file:#x",
+            "file:///C:/%81",
+            "a\u{FF3C}b",
+            "\\\u{FF3C}h\\s",
+            "a\u{FF0F}b",
+            "a\u{2215}b",
+            "a\u{29F5}b",
+            "file:///C:/a%EF%BC%BCb",
+            "..:",
+            ".:x",
+            r"C:\a\..:x",
+            r"\\?\C:\a\..:x",
         ],
     );
 }
@@ -195,6 +229,13 @@ fn resolve_joins_relative_paths_to_the_document_folder() {
 
     let verbatim = Path::new(r"\\?\C:\docs\a.doc");
     assert_eq!(resolve("img/../x.png", Some(verbatim)).unwrap(), Path::new(r"\\?\C:\docs\x.png"));
+
+    assert_eq!(ok(r"C:..\x.png"), "C:/docs/x.png");
+    assert_eq!(ok(r"C:..\..\x.png"), "C:/x.png");
+    assert_eq!(resolve(r"C:..\..\x.png", Some(Path::new(r"C:\docs\a.doc"))), Err(Refused::Invalid));
+    assert_eq!(ok(r"./\\host\share\x.png"), "C:/docs/report/host/share/x.png");
+    assert_eq!(ok(r"C:\\host\share"), "C:/host/share");
+    assert_eq!(ok("chapter1:intro.png"), "C:/docs/report/chapter1:intro.png");
 
     assert_eq!(slashed(&resolve("img/x.png", None).unwrap()), "img/x.png");
     assert_eq!(slashed(&resolve("../x.png", None).unwrap()), "../x.png");
@@ -234,6 +275,13 @@ fn resolve_file_urls() {
     assert_eq!(ok("file:///D:/a%23b.png#frag"), "D:/a#b.png");
     assert_eq!(ok("file:img/x.png"), "C:/docs/img/x.png");
     assert_eq!(slashed(&resolve("file:///home/u/x.png", None).unwrap()), "/home/u/x.png");
+    assert_eq!(ok("file://C:/x.png"), "C:/x.png");
+    assert_eq!(ok("file://d|/x.png"), "d:/x.png");
+    assert_eq!(ok("file:///C:/caf%E9.png"), "C:/café.png");
+    assert_eq!(ok("file:///C:/caf%C3%A9.png"), "C:/café.png");
+    assert_eq!(ok("file:///C:/caf%E9/na%C3%AFve%80.png"), "C:/café/naïve€.png");
+    assert_eq!(resolve("file://localhost", Some(doc)), Err(Refused::Invalid));
+    assert_eq!(resolve("file://", Some(doc)), Err(Refused::Invalid));
 
     assert_eq!(resolve("file://host/s/x.png", Some(doc)), Err(Refused::Network));
     assert_eq!(resolve("file:%5C%5Chost%5Cs%5Cx.png", Some(doc)), Err(Refused::Network));

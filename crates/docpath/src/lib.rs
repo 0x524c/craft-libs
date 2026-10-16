@@ -17,6 +17,19 @@
 //! - [`resolve`] turns a stored path into the path to open, relative to the document, or a [`Refused`]
 //!   that says why it may not be opened.
 //!
+//! # Caller contract
+//!
+//! - Pass the document whenever there is one. Without it, a relative, root-relative or
+//!   drive-relative result depends on the process working directory, which can be a network share,
+//!   so refuse any result that is not absolute.
+//! - Hand the result to the filesystem through Rust `std` or wide (`W`) Windows APIs, and do not
+//!   percent-decode or normalise it again: an ANSI API or a second decoding pass can turn the
+//!   checked path into a different one.
+//! - On Windows, when the document was opened from a mapped drive, pass its UNC path instead if the
+//!   app can get it (`WNetGetConnectionW`), so links on the same share resolve as that share.
+//! - A lexical check cannot see mapped drives, `subst` drives, symlinks or junctions: a local-looking
+//!   path can still lead to another computer through them.
+//!
 //! ```
 //! use std::path::Path;
 //! use craft_docpath::{resolve, Refused};
@@ -39,9 +52,11 @@ pub enum PathKind {
     Network,
     /// A device or object-manager path: `\\.\…`, `\??\…`, `\\?\GLOBALROOT\…`, or a reserved name such as `NUL` or `COM1`.
     Device,
-    /// A URL with a scheme other than `file:`, such as `https:` or `ms-word:`.
+    /// A URL other than `file:`: `scheme://…`, or a scheme without a hierarchy such as `mailto:`,
+    /// `data:` or `ms-word:`. A relative name with a colon (`chapter1:intro.png`) is a path.
     Url,
-    /// Not a usable path: empty, containing control characters, or climbing above its root with `..`.
+    /// Not a usable path: empty, containing control characters or lookalike separators, a name made
+    /// of dots, or climbing above its root with `..`.
     Invalid,
 }
 
@@ -102,8 +117,10 @@ pub fn is_local(raw: &str) -> bool {
 ///
 /// `document` is the path of the document the link came from, if it has one. The steps:
 ///
-/// 1. A `file:` URL is percent-decoded and its scheme removed. Only an empty host or `localhost`
-///    is local; `file://host/…` is refused as [`Refused::Network`].
+/// 1. A `file:` URL is percent-decoded (as Windows-1252 where the escapes are not UTF-8) and its
+///    scheme removed. Only an empty host, `localhost` or a drive (`file://C:/x`) is local;
+///    `file://host/…` is refused as [`Refused::Network`], and a URL with no path as
+///    [`Refused::Invalid`].
 /// 2. A relative path is joined to the document's folder, a root-relative path (`\x`) to the
 ///    document's drive or share, and a drive-relative path (`C:x`) to the document's folder when the
 ///    document is on that drive. Without a document they are returned unresolved.
@@ -196,7 +213,7 @@ fn folder(mut comps: Vec<String>) -> impl Iterator<Item = String> {
 
 /// Reject control characters and non-file URLs; reduce a `file:` URL to its path.
 fn strip_url(raw: &str) -> Result<String, Refused> {
-    if raw.is_empty() || raw.chars().any(char::is_control) {
+    if raw.is_empty() || raw.chars().any(is_bad_char) {
         return Err(Refused::Invalid);
     }
     let path = match raw.get(..5) {
@@ -211,20 +228,35 @@ fn strip_url(raw: &str) -> Result<String, Refused> {
     Ok(path)
 }
 
-/// `scheme:` with a scheme of two or more characters, so a drive letter (`C:`) is not one.
+/// Control characters, and separator lookalikes that some code page best-fit mappings turn into
+/// `\` or `/` when a path reaches an ANSI API.
+fn is_bad_char(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{FF3C}' | '\u{FF0F}' | '\u{2215}' | '\u{29F5}')
+}
+
+/// A URL scheme: `name://` (or with `\`), or `name:` for a scheme without a hierarchy. The scheme
+/// has two or more characters, so a drive letter (`C:`) is not one.
 fn has_scheme(s: &str) -> bool {
-    let Some((scheme, _)) = s.split_once(':') else { return false };
+    const OPAQUE: [&str; 8] = ["mailto", "data", "javascript", "vbscript", "search-ms", "shell", "tel", "news"];
+    let Some((scheme, rest)) = s.split_once(':') else { return false };
     let mut chars = scheme.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+    let valid = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         && scheme.len() >= 2
-        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    if !valid {
+        return false;
+    }
+    let mut rest = rest.chars();
+    let hierarchical = matches!((rest.next(), rest.next()), (Some(a), Some(b)) if is_sep(a) && is_sep(b));
+    let scheme = scheme.to_ascii_lowercase();
+    hierarchical || scheme.starts_with("ms-") || OPAQUE.contains(&scheme.as_str())
 }
 
 /// The path of a `file:` URL (the part after `file:`).
 fn file_url_path(rest: &str) -> Result<String, Refused> {
     let rest = rest.split(['?', '#']).next().unwrap_or_default();
-    let decoded = percent_decode(rest)?;
-    if decoded.is_empty() || decoded.chars().any(char::is_control) {
+    let decoded = percent_decode(rest);
+    if decoded.is_empty() || decoded.chars().any(is_bad_char) {
         return Err(Refused::Invalid);
     }
     let mut chars = decoded.chars();
@@ -235,8 +267,18 @@ fn file_url_path(rest: &str) -> Result<String, Refused> {
                 Some(i) => after.split_at(i),
                 None => (after, ""),
             };
+            // `file://C:/x` and `file://C|/x` name the drive path `C:/x`.
+            let mut h = host.chars();
+            if let (Some(l), Some(':' | '|'), None) = (h.next(), h.next(), h.next())
+                && l.is_ascii_alphabetic()
+            {
+                return Ok(format!("{l}:{path}"));
+            }
             if !(host.is_empty() || host.eq_ignore_ascii_case("localhost")) {
                 return Err(Refused::Network);
+            }
+            if path.is_empty() {
+                return Err(Refused::Invalid);
             }
             path
         }
@@ -254,23 +296,43 @@ fn file_url_path(rest: &str) -> Result<String, Refused> {
     Ok(path.to_string())
 }
 
-fn percent_decode(s: &str) -> Result<String, Refused> {
-    let hex = |c: Option<u8>| c.and_then(|c| (c as char).to_digit(16)).and_then(|d| u8::try_from(d).ok());
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while let Some(&c) = bytes.get(i) {
-        if c == b'%'
-            && let (Some(h), Some(l)) = (hex(bytes.get(i + 1).copied()), hex(bytes.get(i + 2).copied()))
-        {
-            out.push((h << 4) | l);
-            i += 3;
-        } else {
-            out.push(c);
-            i += 1;
+/// Percent-decode a `file:` URL path. A run of escapes that is not UTF-8 is read as Windows-1252,
+/// which older Windows software used in file URLs; it maps 0x2F and 0x5C to `/` and `\` as UTF-8 does.
+fn percent_decode(s: &str) -> String {
+    let hex = |c: Option<&u8>| c.and_then(|&c| (c as char).to_digit(16)).and_then(|d| u8::try_from(d).ok());
+    let mut out = String::with_capacity(s.len());
+    let mut run: Vec<u8> = Vec::new();
+    let mut rest = s;
+    loop {
+        let bytes = rest.as_bytes();
+        if let (Some(b'%'), Some(h), Some(l)) = (bytes.first(), hex(bytes.get(1)), hex(bytes.get(2))) {
+            run.push((h << 4) | l);
+            rest = rest.get(3..).unwrap_or_default();
+            continue;
         }
+        match std::str::from_utf8(&run) {
+            Ok(text) => out.push_str(text),
+            Err(_) => out.extend(run.iter().map(|&b| windows_1252(b))),
+        }
+        run.clear();
+        let mut chars = rest.chars();
+        let Some(c) = chars.next() else { break };
+        out.push(c);
+        rest = chars.as_str();
     }
-    String::from_utf8(out).map_err(|_| Refused::Invalid)
+    out
+}
+
+/// Bytes 0x81, 0x8D, 0x8F, 0x90 and 0x9D are unassigned and map to C1 controls, which are refused.
+fn windows_1252(b: u8) -> char {
+    const HIGH: [char; 32] = [
+        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8D}', 'Ž', '\u{8F}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—',
+        '˜', '™', 'š', '›', 'œ', '\u{9D}', 'ž', 'Ÿ',
+    ];
+    match b {
+        0x80..=0x9F => HIGH.get(usize::from(b - 0x80)).copied().unwrap_or(char::REPLACEMENT_CHARACTER),
+        _ => char::from(b),
+    }
 }
 
 /// Split a plain path into its root and components. `check` applies the component rules
@@ -361,8 +423,7 @@ fn comps(s: &str, check: bool) -> Result<Vec<String>, Refused> {
                 if is_dos_device(c) {
                     return Err(Refused::Device);
                 }
-                // Windows trims trailing dots and spaces, so `.. ` or `...` could act as `..`.
-                if c != "." && c != ".." && c.chars().all(|ch| ch == '.' || ch == ' ') {
+                if is_dot_name(c) {
                     return Err(Refused::Invalid);
                 }
             }
@@ -385,9 +446,22 @@ fn verbatim_comps(s: &str, check: bool) -> Result<Vec<String>, Refused> {
         if check && is_dos_device(c) {
             return Err(Refused::Device);
         }
+        if check && is_dot_name(c) {
+            return Err(Refused::Invalid);
+        }
         out.push(c.to_string());
     }
     Ok(out)
+}
+
+/// A name of dots and spaces other than `.` and `..`, or `.`/`..` with a stream (`..:x`). Windows
+/// trims trailing dots and spaces, so `.. ` or `...` could act as `..`.
+fn is_dot_name(comp: &str) -> bool {
+    let (stem, stream) = match comp.split_once(':') {
+        Some((stem, _)) => (stem, true),
+        None => (comp, false),
+    };
+    !stem.is_empty() && stem.chars().all(|ch| ch == '.' || ch == ' ') && (stream || (stem != "." && stem != ".."))
 }
 
 /// A reserved DOS device name, with or without an extension, stream or trailing dots and spaces.
