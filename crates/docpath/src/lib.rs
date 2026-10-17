@@ -17,14 +17,16 @@
 //!
 //! - [`classify`] sorts a stored path into a [`PathKind`].
 //! - [`is_local`] is `classify(raw) == PathKind::Local`.
-//! - [`resolve`] turns a stored path into the path to open, relative to the document, or a [`Refused`]
-//!   that says why it may not be opened.
+//! - [`resolve_absolute`] turns a stored path into the absolute path to open, relative to the
+//!   document, or a [`Refused`] that says why it may not be opened. Use it to open files.
+//! - [`resolve`] is the same without the absolute check, for callers that only display or compare
+//!   the result.
 //!
 //! # Caller contract
 //!
 //! - Pass the document whenever there is one. Without it, a relative, root-relative or
-//!   drive-relative result depends on the process working directory, which can be a network share,
-//!   so refuse any result that is not absolute.
+//!   drive-relative result depends on the process working directory, which can be a network share;
+//!   [`resolve_absolute`] refuses such a result.
 //! - Hand the result to the filesystem through Rust `std` or wide (`W`) Windows APIs, and do not
 //!   percent-decode or normalise it again: an ANSI API or a second decoding pass can turn the
 //!   checked path into a different one.
@@ -35,12 +37,13 @@
 //!
 //! ```
 //! use std::path::Path;
-//! use craft_docpath::{resolve, Refused};
+//! use craft_docpath::{resolve, resolve_absolute, Refused};
 //!
 //! let doc = Path::new(r"\\server\share\docs\report.doc");
 //! assert!(resolve(r"img\logo.png", Some(doc)).is_ok());
 //! assert!(resolve(r"\\server\share\img\logo.png", Some(doc)).is_ok());
 //! assert_eq!(resolve(r"\\other\share\logo.png", Some(doc)), Err(Refused::Network));
+//! assert_eq!(resolve_absolute("img/logo.png", None), Err(Refused::Invalid));
 //! ```
 
 use std::fmt;
@@ -117,7 +120,20 @@ pub fn is_local(raw: &str) -> bool {
     classify(raw) == PathKind::Local
 }
 
-/// Turn a path or URL stored in a document into the path to open, or refuse it.
+/// Turn a path or URL stored in a document into the absolute path to open, or refuse it. This is
+/// the function to call before opening, reading or writing the file.
+///
+/// It is [`resolve`] followed by a check that the result is absolute on the running platform
+/// ([`Path::is_absolute`]); a result that is not, such as a relative link in a document that has
+/// no path yet, is refused as [`Refused::Invalid`]. On Unix, Windows-form results (`C:\x`,
+/// `\\server\share\x`) are not absolute and are refused too.
+pub fn resolve_absolute(raw: &str, document: Option<&Path>) -> Result<PathBuf, Refused> {
+    let path = resolve(raw, document)?;
+    if path.is_absolute() { Ok(path) } else { Err(Refused::Invalid) }
+}
+
+/// Turn a path or URL stored in a document into the path to open, or refuse it. The result may be
+/// relative; to open a file, use [`resolve_absolute`].
 ///
 /// `document` is the path of the document the link came from, if it has one. The steps:
 ///

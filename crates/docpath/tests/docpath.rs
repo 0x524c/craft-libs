@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use craft_docpath::{PathKind, Refused, classify, is_local, resolve};
+use craft_docpath::{PathKind, Refused, classify, is_local, resolve, resolve_absolute};
 
 fn check(kind: PathKind, cases: &[&str]) {
     for raw in cases {
@@ -319,6 +319,37 @@ fn resolve_refuses_device_documents_and_paths() {
     assert_eq!(resolve("x.png", Some(doc)), Err(Refused::Device));
     assert_eq!(resolve(r"C:\x.png", Some(doc)).unwrap(), Path::new(r"C:\x.png"));
     assert_eq!(resolve(r"\\.\pipe\x", Some(Path::new(r"C:\a.doc"))), Err(Refused::Device));
+}
+
+#[test]
+fn resolve_absolute_refuses_results_that_are_not_absolute() {
+    for raw in ["img/x.png", "../x.png", "x.png", "file:img/x.png"] {
+        assert!(resolve(raw, None).is_ok(), "{raw:?}");
+        assert_eq!(resolve_absolute(raw, None), Err(Refused::Invalid), "{raw:?}");
+    }
+    assert_eq!(resolve_absolute(r"\\h\s\x.png", None), Err(Refused::Network));
+    assert_eq!(resolve_absolute("https://h/x.png", None), Err(Refused::Url));
+
+    let unix = Path::new("/home/u/docs/a.doc");
+    let ok = |raw: &str, doc: Option<&Path>| slashed(&resolve_absolute(raw, doc).unwrap());
+    assert_eq!(ok("img/x.png", Some(unix)), "/home/u/docs/img/x.png");
+    assert_eq!(ok("../x.png", Some(unix)), "/home/u/x.png");
+    assert_eq!(ok("file:///home/u/x.png", None), "/home/u/x.png");
+
+    let win = Path::new(r"C:\docs\a.doc");
+    if cfg!(windows) {
+        assert_eq!(ok("img/x.png", Some(win)), "C:/docs/img/x.png");
+        assert_eq!(ok(r"C:\x.png", None), "C:/x.png");
+        assert_eq!(ok("file:///C:/x.png", None), "C:/x.png");
+        assert_eq!(ok(r"\\?\C:\x.png", None), "//?/C:/x.png");
+        assert_eq!(resolve_absolute(r"\x.png", None), Err(Refused::Invalid));
+        assert_eq!(resolve_absolute("C:x.png", None), Err(Refused::Invalid));
+        assert_eq!(resolve_absolute("D:x.png", Some(win)), Err(Refused::Invalid));
+    } else {
+        assert_eq!(ok("/x.png", None), "/x.png");
+        assert_eq!(resolve_absolute("img/x.png", Some(win)), Err(Refused::Invalid));
+        assert_eq!(resolve_absolute(r"C:\x.png", None), Err(Refused::Invalid));
+    }
 }
 
 #[test]
