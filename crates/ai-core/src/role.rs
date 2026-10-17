@@ -22,7 +22,7 @@ pub struct Role {
     pub id: RoleId,
     pub label: String,
     pub capability: CapabilityId,
-    /// Inputs this feature will send, so a model that cannot take them is not offered.
+    /// Inputs this feature will send. A model must accept them and require no others.
     #[serde(default)]
     pub inputs: Vec<InputRole>,
 }
@@ -52,6 +52,7 @@ pub enum ResolveError {
     ModelMissing { connection: ConnectionId, model: ModelId },
     CapabilityMismatch { model: ModelId, capability: CapabilityId },
     InputUnsupported { model: ModelId, input: InputRole },
+    InputRequired { model: ModelId, input: InputRole },
     ToolMismatch(RoleId),
 }
 
@@ -69,6 +70,9 @@ impl std::fmt::Display for ResolveError {
             }
             Self::InputUnsupported { model, input } => {
                 write!(f, "model {model} does not accept a '{input}' input")
+            }
+            Self::InputRequired { model, input } => {
+                write!(f, "model {model} requires a '{input}' input that this tool does not provide")
             }
             Self::ToolMismatch(id) => write!(f, "tool {id} does not match its shared definition"),
         }
@@ -94,14 +98,18 @@ pub fn resolve<'a>(role: &Role, layers: &[&[Binding]], connections: &'a [Connect
     if let Some(input) = role.inputs.iter().find(|i| !spec.accepts.contains_key(i)) {
         return Err(ResolveError::InputUnsupported { model: model.id.clone(), input: input.clone() });
     }
+    if let Some(input) = spec.requires.iter().find(|i| !role.inputs.contains(i)) {
+        return Err(ResolveError::InputRequired { model: model.id.clone(), input: input.clone() });
+    }
     Ok(Resolved { connection, model, spec })
 }
 
 /// What `model` can do for `role`: its spec for the role's capability, if it takes every input the
-/// role sends. `None` means the model cannot fill the role.
+/// role sends and the role supplies every input the model requires. `None` means the model
+/// cannot fill the role.
 pub fn fits<'a>(role: &Role, model: &'a ModelInfo) -> Option<&'a CapabilitySpec> {
     let spec = model.spec_for(&role.capability)?;
-    role.inputs.iter().all(|i| spec.accepts.contains_key(i)).then_some(spec)
+    (role.inputs.iter().all(|i| spec.accepts.contains_key(i)) && spec.requires.iter().all(|i| role.inputs.contains(i))).then_some(spec)
 }
 
 /// Every enabled connection's models that could fill `role`. This is the model picker's list.
@@ -185,6 +193,17 @@ mod tests {
         let conns = [conn("a", false)];
         let err = resolve(&role(), &[&[bind("a")]], &conns).unwrap_err();
         assert!(matches!(err, ResolveError::InputUnsupported { input: InputRole::Mask, .. }));
+    }
+
+    #[test]
+    fn a_required_input_the_role_cannot_supply_has_a_specific_error() {
+        let mut conns = [conn("a", true)];
+        conns[0].models[0].capabilities[0].requires = vec![InputRole::Mask];
+        let mut r = role();
+        r.inputs = vec![InputRole::Source];
+        let err = resolve(&r, &[&[bind("a")]], &conns).unwrap_err();
+        assert!(matches!(err, ResolveError::InputRequired { input: InputRole::Mask, .. }));
+        assert_eq!(err.to_string(), "model m requires a 'mask' input that this tool does not provide");
     }
 
     #[test]

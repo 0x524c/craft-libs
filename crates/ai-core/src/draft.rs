@@ -244,15 +244,12 @@ pub struct ConnectionDraft {
     /// Header that carries the key; empty sends it as `Authorization: Bearer`.
     pub key_header: String,
     pub enabled: bool,
-    /// Models found by a test, carried onto the saved connection.
+    /// Models carried onto the saved connection. Use [`set_models`](Self::set_models) when
+    /// replacing models after an address change so their address is recorded.
     pub models: Vec<ModelInfo>,
     /// Editing: the saved key's locator, and whether a key was saved at all.
     secret: Option<SecretRef>,
-    original_endpoint: Option<String>,
-    /// Editing: the models the connection had when the form opened, which belong to the original
-    /// address.
-    loaded_models: Vec<ModelInfo>,
-    /// The address `models` were last set for through [`set_models`](Self::set_models).
+    /// The address `models` were loaded, preset or last set for.
     models_for: Option<String>,
 }
 
@@ -270,8 +267,6 @@ impl Default for ConnectionDraft {
             enabled: true,
             models: Vec::new(),
             secret: None,
-            original_endpoint: None,
-            loaded_models: Vec::new(),
             models_for: None,
         }
     }
@@ -294,13 +289,15 @@ impl fmt::Debug for ConnectionDraft {
 impl ConnectionDraft {
     /// A new connection started from a preset.
     pub fn from_preset(preset: &Preset) -> Self {
+        let models = preset_models(preset);
         Self {
             label: preset.name.to_owned(),
             provider: preset.provider.to_owned(),
             endpoint: preset.endpoint.to_owned(),
             billing: preset.billing,
             uses_key: preset.needs_key,
-            models: preset_models(preset),
+            models_for: (!models.is_empty()).then(|| preset.endpoint.trim().to_owned()),
+            models,
             ..Self::default()
         }
     }
@@ -319,9 +316,7 @@ impl ConnectionDraft {
             enabled: c.enabled,
             models: c.models.clone(),
             secret: c.auth.secret_ref().cloned(),
-            original_endpoint: c.endpoint.clone(),
-            loaded_models: c.models.clone(),
-            models_for: None,
+            models_for: c.endpoint.clone(),
         }
     }
 
@@ -332,11 +327,10 @@ impl ConnectionDraft {
         self.models_for = Some(self.endpoint.trim().to_owned());
     }
 
-    /// False when the address moved since the form opened and `models` are still the old
-    /// address's: neither found by a test at this address nor different from what was loaded.
+    /// Known model provenance must match the current address, including after repeated edits.
+    /// A new custom draft may also have manually declared models without a prior address.
     fn models_fit(&self, address: &str) -> bool {
-        let moved = self.original_endpoint.as_deref().is_some_and(|o| o != address);
-        !moved || self.models_for.as_deref() == Some(address) || (self.models_for.is_none() && self.models != self.loaded_models)
+        self.models_for.as_deref().is_none_or(|origin| origin == address)
     }
 
     /// Where this would send data, as far as the address can tell. `None` while it is not a usable

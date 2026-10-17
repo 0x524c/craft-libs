@@ -180,7 +180,7 @@ fn models_found_at_the_new_address_are_kept() {
     let found = vec![ModelInfo::new(crate::ids::ModelId::new("llama-x").unwrap(), "Llama X")];
     let mut moved = ConnectionDraft::from_connection(&saved);
     moved.endpoint = "https://other.example.com/v1".into();
-    moved.models = found.clone();
+    moved.set_models(found.clone());
     assert_eq!(moved.prepare(std::slice::from_ref(&saved)).unwrap().connection.models, found);
 }
 
