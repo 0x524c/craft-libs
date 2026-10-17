@@ -370,10 +370,6 @@ fn resolve_absolute_refuses_results_that_are_not_absolute() {
 
     let unix = Path::new("/home/u/docs/a.doc");
     let ok = |raw: &str, doc: Option<&Path>| slashed(&resolve_absolute(raw, doc).unwrap());
-    assert_eq!(ok("img/x.png", Some(unix)), "/home/u/docs/img/x.png");
-    assert_eq!(ok("../x.png", Some(unix)), "/home/u/x.png");
-    assert_eq!(ok("file:///home/u/x.png", None), "/home/u/x.png");
-
     let win = Path::new(r"C:\docs\a.doc");
     if cfg!(windows) {
         assert_eq!(ok("img/x.png", Some(win)), "C:/docs/img/x.png");
@@ -384,6 +380,11 @@ fn resolve_absolute_refuses_results_that_are_not_absolute() {
         assert_eq!(resolve_absolute("C:x.png", None), Err(Refused::Invalid));
         assert_eq!(resolve_absolute("D:x.png", Some(win)), Err(Refused::Invalid));
     } else {
+        // A Unix document path is rooted but not absolute on Windows, where `resolve_absolute`
+        // rightly refuses the result; the Windows arm above covers the same cases with a drive.
+        assert_eq!(ok("img/x.png", Some(unix)), "/home/u/docs/img/x.png");
+        assert_eq!(ok("../x.png", Some(unix)), "/home/u/x.png");
+        assert_eq!(ok("file:///home/u/x.png", None), "/home/u/x.png");
         assert_eq!(ok("/x.png", None), "/x.png");
         let catalog = Some(Path::new("/Users/a/Pictures/Lightroom/cat.lrcat"));
         assert_eq!(ok("../2024:05/a.jpg", catalog), "/Users/a/Pictures/2024:05/a.jpg");
