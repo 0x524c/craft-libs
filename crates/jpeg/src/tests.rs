@@ -417,6 +417,44 @@ fn twelve_bit_huffman_block_decodes_to_sixteen_bit() {
     assert!(px.iter().all(|&v| v.abs_diff(want) <= 1), "{:?} vs {want}", &px[..4]);
 }
 
+/// Where the entropy-coded data of the last scan starts.
+fn last_scan_data(s: &[u8]) -> usize {
+    let sos = s.windows(2).rposition(|p| p == [0xFF, 0xDA]).unwrap();
+    sos + 2 + usize::from(u16::from_be_bytes([s[sos + 2], s[sos + 3]]))
+}
+
+/// A Huffman scan whose entropy data runs out is not a clean image, even with EOI present:
+/// the zero padding supplied at the marker must not be decoded as real coefficients.
+#[test]
+fn huffman_scan_out_of_data_is_not_clean() {
+    let full = twelve_bit_huffman_block();
+    let data = last_scan_data(&full);
+    for keep in 0..2 {
+        let mut s = full[..data + keep].to_vec();
+        s.extend([0xFF, 0xD9]);
+        assert!(decode(&s, &Limits::default(), None).is_err(), "keep {keep}");
+        if let Ok(img) = crate::decode(&s) {
+            assert!(!img.warnings.is_empty(), "keep {keep}: clean decode of missing data");
+        }
+    }
+    // A multi-MCU scan cut in half, EOI kept, decodes as damaged.
+    let (w, h) = (64usize, 64usize);
+    let rgb: Vec<u8> = (0..w * h).flat_map(|i| [(i % w * 4) as u8, (i / w * 4) as u8, (i * 7) as u8]).collect();
+    let mut out = Vec::new();
+    jpeg_encoder::Encoder::new(&mut out, 90).encode(&rgb, w as u16, h as u16, jpeg_encoder::ColorType::Rgb).unwrap();
+    let sof = out.windows(2).position(|p| p == [0xFF, 0xC0]).unwrap();
+    out[sof + 1] = 0xC1;
+    let data = last_scan_data(&out);
+    let end = out.len() - 2;
+    let mut cut = out[..data + (end - data) / 2].to_vec();
+    if cut.last() == Some(&0xFF) {
+        cut.pop();
+    }
+    cut.extend([0xFF, 0xD9]);
+    assert!(!decode(&out, &Limits::default(), None).unwrap().damaged);
+    assert!(decode(&cut, &Limits::default(), None).unwrap().damaged);
+}
+
 /// A baseline file from our encoder, relabelled SOF1, decodes like zune decodes the original.
 #[test]
 fn extended_huffman_matches_zune_on_baseline_data() {

@@ -380,12 +380,27 @@ struct Bits<'a> {
     pos: usize,
     acc: u32,
     n: u32,
+    /// How many of the `n` buffered bits (always the last ones) are zero padding supplied at
+    /// a marker or the end of the data, not real entropy-coded bits.
+    pad: u32,
+    /// Set once a read consumed padding: the scan's data ended before the scan did.
+    exhausted: bool,
 }
 
-impl Bits<'_> {
+impl<'a> Bits<'a> {
+    fn new(d: &'a [u8]) -> Self {
+        Bits { d, pos: 0, acc: 0, n: 0, pad: 0, exhausted: false }
+    }
+
     fn fill(&mut self) {
         while self.n <= 24 {
-            let v = next_byte(self.d, &mut self.pos).unwrap_or(0);
+            let v = match next_byte(self.d, &mut self.pos) {
+                Some(v) => v,
+                None => {
+                    self.pad += 8;
+                    0
+                }
+            };
             self.acc |= u32::from(v) << (24 - self.n);
             self.n += 8;
         }
@@ -403,9 +418,13 @@ impl Bits<'_> {
         if self.n < n {
             self.fill();
         }
+        if n > self.n.saturating_sub(self.pad) {
+            self.exhausted = true;
+        }
         let v = self.acc >> (32 - n);
         self.acc <<= n;
         self.n -= n;
+        self.pad = self.pad.min(self.n);
         v
     }
 
@@ -413,6 +432,7 @@ impl Bits<'_> {
         self.pos = skip_restart(self.d, self.pos);
         self.acc = 0;
         self.n = 0;
+        self.pad = 0;
     }
 }
 
@@ -604,6 +624,9 @@ impl ScanDecoder for HuffmanScan<'_> {
             let slot = blk.get_mut(k).ok_or_else(|| err("AC coefficient past the end of the block"))?;
             *slot = extend(self.bits.get(s), s);
             k += 1;
+        }
+        if self.bits.exhausted {
+            return Err(err("entropy-coded data ends before the scan does"));
         }
         Ok(())
     }
@@ -900,7 +923,7 @@ fn decode_scan(frame: &mut Frame, tables: &Tables, scan: &Scan, d: &[u8], done: 
             let ac = tables.ac.get(ta).and_then(Option::as_ref).ok_or_else(|| err("scan uses an undefined Huffman table"))?;
             sel.push((dc, ac));
         }
-        let mut dec = HuffmanScan { bits: Bits { d, pos: 0, acc: 0, n: 0 }, tables: sel, pred: [0; 4] };
+        let mut dec = HuffmanScan { bits: Bits::new(d), tables: sel, pred: [0; 4] };
         walk_scan(frame, scan, tables.restart, &mut dec, done)
     }
 }
