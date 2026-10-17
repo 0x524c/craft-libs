@@ -29,7 +29,6 @@ fn local_paths() {
             "C:x",
             "C:",
             r"\x",
-            r"C:\x:stream",
             "console.txt",
             "nul_report.txt",
             "com10.txt",
@@ -47,13 +46,12 @@ fn local_paths() {
             r"file:\\C:\x",
             "file:///C:/caf%E9.png",
             "file:///C:/%FF",
-            "chapter1:intro.png",
-            "notes:v2.pdf",
-            "ab:c",
-            "img/fig:1.png",
             r"C:\\host\share",
             r"./\\host\share\x",
-            r"C:\a\.b:c",
+            "D:/x",
+            "z:",
+            "file:///D:",
+            r"\\?\Z:\x",
         ],
     );
 }
@@ -157,6 +155,14 @@ fn url_links() {
             "shell:startup",
             "tel:123",
             "news:comp.lang.rust",
+            "jar:file:///C:/x.jar!/a.png",
+            "view-source:http://h/x",
+            "name:stream",
+            "chapter1:intro.png",
+            "x.png:stream",
+            "ab:c",
+            "file:jar:x",
+            "a1+b-c.d:x",
         ],
     );
 }
@@ -200,6 +206,19 @@ fn invalid_paths() {
             ".:x",
             r"C:\a\..:x",
             r"\\?\C:\a\..:x",
+            "a/b:c.png",
+            "img/fig:1.png",
+            r"C:\x:stream",
+            r"C:\a\.b:c",
+            "C:x:y",
+            "C::x",
+            "/home/u/a:b",
+            "file:///C:/a:b",
+            "file:///C:/a%3Ab",
+            r"\\?\C:\a:b",
+            ":x",
+            "1a:b",
+            "./ab:c",
         ],
     );
 }
@@ -235,7 +254,11 @@ fn resolve_joins_relative_paths_to_the_document_folder() {
     assert_eq!(resolve(r"C:..\..\x.png", Some(Path::new(r"C:\docs\a.doc"))), Err(Refused::Invalid));
     assert_eq!(ok(r"./\\host\share\x.png"), "C:/docs/report/host/share/x.png");
     assert_eq!(ok(r"C:\\host\share"), "C:/host/share");
-    assert_eq!(ok("chapter1:intro.png"), "C:/docs/report/chapter1:intro.png");
+    assert_eq!(resolve("chapter1:intro.png", Some(doc)), Err(Refused::Url));
+    assert_eq!(resolve("img/fig:1.png", Some(doc)), Err(Refused::Invalid));
+    // The document's own name may contain colons.
+    let colon_doc = Path::new("/home/u/a:b/c:d.doc");
+    assert_eq!(slashed(&resolve("x.png", Some(colon_doc)).unwrap()), "/home/u/a:b/x.png");
 
     assert_eq!(slashed(&resolve("img/x.png", None).unwrap()), "img/x.png");
     assert_eq!(slashed(&resolve("../x.png", None).unwrap()), "../x.png");

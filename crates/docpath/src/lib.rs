@@ -10,7 +10,10 @@
 //!
 //! The check is lexical: it does no I/O and gives the same answer on every platform. Windows path
 //! forms (`C:\`, `\\server\share`, `\\?\`, `\\.\`, reserved names such as `NUL`) are recognised on
-//! all platforms, and both `/` and `\` count as separators.
+//! all platforms, and both `/` and `\` count as separators. A colon is allowed only after a drive
+//! letter at the start (`C:\`, `C:/`, `C:x`, `\\?\C:\`, `file:///C:/`): a stored path that starts
+//! with a scheme and a colon is a URL, and a colon inside any other name (which Windows reads as an
+//! alternate data stream) makes the path invalid.
 //!
 //! - [`classify`] sorts a stored path into a [`PathKind`].
 //! - [`is_local`] is `classify(raw) == PathKind::Local`.
@@ -52,11 +55,12 @@ pub enum PathKind {
     Network,
     /// A device or object-manager path: `\\.\…`, `\??\…`, `\\?\GLOBALROOT\…`, or a reserved name such as `NUL` or `COM1`.
     Device,
-    /// A URL other than `file:`: `scheme://…`, or a scheme without a hierarchy such as `mailto:`,
-    /// `data:` or `ms-word:`. A relative name with a colon (`chapter1:intro.png`) is a path.
+    /// A URL other than `file:`: anything that starts with a URL scheme of two or more characters
+    /// and a colon, such as `https://…`, `mailto:`, `jar:…` or `chapter1:intro.png`.
     Url,
-    /// Not a usable path: empty, containing control characters or lookalike separators, a name made
-    /// of dots, or climbing above its root with `..`.
+    /// Not a usable path: empty, containing control characters or lookalike separators, a colon
+    /// inside a name (`img/fig:1.png`, `C:\x:stream`), a name made of dots, or climbing above its
+    /// root with `..`.
     Invalid,
 }
 
@@ -234,22 +238,14 @@ fn is_bad_char(c: char) -> bool {
     c.is_control() || matches!(c, '\u{FF3C}' | '\u{FF0F}' | '\u{2215}' | '\u{29F5}')
 }
 
-/// A URL scheme: `name://` (or with `\`), or `name:` for a scheme without a hierarchy. The scheme
-/// has two or more characters, so a drive letter (`C:`) is not one.
+/// Starts with a URL scheme (RFC 3986: a letter, then letters, digits, `+`, `-` or `.`) and a
+/// colon. The scheme has two or more characters, so a drive letter (`C:`) is not one.
 fn has_scheme(s: &str) -> bool {
-    const OPAQUE: [&str; 8] = ["mailto", "data", "javascript", "vbscript", "search-ms", "shell", "tel", "news"];
-    let Some((scheme, rest)) = s.split_once(':') else { return false };
+    let Some((scheme, _)) = s.split_once(':') else { return false };
     let mut chars = scheme.chars();
-    let valid = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         && scheme.len() >= 2
-        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
-    if !valid {
-        return false;
-    }
-    let mut rest = rest.chars();
-    let hierarchical = matches!((rest.next(), rest.next()), (Some(a), Some(b)) if is_sep(a) && is_sep(b));
-    let scheme = scheme.to_ascii_lowercase();
-    hierarchical || scheme.starts_with("ms-") || OPAQUE.contains(&scheme.as_str())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
 /// The path of a `file:` URL (the part after `file:`).
@@ -336,7 +332,7 @@ fn windows_1252(b: u8) -> char {
 }
 
 /// Split a plain path into its root and components. `check` applies the component rules
-/// (reserved device names, dot-and-space names); the document's own path is not checked.
+/// (reserved device names, dot-and-space names, colons); the document's own path is not checked.
 fn parse(s: &str, check: bool) -> Result<Parsed, Refused> {
     let mut chars = s.chars();
     let first = chars.next();
@@ -423,7 +419,7 @@ fn comps(s: &str, check: bool) -> Result<Vec<String>, Refused> {
                 if is_dos_device(c) {
                     return Err(Refused::Device);
                 }
-                if is_dot_name(c) {
+                if is_dot_name(c) || c.contains(':') {
                     return Err(Refused::Invalid);
                 }
             }
@@ -446,7 +442,7 @@ fn verbatim_comps(s: &str, check: bool) -> Result<Vec<String>, Refused> {
         if check && is_dos_device(c) {
             return Err(Refused::Device);
         }
-        if check && is_dot_name(c) {
+        if check && (is_dot_name(c) || c.contains(':')) {
             return Err(Refused::Invalid);
         }
         out.push(c.to_string());
@@ -454,14 +450,10 @@ fn verbatim_comps(s: &str, check: bool) -> Result<Vec<String>, Refused> {
     Ok(out)
 }
 
-/// A name of dots and spaces other than `.` and `..`, or `.`/`..` with a stream (`..:x`). Windows
-/// trims trailing dots and spaces, so `.. ` or `...` could act as `..`.
+/// A name of dots and spaces other than `.` and `..`. Windows trims trailing dots and spaces, so
+/// `.. ` or `...` could act as `..`.
 fn is_dot_name(comp: &str) -> bool {
-    let (stem, stream) = match comp.split_once(':') {
-        Some((stem, _)) => (stem, true),
-        None => (comp, false),
-    };
-    !stem.is_empty() && stem.chars().all(|ch| ch == '.' || ch == ' ') && (stream || (stem != "." && stem != ".."))
+    !comp.is_empty() && comp != "." && comp != ".." && comp.chars().all(|ch| ch == '.' || ch == ' ')
 }
 
 /// A reserved DOS device name, with or without an extension, stream or trailing dots and spaces.
