@@ -157,14 +157,63 @@ fn url_links() {
             "news:comp.lang.rust",
             "jar:file:///C:/x.jar!/a.png",
             "view-source:http://h/x",
-            "name:stream",
-            "chapter1:intro.png",
-            "x.png:stream",
-            "ab:c",
+            "view-source:x",
+            "JAR:x.jar!/a.png",
             "file:jar:x",
-            "a1+b-c.d:x",
+            "mailto:a",
+            "Data:2024/a.png",
+            "ms-settings:x",
+            "MS-Word:x",
+            "svn+ssh:h/x",
+            "git+https:h/x",
+            "x-app:https://h/x",
+            "x-app:ofe|u|https://h/x",
+            "http:/h/x",
+            "shell:",
+            "ab:",
+            "ab:/x",
         ],
     );
+}
+
+/// Starts with a scheme and a colon but does not look like a URL.
+const SCHEME_LIKE_NAMES: &[&str] =
+    &["name:stream", "chapter1:intro.png", "x.png:stream", "ab:c", "a1+b-c.d:x", "Shoot: Day 1/a.jpg", "notes:v2.pdf", "Photos:2024/a.jpg"];
+
+/// A colon inside a name other than a leading drive.
+const COLON_NAMES: &[&str] = &[
+    "..:",
+    ".:x",
+    r"C:\a\..:x",
+    r"\\?\C:\a\..:x",
+    "a/b:c.png",
+    "img/fig:1.png",
+    r"C:\x:stream",
+    r"C:\a\.b:c",
+    "C:x:y",
+    "C::x",
+    "/home/u/a:b",
+    "file:///C:/a:b",
+    "file:///C:/a%3Ab",
+    r"\\?\C:\a:b",
+    ":x",
+    "1a:b",
+    "./ab:c",
+    "2024:05/a.jpg",
+    "Photos/2024:05/a.jpg",
+    "/Users/a/2024:05/x.jpg",
+    "file:///Users/a/2024:05/x.jpg",
+];
+
+#[test]
+fn colons_in_names_are_refused_only_on_windows() {
+    if cfg!(windows) {
+        check(PathKind::Url, SCHEME_LIKE_NAMES);
+        check(PathKind::Invalid, COLON_NAMES);
+    } else {
+        check(PathKind::Local, SCHEME_LIKE_NAMES);
+        check(PathKind::Local, COLON_NAMES);
+    }
 }
 
 #[test]
@@ -202,23 +251,6 @@ fn invalid_paths() {
             "a\u{2215}b",
             "a\u{29F5}b",
             "file:///C:/a%EF%BC%BCb",
-            "..:",
-            ".:x",
-            r"C:\a\..:x",
-            r"\\?\C:\a\..:x",
-            "a/b:c.png",
-            "img/fig:1.png",
-            r"C:\x:stream",
-            r"C:\a\.b:c",
-            "C:x:y",
-            "C::x",
-            "/home/u/a:b",
-            "file:///C:/a:b",
-            "file:///C:/a%3Ab",
-            r"\\?\C:\a:b",
-            ":x",
-            "1a:b",
-            "./ab:c",
         ],
     );
 }
@@ -254,8 +286,14 @@ fn resolve_joins_relative_paths_to_the_document_folder() {
     assert_eq!(resolve(r"C:..\..\x.png", Some(Path::new(r"C:\docs\a.doc"))), Err(Refused::Invalid));
     assert_eq!(ok(r"./\\host\share\x.png"), "C:/docs/report/host/share/x.png");
     assert_eq!(ok(r"C:\\host\share"), "C:/host/share");
-    assert_eq!(resolve("chapter1:intro.png", Some(doc)), Err(Refused::Url));
-    assert_eq!(resolve("img/fig:1.png", Some(doc)), Err(Refused::Invalid));
+    assert_eq!(resolve("jar:x.jar!/a.png", Some(doc)), Err(Refused::Url));
+    if cfg!(windows) {
+        assert_eq!(resolve("chapter1:intro.png", Some(doc)), Err(Refused::Url));
+        assert_eq!(resolve("img/fig:1.png", Some(doc)), Err(Refused::Invalid));
+    } else {
+        assert_eq!(ok("chapter1:intro.png"), "C:/docs/report/chapter1:intro.png");
+        assert_eq!(ok("img/fig:1.png"), "C:/docs/report/img/fig:1.png");
+    }
     // The document's own name may contain colons.
     let colon_doc = Path::new("/home/u/a:b/c:d.doc");
     assert_eq!(slashed(&resolve("x.png", Some(colon_doc)).unwrap()), "/home/u/a:b/x.png");
@@ -347,6 +385,10 @@ fn resolve_absolute_refuses_results_that_are_not_absolute() {
         assert_eq!(resolve_absolute("D:x.png", Some(win)), Err(Refused::Invalid));
     } else {
         assert_eq!(ok("/x.png", None), "/x.png");
+        let catalog = Some(Path::new("/Users/a/Pictures/Lightroom/cat.lrcat"));
+        assert_eq!(ok("../2024:05/a.jpg", catalog), "/Users/a/Pictures/2024:05/a.jpg");
+        assert_eq!(ok("/Users/a/2024:05/x.jpg", None), "/Users/a/2024:05/x.jpg");
+        assert_eq!(resolve_absolute("view-source:x", catalog), Err(Refused::Url));
         assert_eq!(resolve_absolute("img/x.png", Some(win)), Err(Refused::Invalid));
         assert_eq!(resolve_absolute(r"C:\x.png", None), Err(Refused::Invalid));
     }

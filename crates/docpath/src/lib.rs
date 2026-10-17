@@ -8,12 +8,9 @@
 //! from. Paths to other computers, device paths and non-file URLs are refused, so opening a document
 //! never makes the app contact a server or device the user did not choose.
 //!
-//! The check is lexical: it does no I/O and gives the same answer on every platform. Windows path
-//! forms (`C:\`, `\\server\share`, `\\?\`, `\\.\`, reserved names such as `NUL`) are recognised on
-//! all platforms, and both `/` and `\` count as separators. A colon is allowed only after a drive
-//! letter at the start (`C:\`, `C:/`, `C:x`, `\\?\C:\`, `file:///C:/`): a stored path that starts
-//! with a scheme and a colon is a URL, and a colon inside any other name (which Windows reads as an
-//! alternate data stream) makes the path invalid.
+//! The check is lexical: it does no I/O and, apart from colons, gives the same answer on every
+//! platform. Windows path forms (`C:\`, `\\server\share`, `\\?\`, `\\.\`, reserved names such as
+//! `NUL`) are recognised on all platforms, and both `/` and `\` count as separators.
 //!
 //! - [`classify`] sorts a stored path into a [`PathKind`].
 //! - [`is_local`] is `classify(raw) == PathKind::Local`.
@@ -21,6 +18,38 @@
 //!   document, or a [`Refused`] that says why it may not be opened. Use it to open files.
 //! - [`resolve`] is the same without the absolute check, for callers that only display or compare
 //!   the result.
+//!
+//! # Colons
+//!
+//! A colon after a drive letter at the start (`C:\`, `C:/`, `C:x`, `\\?\C:\`, `file:///C:/`) names
+//! a drive on every platform. Other colons depend on the platform the check runs on:
+//!
+//! | Stored path | Windows | macOS and Linux |
+//! |---|---|---|
+//! | URL-shaped (see below): `https://h/x`, `mailto:a@b`, `jar:…`, `view-source:…` | [`PathKind::Url`] | [`PathKind::Url`] |
+//! | Starts with any other scheme and a colon: `chapter1:intro.png`, `notes:v2.pdf` | [`PathKind::Url`] | allowed |
+//! | A colon inside any other name: `2024:05/a.jpg`, `/Users/a/2024:05/x.jpg` | [`PathKind::Invalid`] | allowed |
+//!
+//! Windows reads a colon inside a name as an alternate data stream (`a.png:x` is the stream `x` of
+//! `a.png`) and hands `name:…` to URL protocol handlers, so it refuses both. On macOS and Linux a
+//! colon is an ordinary character: Finder shows a `/` in a file or folder name as `:` in the POSIX
+//! path, so a Lightroom folder named `2024/05` is stored as `2024:05`.
+//!
+//! A stored path is URL-shaped when it starts with an RFC 3986 scheme of two or more characters and
+//! a colon, and either
+//!
+//! - its first component (the text before the first `/` or `\`) ends with a colon, as in
+//!   `https://h`, `http:\\h`, `shell:` or the nested `view-source:http://h` and
+//!   `jar:file:///x.jar!/a`, or
+//! - the scheme, or one of its `+`-separated parts (`svn+ssh`), compared ignoring case, starts with
+//!   `ms-` (the prefix of Windows app protocols) or is one of `about`, `blob`, `data`, `file`,
+//!   `ftp`, `ftps`, `http`, `https`, `jar`, `javascript`, `mailto`, `news`, `nntp`, `search-ms`,
+//!   `sftp`, `shell`, `smb`, `sms`, `ssh`, `tel`, `vbscript`, `view-source`, `webdav`, `ws` or `wss`.
+//!
+//! Names of files and folders rarely end their first component with a colon or start with one of
+//! these scheme names, so names such as `Shoot: Day 1`, `2024:05` and `notes:v2.pdf` stay usable,
+//! while links that browsers or the desktop would open as URLs are refused. A folder whose name
+//! starts with such a word and a slash (`Data/2024`, stored as `Data:2024`) is refused too.
 //!
 //! # Caller contract
 //!
@@ -58,12 +87,13 @@ pub enum PathKind {
     Network,
     /// A device or object-manager path: `\\.\…`, `\??\…`, `\\?\GLOBALROOT\…`, or a reserved name such as `NUL` or `COM1`.
     Device,
-    /// A URL other than `file:`: anything that starts with a URL scheme of two or more characters
-    /// and a colon, such as `https://…`, `mailto:`, `jar:…` or `chapter1:intro.png`.
+    /// A URL other than `file:`, such as `https://…`, `mailto:`, `jar:…` or `view-source:…`. On
+    /// Windows, also anything else that starts with a URL scheme of two or more characters and a
+    /// colon, such as `chapter1:intro.png`. See [Colons](crate#colons).
     Url,
-    /// Not a usable path: empty, containing control characters or lookalike separators, a colon
-    /// inside a name (`img/fig:1.png`, `C:\x:stream`), a name made of dots, or climbing above its
-    /// root with `..`.
+    /// Not a usable path: empty, containing control characters or lookalike separators, a name made
+    /// of dots, or climbing above its root with `..`. On Windows, also a colon inside a name
+    /// (`img/fig:1.png`, `C:\x:stream`); see [Colons](crate#colons).
     Invalid,
 }
 
@@ -242,10 +272,62 @@ fn strip_url(raw: &str) -> Result<String, Refused> {
     };
     if has_scheme(&path) {
         // `NUL:` and `COM1:` name devices, not URL schemes.
-        let device = path.split_once(':').is_some_and(|(scheme, _)| is_dos_device(scheme));
-        return Err(if device { Refused::Device } else { Refused::Url });
+        if path.split_once(':').is_some_and(|(scheme, _)| is_dos_device(scheme)) {
+            return Err(Refused::Device);
+        }
+        if COLON_IN_NAME_REFUSED || is_url_shaped(&path) {
+            return Err(Refused::Url);
+        }
     }
     Ok(path)
+}
+
+/// Windows reads a colon inside a name as an alternate data stream and `name:…` as a URL for a
+/// protocol handler; macOS and Linux allow colons in names (see [Colons](crate#colons)).
+const COLON_IN_NAME_REFUSED: bool = cfg!(windows);
+
+/// URL schemes refused on every platform even when the rest does not look like a URL, compared
+/// ignoring ASCII case. Any scheme starting with `ms-` is refused too. The module docs list them.
+const URL_SCHEMES: &[&str] = &[
+    "about",
+    "blob",
+    "data",
+    "file",
+    "ftp",
+    "ftps",
+    "http",
+    "https",
+    "jar",
+    "javascript",
+    "mailto",
+    "news",
+    "nntp",
+    "search-ms",
+    "sftp",
+    "shell",
+    "smb",
+    "sms",
+    "ssh",
+    "tel",
+    "vbscript",
+    "view-source",
+    "webdav",
+    "ws",
+    "wss",
+];
+
+/// A stored path that starts with a scheme ([`has_scheme`]) and reads as a URL on every platform:
+/// its first component ends with a colon (`https://h`, `http:\\h`, `shell:`,
+/// `view-source:http://h`), or the scheme, or one of its `+`-separated parts, is in
+/// [`URL_SCHEMES`] or starts with `ms-`.
+fn is_url_shaped(s: &str) -> bool {
+    let Some((scheme, _)) = s.split_once(':') else { return false };
+    let first = s.split(is_sep).next().unwrap_or_default();
+    first.ends_with(':')
+        || scheme.split('+').any(|part| {
+            let part = part.to_ascii_lowercase();
+            part.starts_with("ms-") || URL_SCHEMES.contains(&part.as_str())
+        })
 }
 
 /// Control characters, and separator lookalikes that some code page best-fit mappings turn into
@@ -348,7 +430,8 @@ fn windows_1252(b: u8) -> char {
 }
 
 /// Split a plain path into its root and components. `check` applies the component rules
-/// (reserved device names, dot-and-space names, colons); the document's own path is not checked.
+/// (reserved device names, dot-and-space names, and colons on Windows); the document's own path is
+/// not checked.
 fn parse(s: &str, check: bool) -> Result<Parsed, Refused> {
     let mut chars = s.chars();
     let first = chars.next();
@@ -435,7 +518,7 @@ fn comps(s: &str, check: bool) -> Result<Vec<String>, Refused> {
                 if is_dos_device(c) {
                     return Err(Refused::Device);
                 }
-                if is_dot_name(c) || c.contains(':') {
+                if is_dot_name(c) || has_refused_colon(c) {
                     return Err(Refused::Invalid);
                 }
             }
@@ -458,12 +541,17 @@ fn verbatim_comps(s: &str, check: bool) -> Result<Vec<String>, Refused> {
         if check && is_dos_device(c) {
             return Err(Refused::Device);
         }
-        if check && (is_dot_name(c) || c.contains(':')) {
+        if check && (is_dot_name(c) || has_refused_colon(c)) {
             return Err(Refused::Invalid);
         }
         out.push(c.to_string());
     }
     Ok(out)
+}
+
+/// A colon inside a name, which only Windows refuses (see [Colons](crate#colons)).
+fn has_refused_colon(comp: &str) -> bool {
+    COLON_IN_NAME_REFUSED && comp.contains(':')
 }
 
 /// A name of dots and spaces other than `.` and `..`. Windows trims trailing dots and spaces, so
