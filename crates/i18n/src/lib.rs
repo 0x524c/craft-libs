@@ -739,4 +739,13 @@ mod tests {
         let i = all(&[("ps", "", ""), ("ckb", "", ""), ("yi", "", ""), ("ug", "", "")]).0;
         assert!(i.languages().into_iter().skip(1).all(|l| i.rtl(l)));
     }
+
+    /// Prints what this machine reports, so CI logs show `system_lang` on each platform.
+    #[test]
+    fn system_lang_reads_the_system() {
+        let i = all(&[("fr", "", ""), ("de", "", ""), ("pt-br", "", ""), ("sr-latn", "", "")]).0;
+        let first = i.system_lang();
+        println!("sys-locale: {:?}; system_lang: {}", sys_locale::get_locales().collect::<Vec<_>>(), i.code(first));
+        assert_eq!(i.system_lang(), first);
+    }
 }
