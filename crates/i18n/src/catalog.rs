@@ -2,6 +2,8 @@
 //! applies them strictly, and here a row that breaks one is skipped and reported, so an app built
 //! against a newer catalog still runs, with that string in English.
 
+use std::collections::HashSet;
+
 /// A row that passed, with its columns unescaped.
 pub(crate) struct Entry {
     pub context: String,
@@ -13,17 +15,21 @@ pub(crate) struct Entry {
 const RESERVED: &[&str] = &["@plural", "@id", "@msg"];
 
 /// The rows of a catalog whose locale has `forms` plural forms, and one problem (`line N: …`) per
-/// row skipped.
+/// row skipped. Of a row defined twice, the first is kept, as in craft-i18n's checker.
 pub(crate) fn parse(text: &str, forms: usize) -> (Vec<Entry>, Vec<String>) {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut rows = Vec::new();
     let mut problems = Vec::new();
+    let mut seen = HashSet::new();
     for (i, line) in text.split('\n').enumerate() {
         let line = line.strip_suffix('\r').unwrap_or(line);
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
         match parse_row(line, forms) {
+            Ok(row) if !seen.insert((row.context.clone(), row.source.clone())) => {
+                problems.push(format!("line {}: defined twice (same context and source text); the first is kept", i + 1));
+            }
             Ok(row) => rows.push(row),
             Err(e) => problems.push(format!("line {}: {e}", i + 1)),
         }
