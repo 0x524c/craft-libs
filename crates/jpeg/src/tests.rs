@@ -417,6 +417,21 @@ fn twelve_bit_huffman_block_decodes_to_sixteen_bit() {
     assert!(px.iter().all(|&v| v.abs_diff(want) <= 1), "{:?} vs {want}", &px[..4]);
 }
 
+#[test]
+fn twelve_bit_jpeg_keeps_its_photoshop_resources() {
+    // An APP13 `8BIM` block (paths, Photoshop settings) right after SOI, as on the zune-jpeg path.
+    let resources = b"8BIM\x04\x04\0\0\0\0\0\0".to_vec();
+    let mut app13 = b"Photoshop 3.0\0".to_vec();
+    app13.extend_from_slice(&resources);
+    let stream = twelve_bit_huffman_block();
+    let mut with = stream[..2].to_vec();
+    segment(&mut with, 0xED, &app13);
+    with.extend_from_slice(&stream[2..]);
+    assert!(handles(&with));
+    let img = crate::decode(&with).unwrap();
+    assert_eq!(img.meta.photoshop_resources.as_deref(), Some(resources.as_slice()));
+}
+
 /// Where the entropy-coded data of the last scan starts.
 fn last_scan_data(s: &[u8]) -> usize {
     let sos = s.windows(2).rposition(|p| p == [0xFF, 0xDA]).unwrap();
