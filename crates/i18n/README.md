@@ -26,7 +26,7 @@ pub static I18N: LazyLock<craft_i18n::I18n> = LazyLock::new(|| {
 
 thread_local! { static CURRENT: Cell<craft_i18n::Lang> = const { Cell::new(craft_i18n::Lang::EN) }; }
 
-macro_rules! tl { ($s:expr) => { $crate::I18N.t(CURRENT.get(), $s) }; }
+macro_rules! tl { ($s:expr) => { $crate::I18N.t($crate::CURRENT.get(), $s) }; }
 ```
 
 The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_lang()`, otherwise
@@ -36,11 +36,11 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
 
 - **Fallback:** `pt-br` app rows → `pt-br` shared rows → `pt` → the English source text. App rows
   override shared ones in their own locale. Only a region falls back (`sr-latn` never falls back to
-  Cyrillic `sr`). A missing translation never errors.
+  Cyrillic `sr`, and a system locale of `sr_RS@latin` picks `sr-latn`, never `sr`). A missing translation never errors.
 - **Lookups:** `t` (plain), `tc` (with a context such as `menu` or `@msg`, falling back to plain),
   `tid` (an `@id` command id, falling back to the English label), `trn` (a count, `@plural` rows,
-  `{n}` filled), `get` (one context, no fallback: a key cap's name under `key`, or "is there a
-  translation?"), and `fmt` for `{name}` placeholders, filled in one pass.
+  `{n}` filled), `get` (one context along the locale chain, so `pt-br` can return a `pt` row, but never the
+  plain row or English: a key cap's name under `key`, or "is there a translation?"), and `fmt` for `{name}` placeholders, filled in one pass.
 - **Bad rows** (malformed, an unknown `@` context, a wrong plural form count) are skipped and
   returned by `I18n::new` for the app to log; craft-i18n's CI rejects them before they ship.
 - **Plurals:** forms are listed in CLDR order (zero, one, two, few, many, other) for the categories

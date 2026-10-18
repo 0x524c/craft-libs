@@ -198,6 +198,10 @@ impl I18n {
     /// The language the system asks for (`LANG` and friends, the macOS and Windows preferred
     /// languages, the browser's on the web); English if none fits.
     pub fn system_lang(&self) -> Lang {
+        // sys-locale drops glibc's script modifier (`sr_RS@latin` → `sr-RS`), so read its variables raw.
+        #[cfg(all(unix, not(any(target_vendor = "apple", target_os = "android"))))]
+        let tags = posix_env_tags(|k| std::env::var(k).ok());
+        #[cfg(not(all(unix, not(any(target_vendor = "apple", target_os = "android")))))]
         let tags: Vec<String> = sys_locale::get_locales().collect();
         self.match_tags(tags.iter().map(String::as_str))
     }
@@ -247,14 +251,27 @@ pub fn fmt(template: &str, args: &[(&str, &str)]) -> String {
 
 /// Codes to try for a locale tag, most specific first: `zh_TW.UTF-8` → `zh-tw`, `zh-hant`, `zh`.
 /// Chinese without a script picks one by region; Portuguese falls back to `pt-br` last, when
-/// there is no `pt`.
+/// there is no `pt`. A glibc script modifier (`sr_RS@latin`) becomes the script subtag, and only
+/// codes with that script are tried, so Latin Serbian never picks Cyrillic `sr`.
 fn candidates(tag: &str) -> Vec<String> {
-    let base = tag.trim().split(['.', '@']).next().unwrap_or("").replace('_', "-").to_ascii_lowercase();
-    let parts: Vec<&str> = base.split('-').filter(|p| !p.is_empty()).collect();
+    let tag = tag.trim().to_ascii_lowercase();
+    let base = tag.split(['.', '@']).next().unwrap_or("").replace('_', "-");
+    let mut parts: Vec<&str> = base.split('-').filter(|p| !p.is_empty()).collect();
     let Some(&primary) = parts.first() else {
         return Vec::new();
     };
+    let script = match tag.split_once('@').map(|(_, m)| m) {
+        Some("latin") => Some("latn"),
+        Some("cyrillic") => Some("cyrl"),
+        _ => None,
+    };
+    if let Some(s) = script {
+        parts.insert(1, s);
+    }
     let mut out: Vec<String> = (1..=parts.len()).rev().map(|n| parts.get(..n).unwrap_or_default().join("-")).collect();
+    if let Some(s) = script {
+        out.retain(|c| c.split('-').any(|p| p == s));
+    }
     if primary == "zh" && !parts.iter().any(|p| matches!(*p, "hans" | "hant")) {
         let script = if parts.iter().any(|p| matches!(*p, "tw" | "hk" | "mo")) { "zh-hant" } else { "zh-hans" };
         out.insert(out.len().saturating_sub(1), script.to_owned());
@@ -263,6 +280,16 @@ fn candidates(tag: &str) -> Vec<String> {
         out.push("pt-br".to_owned());
     }
     out
+}
+
+/// The locale variables sys-locale reads on Unix, in its order (`LANGUAGE`'s `:` list, then
+/// `LC_ALL`, `LC_MESSAGES`, `LANG`), but unconverted, so `@latin` survives.
+#[cfg(all(unix, not(any(target_vendor = "apple", target_os = "android"))))]
+fn posix_env_tags(var: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    let mut tags: Vec<String> = var("LANGUAGE").map(|v| v.split(':').map(str::to_owned).collect()).unwrap_or_default();
+    tags.extend(["LC_ALL", "LC_MESSAGES", "LANG"].into_iter().filter_map(&var));
+    tags.retain(|t| !t.is_empty());
+    tags
 }
 
 /// `⟦text⟧`, each line marked on its own, since multi-line labels are often drawn a line at a time.
@@ -525,6 +552,26 @@ mod tests {
     fn script_locale_does_not_fall_back_across_scripts() {
         let i = I18n::new(F).0;
         assert_eq!(i.t(lang(&i, "sr-latn"), "Save"), "Save");
+    }
+
+    #[test]
+    fn glibc_script_modifier_picks_the_script() {
+        let i = I18n::new(F).0;
+        for (tag, want) in [("sr_RS.UTF-8@latin", Some("sr-latn")), ("sr_RS@latin", Some("sr-latn")), ("sr_RS.UTF-8", Some("sr"))] {
+            assert_eq!(i.match_tag(tag).map(|l| i.code(l)), want, "{tag}");
+        }
+        let cyrillic_only = I18n::new(&[("sr", "", "")]).0;
+        assert_eq!(cyrillic_only.match_tag("sr_RS@latin"), None);
+    }
+
+    #[cfg(all(unix, not(any(target_vendor = "apple", target_os = "android"))))]
+    #[test]
+    fn posix_env_keeps_the_modifier() {
+        let env = |vars: &'static [(&'static str, &'static str)]| move |k: &str| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| (*v).to_owned());
+        assert_eq!(posix_env_tags(env(&[("LANG", "sr_RS.UTF-8@latin")])), ["sr_RS.UTF-8@latin"]);
+        assert_eq!(posix_env_tags(env(&[("LANGUAGE", "fr:de"), ("LC_ALL", ""), ("LANG", "sr_RS@latin")])), ["fr", "de", "sr_RS@latin"]);
+        let i = I18n::new(F).0;
+        assert_eq!(i.code(i.match_tags(posix_env_tags(env(&[("LANG", "sr_RS.UTF-8@latin")])).iter().map(String::as_str))), "sr-latn");
     }
 
     #[test]
