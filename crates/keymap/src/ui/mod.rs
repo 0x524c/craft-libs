@@ -19,6 +19,7 @@ mod capture;
 mod rows;
 mod state;
 mod style;
+pub mod summary;
 mod text;
 mod view;
 

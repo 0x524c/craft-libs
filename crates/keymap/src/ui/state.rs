@@ -12,7 +12,7 @@ use crate::profiles::{Builtins, ProfileError, Profiles};
 use crate::scope::Scope;
 use crate::ui::rows::{AreaEntry, AreaId, Built, Filter, RowCache, View};
 use crate::ui::text::{Text, trigger_text};
-use crate::ui::{ConflictMode, JSON_FORMAT, Options, Outcome, capture};
+use crate::ui::{ConflictMode, JSON_FORMAT, Options, Outcome, capture, summary};
 
 /// What the dialog edits this frame.
 pub(crate) struct Env<'e> {
@@ -105,7 +105,6 @@ pub(crate) struct Message {
 }
 
 /// What to do after the Save changes prompt.
-#[allow(dead_code, reason = "set row and import review")]
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Then {
     Switch(String),
@@ -113,7 +112,6 @@ pub(crate) enum Then {
     Import,
 }
 
-#[allow(dead_code, reason = "set row prompts")]
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Prompt {
     /// "Restore every default shortcut in this set?"
@@ -134,7 +132,6 @@ pub(crate) enum Answer {
 }
 
 /// A foreign set under review.
-#[allow(dead_code, reason = "set row and import review")]
 #[derive(Clone, Debug)]
 pub(crate) struct Review {
     pub set: ForeignSet,
@@ -144,6 +141,24 @@ pub(crate) struct Review {
     pub name: String,
     /// After Import as New Set: the set's name and the report.
     pub done: Option<(String, ImportReport)>,
+}
+
+/// The set row's inline form: New Set… or Rename….
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SetForm {
+    pub kind: SetFormKind,
+    pub name: String,
+    /// Focus the name field on the next frame.
+    pub focus: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum SetFormKind {
+    /// `None`: based on the current shortcuts.
+    New {
+        based_on: Option<String>,
+    },
+    Rename,
 }
 
 #[derive(Clone, Debug)]
@@ -199,6 +214,7 @@ pub struct DialogState {
     pub(crate) text_focus: bool,
     /// The table lines drawn last frame.
     pub(crate) visible: std::ops::Range<usize>,
+    pub(crate) set_form: Option<SetForm>,
 }
 
 impl Default for DialogState {
@@ -239,6 +255,7 @@ impl DialogState {
             bottom_h: 0.0,
             text_focus: false,
             visible: 0..0,
+            set_form: None,
         }
     }
 
@@ -693,6 +710,8 @@ impl DialogState {
             self.conflict = None;
         } else if self.prompt.is_some() {
             self.prompt = None;
+        } else if self.set_form.is_some() {
+            self.set_form = None;
         } else if self.review.is_some() {
             self.review = None;
         } else if self.field.is_some() {
@@ -710,8 +729,6 @@ impl DialogState {
     }
 }
 
-// The set row and the import review draw with these (T3); until then some are unused.
-#[allow(dead_code, reason = "set row and import review actions")]
 impl DialogState {
     // ---- Sets ----
 
@@ -909,6 +926,22 @@ impl DialogState {
             self.refuse(profile_error(env, e));
         }
         result
+    }
+
+    /// Summarize…: every command with a shortcut, as HTML and plain text.
+    pub(crate) fn summarize(&mut self, env: &Env) {
+        let title = env.text.ui(env.options.title).into_owned();
+        let (name, heading) = match env.sets.as_ref() {
+            Some((p, b)) => {
+                let name = p.active_name(b).to_string();
+                let heading = env.ui("{title}: {set}", &[("title", &title), ("set", &name)]);
+                (name, heading)
+            }
+            None => (title.clone(), title),
+        };
+        let html = summary::html(env.keymap, env.text, &heading);
+        let text = summary::text(env.keymap, env.text, &heading);
+        self.outcome = Some(Outcome::Summary { name, html, text });
     }
 
     /// Answers the open prompt.

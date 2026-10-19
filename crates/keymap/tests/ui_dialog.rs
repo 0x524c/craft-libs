@@ -1,11 +1,14 @@
 #![cfg(feature = "ui")]
 //! The Keyboard Shortcuts dialog driven through egui_kittest: recording, conflicts, search, areas,
-//! platform display, accessibility labels and small windows.
+//! platform display, accessibility labels, small windows, sets, import review and the summary.
 
 use std::borrow::Cow;
 
 use craft_keymap::ui::{ConflictMode, DialogState, English, Options, Outcome, ShortcutsDialog, Text};
-use craft_keymap::{Bindable, Chord, CommandRef, ConflictKind, Keymap, Kind, Platform, Scope, Scopes, Trigger};
+use craft_keymap::{
+    Bindable, Chord, CommandRef, ConflictKind, ContextRule, Flavor, ForeignEntry, ForeignKey, ForeignSet, ImportOptions, Keymap, Kind, Overrides,
+    Platform, Profiles, Scope, Scopes, Trigger,
+};
 use egui::accesskit::Role;
 use egui::{Event, Key as EguiKey, Modifiers, Vec2, vec2};
 use egui_kittest::Harness;
@@ -20,9 +23,22 @@ struct Fx {
     state: DialogState,
     text: Box<dyn Text>,
     window: bool,
+    /// Profiles and built-in sets, when the dialog shows sets.
+    sets: Option<(Profiles, Vec<(&'static str, Overrides)>)>,
     outcomes: Vec<Outcome>,
     /// A key press was still in the frame's input after the dialog ran.
     keys_left: bool,
+}
+
+/// The dialog of `fx` for a call outside the frame (import_json, review_import).
+fn dialog(fx: &mut Fx) -> (ShortcutsDialog<'_>, &mut DialogState) {
+    let Fx { km, options, state, text, sets, .. } = fx;
+    let d = ShortcutsDialog::new(km, &**text).options(options);
+    let d = match sets {
+        Some((p, b)) => d.sets(p, b),
+        None => d,
+    };
+    (d, state)
 }
 
 impl Fx {
@@ -33,6 +49,7 @@ impl Fx {
             state: DialogState::new(),
             text: Box::new(English),
             window: false,
+            sets: None,
             outcomes: Vec::new(),
             keys_left: false,
         }
@@ -50,8 +67,12 @@ impl Fx {
 fn harness(fx: Fx, size: Vec2) -> Harness<'static, Fx> {
     let mut h = Harness::builder().with_size(size).build_ui_state(
         |ui, fx: &mut Fx| {
-            let Fx { km, options, state, text, window, outcomes, keys_left } = fx;
+            let Fx { km, options, state, text, window, sets, outcomes, keys_left } = fx;
             let dialog = ShortcutsDialog::new(km, text.as_ref()).options(options);
+            let dialog = match sets {
+                Some((p, b)) => dialog.sets(p, b),
+                None => dialog,
+            };
             let out = if *window { dialog.show(ui.ctx(), state) } else { dialog.ui(ui, state) };
             outcomes.extend(out);
             *keys_left |= ui.input(|i| i.events.iter().any(|e| matches!(e, Event::Key { pressed: true, .. })));
@@ -514,4 +535,187 @@ fn rtl_puts_the_detail_pane_left_and_keeps_chords() {
     let table = h.get_by_label("Commands").rect();
     assert!(table.min.x > 300.0, "table on the right: {table:?}");
     assert!(has(&h, "Save As…: ⇧⌘S"));
+}
+
+// ---- Sets ----
+
+fn with_sets(profiles: Profiles) -> Harness<'static, Fx> {
+    let mut fx = Fx::new(fixture(Platform::Mac));
+    fx.sets = Some((profiles, vec![("Fixture Defaults", Overrides::new())]));
+    open(fx)
+}
+
+fn profiles<'h>(h: &'h Harness<'_, Fx>) -> &'h Profiles {
+    &h.state().sets.as_ref().expect("sets").0
+}
+
+/// The last control with this label: a prompt's button rather than the set row's.
+fn click_last(h: &mut Harness<'_, Fx>, label: &str) {
+    h.get_all_by_label(label).last().unwrap_or_else(|| panic!("{label}")).click();
+    h.run();
+}
+
+fn new_set(h: &mut Harness<'_, Fx>, name: &str) {
+    click(h, "New Set…");
+    h.get_by_role_and_label(Role::TextInput, "Name:").type_text(name);
+    h.run();
+    click(h, "Create");
+}
+
+#[test]
+fn cancel_restores_keymap_and_sets() {
+    let mut p = Profiles::default();
+    p.save_as("Mine", Overrides::new(), &[("Fixture Defaults", Overrides::new())]).expect("save_as");
+    let before = p.clone();
+    let mut h = with_sets(p);
+    click(&mut h, "Set:");
+    click_last(&mut h, "Mine");
+    assert_eq!(profiles(&h).active, "Mine");
+    click(&mut h, "Save: ⌘S");
+    press(&mut h, Modifiers::NONE, EguiKey::F2);
+    assert!(has(&h, "(modified)"));
+    new_set(&mut h, "Other");
+    assert_eq!(profiles(&h).active, "Other");
+    assert_eq!(h.state().bindings("file.save"), ["F2"], "based on the current shortcuts");
+    click(&mut h, "Delete");
+    assert!(has(&h, "Delete the set “Other”?"));
+    click_last(&mut h, "Delete");
+    assert!(!profiles(&h).sets.contains_key("Other"));
+    click(&mut h, "Cancel");
+    assert!(h.state().cancelled());
+    assert_eq!(profiles(&h), &before);
+    assert!(h.state().km.overrides().is_empty());
+}
+
+#[test]
+fn ok_stores_edits_of_a_builtin_as_a_copy() {
+    let mut h = with_sets(Profiles::default());
+    assert!(h.get_by_label("Rename…").accesskit_node().is_disabled(), "built-ins cannot be renamed");
+    click(&mut h, "Save: ⌘S");
+    press(&mut h, Modifiers::NONE, EguiKey::F2);
+    click(&mut h, "OK");
+    assert!(h.state().outcomes.iter().any(|o| matches!(o, Outcome::Ok)));
+    let p = profiles(&h);
+    assert_eq!(p.active, "Custom");
+    assert_eq!(p.sets.get("Custom").and_then(|o| o.get("file.save")), Some(&["F2".to_string()][..]));
+}
+
+#[test]
+fn set_export_import_round_trip() {
+    let mut h = with_sets(Profiles::default());
+    new_set(&mut h, "Name");
+    click(&mut h, "Save: ⌘S");
+    press(&mut h, Modifiers::NONE, EguiKey::F2);
+    h.get_all_by_label("Export…").next().expect("the set row's Export…").click();
+    h.run();
+    let (name, json) = h
+        .state()
+        .outcomes
+        .iter()
+        .find_map(|o| if let Outcome::Export { name, json } = o { Some((name.clone(), json.clone())) } else { None })
+        .expect("Outcome::Export");
+    assert_eq!(name, "Name");
+    let edited = h.state().km.overrides().clone();
+
+    let mut fresh = with_sets(profiles(&h).clone());
+    let (d, state) = dialog(fresh.state_mut());
+    assert_eq!(d.import_json(state, &json), Ok("Name 2".into()));
+    fresh.run();
+    assert_eq!(profiles(&fresh).active, "Name 2");
+    assert_eq!(fresh.state().km.overrides(), &edited);
+    assert_eq!(fresh.get_by_label("Set:").accesskit_node().value().as_deref(), Some("Name 2"), "the picker shows it");
+}
+
+fn foreign_set() -> ForeignSet {
+    let read = |text: &str| ForeignKey::read(Some("Default"), text, Flavor::Windows);
+    ForeignSet {
+        name: Some("Theirs".into()),
+        entries: vec![
+            ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(3),
+            ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(4),
+            ForeignEntry::new(Some("File"), ["Export…"]).with_key(read("Ctrl+Blorp")).at_line(5),
+            ForeignEntry::new(Some("Object"), ["Arrange", "Bring to Front"]).with_key(read("Num 7")).at_line(6),
+            ForeignEntry::new(Some("File"), ["Sve Az"]).with_key(read("Ctrl+F9")).at_line(7),
+        ],
+    }
+}
+
+fn review(h: &mut Harness<'_, Fx>) {
+    let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], suggest: true, ..ImportOptions::default() };
+    let (d, state) = dialog(h.state_mut());
+    d.review_import(state, foreign_set(), options);
+    h.run();
+}
+
+#[test]
+fn foreign_import_review_lists_skipped_and_unreadable() {
+    let mut h = with_sets(Profiles::default());
+    review(&mut h);
+    assert!(has(&h, "Import “Theirs”"));
+    for (item, line) in [("File > Save", 3), ("File > Frobnicate", 4), ("File > Export…", 5), ("Object > Arrange > Bring to Front", 6)] {
+        let found = h.query_all_by_label_contains(item).any(|n| n.accesskit_node().value().is_some_and(|l| l.contains(&format!("line {line}"))));
+        assert!(found, "{item} with line {line}");
+    }
+    assert!(h.query_by_label_contains("unknown key").is_some(), "the unreadable key says why");
+    assert!(h.query_by_label_contains("numeric keypad key read as main key").is_some());
+    assert!(h.state().km.overrides().is_empty(), "the review changes nothing");
+    click(&mut h, "Import as New Set");
+    assert_eq!(profiles(&h).active, "Theirs");
+    assert_eq!(h.state().bindings("file.save"), ["Cmd+Alt+S"]);
+    assert!(has(&h, "Imported as “Theirs”"));
+    click(&mut h, "Done");
+    assert!(h.state().state.is_open() && has(&h, "Commands"));
+}
+
+#[test]
+fn picking_a_suggestion_replans_and_is_remembered() {
+    let mut h = with_sets(Profiles::default());
+    review(&mut h);
+    assert!(h.query_by_label_contains("3 commands will change").is_some());
+    click(&mut h, "Command for File > Sve Az");
+    click_last(&mut h, "Save As…");
+    let remembered = h.state().outcomes.iter().find_map(|o| if let Outcome::Remembered(m) = o { Some(m.clone()) } else { None });
+    assert!(remembered.is_some_and(|m| m.values().any(|c| c.id == "file.saveAs")));
+    assert!(h.query_by_label_contains("4 commands will change").is_some());
+    assert!(h.query_by_label_contains("File > Sve Az · line 7 — Save As…: ").is_some(), "the pick moved to Will change");
+    assert!(h.query_by_label("Command for File > Sve Az").is_none());
+}
+
+// ---- Summary ----
+
+#[test]
+fn summary_escapes_html_and_keeps_text_lines() {
+    let mut km = fixture(Platform::Mac);
+    let mut catalogue = km.catalogue().to_vec();
+    let label = "<b>\"Tom\" & 'Jerry'</b>\nNext";
+    catalogue.push(
+        Bindable::new("edit.tricky", label, Scope::app())
+            .with_path(vec!["Edit".into(), "Tricky".into()])
+            .with_default(craft_keymap::Binding::parse("F6").expect("F6")),
+    );
+    km = Keymap::new(catalogue, Scopes::new().with_panel("Timeline").with_context("Text"), Platform::Mac);
+    let mut h = open(Fx::new(km));
+    click(&mut h, "Summarize…");
+    let (html, text) = h
+        .state()
+        .outcomes
+        .iter()
+        .find_map(|o| if let Outcome::Summary { html, text, .. } = o { Some((html.clone(), text.clone())) } else { None })
+        .expect("Outcome::Summary");
+    assert!(html.contains("&lt;b&gt;&quot;Tom&quot; &amp; &#39;Jerry&#39;&lt;/b&gt;"), "{html}");
+    assert!(!html.contains("<b>"));
+    assert!(html.contains("<kbd dir=\"ltr\">⌘S</kbd>"));
+    assert!(text.lines().any(|l| l == "  <b>\"Tom\" & 'Jerry'</b> Next\tF6"), "{text}");
+    assert!(text.lines().any(|l| l == "  Save\t⌘S"), "{text}");
+}
+
+#[test]
+fn narrow_set_row_moves_actions_into_more() {
+    let mut fx = Fx::new(fixture(Platform::Mac));
+    fx.sets = Some((Profiles::default(), vec![("Fixture Defaults", Overrides::new())]));
+    let mut h = harness(fx, vec2(560.0, 600.0));
+    assert!(h.query_by_label("Summarize…").is_none(), "Summarize… is in More");
+    click(&mut h, "More");
+    click(&mut h, "Summarize…");
+    assert!(h.state().outcomes.iter().any(|o| matches!(o, Outcome::Summary { name, .. } if name == "Fixture Defaults")));
 }

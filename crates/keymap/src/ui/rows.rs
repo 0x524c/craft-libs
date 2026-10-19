@@ -176,12 +176,6 @@ impl RowCache {
     pub(crate) fn built(&self) -> &Built {
         &self.built
     }
-
-    /// Forgets the lines, for a change the key does not cover (the interface language).
-    #[allow(dead_code, reason = "for hosts that switch the interface language")]
-    pub(crate) fn invalidate(&mut self) {
-        self.key = None;
-    }
 }
 
 fn top_menu(b: &Bindable) -> Option<&str> {
@@ -255,7 +249,7 @@ fn id_group(id: &str) -> String {
 
 /// A row's group header (`None`: no header) with its rank among groups, and how many path parts
 /// the header stands for.
-fn group(area: &AreaId, b: &Bindable, submenus: bool, text: &dyn Text) -> (u8, Option<String>, usize) {
+pub(crate) fn group(area: &AreaId, b: &Bindable, submenus: bool, text: &dyn Text) -> (u8, Option<String>, usize) {
     let path = b.paths.first().map(Vec::as_slice).unwrap_or_default();
     let menu = |depth| path.first().map(|m| (0, Some(text.segment(m).into_owned()), depth));
     match area {

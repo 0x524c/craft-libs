@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use craft_keymap::ui::{DialogState, English, Options, ShortcutsDialog};
-use craft_keymap::{Keymap, Platform};
+use craft_keymap::{ContextRule, Flavor, ForeignEntry, ForeignKey, ForeignSet, ImportOptions, Keymap, Overrides, Platform, Profiles};
 use egui::{Key as EguiKey, Modifiers, Theme, Vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -20,6 +20,19 @@ struct Fx {
     km: Keymap,
     options: Options,
     state: DialogState,
+    sets: Option<(Profiles, Vec<(&'static str, Overrides)>)>,
+}
+
+impl Fx {
+    fn dialog(&mut self) -> (ShortcutsDialog<'_>, &mut DialogState) {
+        let Fx { km, options, state, sets } = self;
+        let d = ShortcutsDialog::new(km, &English).options(options);
+        let d = match sets {
+            Some((p, b)) => d.sets(p, b),
+            None => d,
+        };
+        (d, state)
+    }
 }
 
 /// A named state of the dialog: window size and what to do before the picture.
@@ -27,7 +40,27 @@ struct Case {
     name: &'static str,
     size: Vec2,
     platform: Platform,
+    /// Show named sets.
+    sets: bool,
     act: fn(&mut Harness<'_, Fx>),
+}
+
+fn foreign_review(h: &mut Harness<'_, Fx>) {
+    let read = |text: &str| ForeignKey::read(Some("Default"), text, Flavor::Windows);
+    let set = ForeignSet {
+        name: Some("Theirs".into()),
+        entries: vec![
+            ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(3),
+            ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(4),
+            ForeignEntry::new(Some("File"), ["Export…"]).with_key(read("Ctrl+Blorp")).at_line(5),
+            ForeignEntry::new(Some("Object"), ["Arrange", "Bring to Front"]).with_key(read("Num 7")).at_line(6),
+            ForeignEntry::new(Some("File"), ["Sve Az"]).with_key(read("Ctrl+F9")).at_line(7),
+        ],
+    };
+    let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], suggest: true, ..ImportOptions::default() };
+    let (d, state) = h.state_mut().dialog();
+    d.review_import(state, set, options);
+    h.run();
 }
 
 fn click(h: &mut Harness<'_, Fx>, label: &str) {
@@ -40,6 +73,7 @@ const CASES: &[Case] = &[
         name: "selected",
         size: Vec2::new(1000.0, 640.0),
         platform: Platform::Mac,
+        sets: false,
         act: |h| {
             h.get_by_label("Save As…").click();
             h.run();
@@ -49,22 +83,38 @@ const CASES: &[Case] = &[
         name: "conflict",
         size: Vec2::new(1000.0, 640.0),
         platform: Platform::Mac,
+        sets: false,
         act: |h| {
             click(h, "Export…: ⌘E");
             h.key_press_modifiers(Modifiers::COMMAND, EguiKey::S);
             h.run();
         },
     },
-    Case { name: "recording", size: Vec2::new(1000.0, 640.0), platform: Platform::Windows, act: |h| click(h, "Save: Ctrl+S") },
+    Case { name: "recording", size: Vec2::new(1000.0, 640.0), platform: Platform::Windows, sets: false, act: |h| click(h, "Save: Ctrl+S") },
     Case {
         name: "narrow",
         size: Vec2::new(560.0, 640.0),
         platform: Platform::Mac,
+        sets: false,
         act: |h| {
             h.get_by_label("Save").click();
             h.run();
         },
     },
+    Case {
+        name: "sets",
+        size: Vec2::new(1000.0, 640.0),
+        platform: Platform::Mac,
+        sets: true,
+        act: |h| {
+            click(h, "Save: ⌘S");
+            h.key_press(EguiKey::F2);
+            h.run();
+            click(h, "New Set…");
+        },
+    },
+    Case { name: "sets-narrow", size: Vec2::new(560.0, 640.0), platform: Platform::Mac, sets: true, act: |h| click(h, "More") },
+    Case { name: "review", size: Vec2::new(1000.0, 640.0), platform: Platform::Mac, sets: true, act: foreign_review },
 ];
 
 #[test]
@@ -74,11 +124,13 @@ fn dialog_screenshots() {
     for case in CASES {
         for (theme_name, theme) in [("light", Theme::Light), ("dark", Theme::Dark)] {
             for scale in [1.0, 2.0] {
-                let fx = Fx { km: fixture(case.platform), options: Options::default(), state: DialogState::new() };
+                let sets = case.sets.then(|| (Profiles::default(), vec![("Fixture Defaults", Overrides::new())]));
+                let fx = Fx { km: fixture(case.platform), options: Options::default(), state: DialogState::new(), sets };
                 let mut h = Harness::builder().with_size(case.size).with_pixels_per_point(scale).with_theme(theme).wgpu().build_ui_state(
                     |ui, fx: &mut Fx| {
                         egui::Frame::central_panel(ui.style()).show(ui, |ui| {
-                            ShortcutsDialog::new(&mut fx.km, &English).options(&fx.options).ui(ui, &mut fx.state);
+                            let (d, state) = fx.dialog();
+                            d.ui(ui, state);
                         });
                     },
                     fx,

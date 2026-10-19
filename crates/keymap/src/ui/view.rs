@@ -26,6 +26,11 @@ use crate::ui::state::{Answer, DialogState, Env, Prompt, Recording, Target};
 use crate::ui::style::{self, DialogStyle};
 use crate::ui::text::trigger_text;
 
+#[path = "review.rs"]
+mod review;
+#[path = "sets.rs"]
+mod sets;
+
 /// Below this width the detail pane goes under the table.
 const NARROW: f32 = 720.0;
 /// Smallest table or detail pane when dragging the divider.
@@ -125,6 +130,13 @@ impl Draw<'_, '_> {
         r.clicked()
     }
 
+    /// The width a [`Button`] with `text` takes.
+    fn button_width(&self, ui: &Ui, text: &str) -> f32 {
+        let pad = ui.spacing().button_padding.x * 2.0;
+        let g = WidgetText::from(self.vis(text)).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, TextStyle::Button);
+        (g.size().x + pad).max(ui.spacing().interact_size.x)
+    }
+
     fn icon_button(&self, ui: &mut Ui, label: &str, selected: bool, paint: fn(&Painter, Rect, Color32)) -> Response {
         IconButton::new(label, Vec2::splat(ICON), &self.icons).selected(selected).show(ui, |ui, rect, color| paint(ui.painter(), rect, color))
     }
@@ -211,7 +223,8 @@ impl Draw<'_, '_> {
         let gap = ui.spacing().item_spacing.y;
         ui.scope_builder(UiBuilder::new().max_rect(full).layout(Layout::top_down(Align::Min)), |ui| {
             self.sets_row(ui);
-            self.header(ui);
+            // Show, Filter and Search act on the table, which the import review replaces.
+            ui.add_enabled_ui(self.state.review.is_none(), |ui| self.header(ui));
             let rest = ui.available_rect_before_wrap();
             let bottom_h = self.state.bottom_h.clamp(0.0, rest.height());
             let mid_bottom = (rest.max.y - bottom_h - gap).max(rest.min.y);
@@ -229,15 +242,6 @@ impl Draw<'_, '_> {
             }
         });
         ui.advance_cursor_after_rect(full);
-    }
-
-    /// The set row: drawn here, above the header, when the app passes sets (§2.6).
-    fn sets_row(&mut self, _ui: &mut Ui) {}
-
-    /// The import review takes the place of the table and detail pane while it is open (§2.7).
-    /// Returns whether it drew.
-    fn review(&mut self, _ui: &mut Ui, _rect: Rect) -> bool {
-        false
     }
 
     fn child(&mut self, ui: &mut Ui, rect: Rect, f: impl FnOnce(&mut Self, &mut Ui)) {
@@ -1177,16 +1181,14 @@ impl Draw<'_, '_> {
                     self.state.ask_reset_all();
                 }
             }
+            if self.env.sets.is_none() && self.env.options.summary {
+                let label = self.ui("Summarize…");
+                if self.button(ui, true, &label, "shortcuts.summarize") {
+                    self.state.summarize(self.env);
+                }
+            }
             let gap = ui.spacing().item_spacing.x;
-            let pad = ui.spacing().button_padding.x * 2.0;
-            let min = ui.spacing().interact_size.x;
-            let width: f32 = right
-                .iter()
-                .map(|(t, _)| {
-                    let g = WidgetText::from(self.vis(t)).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, TextStyle::Button);
-                    (g.size().x + pad).max(min) + gap
-                })
-                .sum();
+            let width: f32 = right.iter().map(|(t, _)| self.button_width(ui, t) + gap).sum();
             ui.add_space((ui.available_width() - width).max(0.0));
             for (text, id) in &right {
                 if self.button(ui, true, text, id) {
