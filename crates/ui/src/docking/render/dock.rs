@@ -209,6 +209,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if !usable(rect) {
             return;
         }
+        self.record_column_float(column.groups.iter().flat_map(|g| g.panels.iter().cloned()).collect(), rect);
         let bar = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.top() + self.style.column_bar_height).min(rect.bottom())));
         self.column_bar(ui, column, first, bar, rect, edge);
         let body = Rect::from_min_max(pos2(rect.left(), bar.bottom()), rect.max);

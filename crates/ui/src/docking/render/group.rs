@@ -32,6 +32,7 @@ const BORDER_BAND: f32 = 4.0;
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     pub(super) fn group(&mut self, ui: &mut Ui, panels: &[P], active: usize, minimized: bool, rect: Rect, kind: GroupKind) {
         let Some(selected) = panels.get(active) else { return };
+        self.record_float(panels, rect.size(), rect.size());
         let policy = self.permissions(selected);
         let splits = kind == GroupKind::Frame && policy.accepts_splits;
         let rtl = self.style.right_to_left;

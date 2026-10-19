@@ -311,3 +311,48 @@ fn side_zones_map_to_the_placement_the_anchor_container_takes_in_either_directio
     assert_eq!(columns.len(), 2);
     assert_eq!(columns[1].groups[0].panels, vec![s("history")]);
 }
+
+/// `layers` prefers 200x150 when it floats.
+struct Sized;
+
+impl DockContent<P> for Sized {
+    fn body(&mut self, _: &mut egui::Ui, _: &P) {}
+    fn permissions(&self, panel: &P) -> Permissions {
+        permissions(panel)
+    }
+    fn floating_size(&self, panel: &P) -> Option<egui::Vec2> {
+        (panel == "layers").then_some(egui::vec2(200.0, 150.0))
+    }
+}
+
+#[test]
+fn float_without_a_rect_takes_the_drag_size_inside_the_dock_area() {
+    // The area starts under a 30 pt menu bar.
+    let area = egui::Rect::from_min_max(egui::pos2(0.0, 30.0), egui::pos2(800.0, 600.0));
+    let d = testing::DockDriver::new(workspace().layout, Sized).with_area(area);
+    let space = float_space::<P>(&d.ctx, d.id).expect("the area records its float space");
+    assert_eq!(space.area, area);
+    let float = |params: Value| parse(params).unwrap().to_actions_in(&workspace(), false, &space).unwrap();
+
+    let panel = float(json!({"command": "window.panel.float", "panel": "layers"}));
+    assert_eq!(panel, vec![Action::Float { panel: s("layers"), rect: [24.0, 54.0, 200.0, 150.0] }], "floating_size, inset in the area");
+    let [Action::MoveGroup { to: Target::Float { rect: Some([x, y, width, height]) }, .. }] =
+        float(json!({"command": "window.panel.float", "panel": "history", "group": true}))[..]
+    else {
+        panic!()
+    };
+    assert_eq!([x, y], [24.0, 54.0]);
+    assert!(width > 100.0 && width <= 240.0 && height <= 320.0, "the docked group's size, capped: {width}x{height}");
+
+    // Given values stay exactly; a lone floating window keeps its rect.
+    let given = float(json!({"command": "window.panel.float", "panel": "layers", "x": 5, "y": 6, "width": 100, "height": 90}));
+    assert_eq!(given, vec![Action::Float { panel: s("layers"), rect: [5.0, 6.0, 100.0, 90.0] }]);
+    let color = float(json!({"command": "window.panel.float", "panel": "color", "group": true}));
+    assert_eq!(color, vec![Action::MoveGroup { panel: s("color"), to: Target::Float { rect: None } }]);
+
+    // Without recorded sizes a unit floats at the layout's size, shrunk into a small area.
+    let small = FloatSpace::new(egui::Rect::from_min_size(egui::pos2(0.0, 30.0), egui::vec2(200.0, 200.0)));
+    let applied =
+        parse(json!({"command": "window.panel.float", "panel": "layers", "group": true})).unwrap().to_actions_in(&workspace(), false, &small);
+    assert_eq!(applied, Ok(vec![Action::MoveGroup { panel: s("layers"), to: Target::Float { rect: Some([0.0, 30.0, 200.0, 200.0]) } }]));
+}

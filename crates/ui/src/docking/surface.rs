@@ -218,6 +218,68 @@ impl<P> Default for DockOutput<P> {
     }
 }
 
+/// Room between the dock area's top-left corner and a unit a command floats.
+const FLOAT_INSET: f32 = 24.0;
+
+/// Where a docking command floats a panel, group or column when it gives no rect (see
+/// `DockCommand::to_actions_in`, feature `serde`). [`DockArea`] records one each frame; read it
+/// with [`float_space`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct FloatSpace<P> {
+    /// The rect the area drew in. A floated unit goes inside it, 24 points from its top-left
+    /// corner, so it stays clear of the app's menu bar.
+    pub area: Rect,
+    /// What a drag floats from each drawn panel: the panel alone, its group and its dock column.
+    pub(super) panels: Vec<(P, Vec2)>,
+    pub(super) groups: Vec<(P, Vec2)>,
+    pub(super) columns: Vec<(P, Vec2)>,
+}
+
+impl<P: PartialEq> FloatSpace<P> {
+    /// An area with no recorded sizes: commands float units at the layout's sizes.
+    pub fn new(area: Rect) -> Self {
+        Self { area, panels: Vec::new(), groups: Vec::new(), columns: Vec::new() }
+    }
+}
+
+/// Lookups for `DockCommand`, which needs feature `serde`.
+#[cfg_attr(not(feature = "serde"), allow(dead_code))]
+impl<P: PartialEq> FloatSpace<P> {
+    pub(super) fn panel(&self, panel: &P) -> Option<Vec2> {
+        Self::find(&self.panels, panel)
+    }
+
+    pub(super) fn group(&self, panel: &P) -> Option<Vec2> {
+        Self::find(&self.groups, panel)
+    }
+
+    pub(super) fn column(&self, panel: &P) -> Option<Vec2> {
+        Self::find(&self.columns, panel)
+    }
+
+    /// The first record wins: an iconic panel is recorded at its icon before its flyout.
+    fn find(sizes: &[(P, Vec2)], panel: &P) -> Option<Vec2> {
+        sizes.iter().find(|(p, _)| p == panel).map(|(_, size)| *size)
+    }
+
+    /// `[x, y, width, height]` of `size` inside the area, inset from its top-left corner and
+    /// shrunk to fit.
+    pub(super) fn place(&self, size: Vec2) -> [f32; 4] {
+        let size = size.min(self.area.size());
+        let min = (self.area.min + Vec2::splat(FLOAT_INSET)).min(self.area.max - size).max(self.area.min);
+        [min.x, min.y, size.x, size.y]
+    }
+}
+
+/// The [`FloatSpace`] the area recorded on its last frame.
+pub fn float_space<P: Clone + Send + Sync + 'static>(ctx: &Context, area_id: Id) -> Option<FloatSpace<P>> {
+    ctx.data(|d| d.get_temp(float_space_key(area_id)))
+}
+
+fn float_space_key(area: Id) -> Id {
+    area.with("float-space")
+}
+
 /// A request for host state outside the layout.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -680,6 +742,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             output: DockOutput::default(),
             frame,
             iconic: super::render::Iconic::new(self.auto_collapse),
+            float_space: FloatSpace::new(rect),
         };
         if let Some(root) = &view.root {
             renderer.node(ui, root, rect, &mut Vec::new());
@@ -690,6 +753,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
         renderer.finish_group_drag(ui);
         renderer.finish_drag(ui.ctx());
         super::hits::record(ui.ctx(), self.id, &view, &renderer.owned_interactions);
+        ui.ctx().data_mut(|d| d.insert_temp(float_space_key(self.id), renderer.float_space));
         ui.ctx().data_mut(|d| d.insert_temp(self.id.with("owned-interactions"), renderer.owned_interactions));
         renderer.output
     }

@@ -41,6 +41,8 @@ pub(super) struct Renderer<'a, P> {
     pub(super) frame: FrameState<P>,
     /// [D] Flyout and iconic column state for this frame.
     pub(super) iconic: Iconic<P>,
+    /// What a drag would float from each drawn panel, group and column, for commands.
+    pub(super) float_space: crate::docking::FloatSpace<P>,
 }
 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {

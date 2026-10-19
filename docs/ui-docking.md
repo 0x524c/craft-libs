@@ -159,7 +159,8 @@ let command: DockCommand<PanelId> = serde_json::from_value(params)?;
 if command.is_app_owned() {
     return app.workspace_command(command);
 }
-let closed = command.apply(&mut app.workspace, style.right_to_left, |panel| app.permissions(panel))?;
+let space = float_space(ctx, DOCK_ID).unwrap_or_else(|| FloatSpace::new(ctx.content_rect()));
+let closed = command.apply_in(&mut app.workspace, style.right_to_left, &space, |panel| app.permissions(panel))?;
 ```
 
 | Id | Params (`?` is optional) |
@@ -183,6 +184,13 @@ let closed = command.apply(&mut app.workspace, style.right_to_left, |panel| app.
   `to_actions` take the layout's `right_to_left` for that.
 - `group` moves the panel's whole group; `column` moves its dock column, or its whole window when
   it floats. `side` is `Start` or `End`.
+- `window.panel.float` without a rect floats what it moves at the size a drag floats it at: the
+  panel's `floating_size`, else its docked group or column size, capped like a drag. It goes
+  inside the dock area, 24 points from its top-left corner, so it stays clear of the menu bar.
+  The area records that geometry in a `FloatSpace` each frame; `float_space(ctx, id)` reads it
+  and `apply_in` and `to_actions_in` take it. `x`, `y`, `width` and `height` replace the matching
+  values, and a group or column that is already a whole floating window keeps its rect.
+  `apply` and `to_actions` have no area and float at 48, 48 in window coordinates.
 - Without a value, `minimized`, `iconic` and `locked` toggle.
 - `ui.dock` operations are those of LightCraft, PDFCraft, CADCraft and SoundCraft: `open`,
   `close`, `activate`, `float {rect}`, `moveFloating {rect}`, `move {target, zone?, before?}`,

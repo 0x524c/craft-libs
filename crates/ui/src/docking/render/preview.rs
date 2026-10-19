@@ -289,6 +289,23 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         size.max(limits.min + header).min(limits.max + header)
     }
 
+    /// Record what a drag floats from `panels`, one group drawn at `group` whose panels drag
+    /// from `panel` rects, for commands that float without a rect.
+    pub(super) fn record_float(&mut self, panels: &[P], panel: Vec2, group: Vec2) {
+        let group = self.group_float_size(panels, group);
+        for p in panels {
+            let size = self.float_size(p, panel);
+            self.float_space.panels.push((p.clone(), size));
+            self.float_space.groups.push((p.clone(), group));
+        }
+    }
+
+    /// Record what a drag floats from a dock column drawn at `rect`.
+    pub(super) fn record_column_float(&mut self, members: Vec<P>, rect: Rect) {
+        let size = self.group_float_size(&members, rect.size());
+        self.float_space.columns.extend(members.into_iter().map(|p| (p, size)));
+    }
+
     /// Size of a group or column floated by a drag or Float Tab Group: the source width, and the
     /// tallest member's floating size, else the source height capped like a panel leaving a
     /// dock column. A group that already floats keeps its size.

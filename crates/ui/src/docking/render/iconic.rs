@@ -188,6 +188,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let response = ui.interact(grip, self.id.with(("icon-grip", Some(first))), Sense::drag());
         let response = if movable { response.on_hover_cursor(egui::CursorIcon::Grab) } else { response };
         self.register_interaction(ui.ctx(), response.id);
+        let height = group.height.filter(|h| h.is_finite()).unwrap_or(FLYOUT_HEIGHT);
+        let source = Rect::from_min_size(grip.min, vec2(width.max(self.style.min_pane), height.max(self.style.tab_height)));
+        self.record_float(&group.panels, vec2(grip.width(), self.row_height()), source.size());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.move_group_label));
         let color = if response.hovered() || response.dragged() { self.style.text } else { self.style.inactive_text };
         let painter = ui.painter().with_clip_rect(grip.intersect(ui.clip_rect()));
@@ -195,8 +198,6 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         painter.hline((grip.center().x - 8.0)..=(grip.center().x + 8.0), grip.center().y + 1.0, Stroke::new(1.0, color));
         if movable && response.drag_started() {
             let origin = ui.input(|i| i.pointer.press_origin()).or_else(|| ui.ctx().pointer_interact_pos()).unwrap_or(grip.center());
-            let height = group.height.filter(|h| h.is_finite()).unwrap_or(FLYOUT_HEIGHT);
-            let source = Rect::from_min_size(grip.min, vec2(width.max(self.style.min_pane), height.max(self.style.tab_height)));
             let drag = GroupDrag {
                 panel: first.clone(),
                 original: [source.left(), source.top(), source.width(), source.height()],
