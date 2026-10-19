@@ -10,15 +10,11 @@ use egui::{Context, Key, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, p
 
 use super::{GroupKind, Renderer};
 use crate::docking::{
-    Action, Column, Group, GroupDrag, GroupGesture, Node, Profile, Side, Target,
+    Action, Column, DockEvent, DockStyle, Group, GroupDrag, GroupGesture, Node, Profile, Side, Target,
     targets::{DockDrop, DockTarget, column_edge, horizontal_line, resolve_dock, usable, vertical_line},
 };
 use crate::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis};
 
-/// Width of an iconic column without a saved width.
-const ICONIC_WIDTH: f32 = 36.0;
-/// Widest an iconic column gets by dragging its inner edge.
-const ICONIC_MAX: f32 = 240.0;
 /// Width of the »/« button at the outer end of a column bar.
 const COLLAPSE_WIDTH: f32 = 18.0;
 
@@ -44,8 +40,12 @@ fn side_at(edge: Edge, right_to_left: bool) -> Side {
     }
 }
 
-pub(in crate::docking) fn column_width<P>(column: &Column<P>) -> f32 {
-    if column.iconic { column.iconic_width.unwrap_or(ICONIC_WIDTH) } else { column.width }
+pub(in crate::docking) fn column_width<P>(column: &Column<P>, style: &DockStyle) -> f32 {
+    if column.iconic {
+        column.iconic_width.unwrap_or(style.iconic_width).clamp(style.iconic_width, style.iconic_max_width)
+    } else {
+        column.width
+    }
 }
 
 /// Heights of stacked groups in a column body `room` high. Each entry is (minimized, saved
@@ -104,7 +104,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         };
         let gap = self.style.gap;
         let room = (rect.width() - gap - self.node_limits(other).min.x).clamp(0.0, rect.width());
-        let width = columns.iter().map(column_width).sum::<f32>().clamp(0.0, room);
+        let width = columns.iter().map(|c| column_width(c, self.style)).sum::<f32>().clamp(0.0, room);
         let (dock, rest) = match edge_of(side, self.style.right_to_left) {
             Edge::Left => (
                 Rect::from_min_max(rect.min, pos2(rect.left() + width, rect.bottom())),
@@ -141,12 +141,12 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if usable(rect) {
             ui.painter().rect_filled(rect, 0.0, self.style.background);
         }
-        let total: f32 = columns.iter().map(column_width).sum();
+        let total: f32 = columns.iter().map(|c| column_width(c, self.style)).sum();
         let mut x = outer;
         let mut drawn = Vec::new();
         for (index, column) in columns.iter().enumerate() {
             let Some(first) = column.groups.first().and_then(|g| g.panels.first()) else { continue };
-            let width = column_width(column).min((rect.width() - (x - outer).abs()).max(0.0));
+            let width = column_width(column, self.style).min((rect.width() - (x - outer).abs()).max(0.0));
             let inner = x + inward * width;
             let column_rect = Rect::from_x_y_ranges(x.min(inner)..=x.max(inner), rect.y_range());
             self.column(ui, column, first, column_rect, edge);
@@ -161,8 +161,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         // Registered after the columns, so the narrow hit areas win at the edges.
         for (column, first, width, inner) in drawn {
-            let others = total - column_width(column);
-            let (lo, hi) = if column.iconic { (ICONIC_WIDTH, ICONIC_MAX) } else { self.column_bounds(column) };
+            let others = total - column_width(column, self.style);
+            let (lo, hi) = if column.iconic { (self.style.iconic_width, self.style.iconic_max_width) } else { self.column_bounds(column) };
             let hi = hi.min(room - others).max(lo.min(room - others).max(0.0));
             let lo = lo.min(hi);
             let divider = Rect::from_x_y_ranges((inner - 1.0)..=(inner + 1.0), rect.y_range());
@@ -216,6 +216,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let bar = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.top() + self.style.column_bar_height).min(rect.bottom())));
         self.column_bar(ui, column, first, bar, rect, edge);
         let body = Rect::from_min_max(pos2(rect.left(), bar.bottom()), rect.max);
+        if column.iconic && usable(body) {
+            self.iconic_column(ui, column, body, edge);
+        }
         if column.iconic || !usable(body) {
             ui.painter().rect_stroke(rect, 0.0, self.style.border, StrokeKind::Inside);
             return;
@@ -404,6 +407,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             if self.menu_action(ui, &label) {
                 self.output.actions.push(Action::SetIconic { panel: first.clone(), iconic: !column.iconic });
             }
+            if self.auto_collapse_item(ui) {
+                self.output.events.push(DockEvent::ToggleAutoCollapse);
+            }
         });
     }
 
@@ -411,6 +417,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// covers `pointer`. Covered dock targets take nothing.
     fn dock_covered(&self, ctx: &Context, pointer: Pos2, moving: Option<&P>) -> bool {
         self.blockers.iter().any(|r| r.contains(pointer))
+            || self.iconic.covers(pointer)
             || self.layout.floating.iter().any(|window| {
                 let Some(first) = window.panels().next() else { return false };
                 !moving.is_some_and(|p| window.contains(p))
@@ -486,7 +493,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// The insertion line of a dock target.
     pub(super) fn paint_dock_line(&self, ctx: &Context, line: Rect) {
         if usable(line) {
-            self.preview_painter(ctx).rect_filled(line, 1.0, self.style.accent);
+            let painter = self.preview_painter(ctx);
+            self.iconic.outline(&painter, line, self.style);
+            painter.rect_filled(line, 1.0, self.style.accent);
         }
     }
 }

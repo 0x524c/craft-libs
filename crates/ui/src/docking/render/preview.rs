@@ -269,7 +269,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if let Some(size) = self.content.floating_size(panel).filter(|s| s.is_finite() && s.x > 0.0 && s.y > 0.0) {
             return size;
         }
-        let mut size = source;
+        let mut size = self.iconic.float_width(panel).map_or(source, |width| vec2(width, DOCKED_FLOAT_HEIGHT));
         if matches!(self.layout.place(panel), Some(Place::Dock { .. })) {
             size.y = size.y.min(DOCKED_FLOAT_HEIGHT);
         }

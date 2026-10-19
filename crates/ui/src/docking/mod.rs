@@ -7,13 +7,18 @@
 
 pub mod chrome;
 mod dock_model;
+mod hits;
 mod model;
 mod render;
 mod resize;
 mod surface;
 mod targets;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 mod workspace;
 
+pub use hits::{Divider, Hit, ResizeEdge};
+pub use render::{close_flyout, flyout, open_flyout};
 pub use dock_model::{Column, ColumnLocation, Group, GroupLocation, PanelState, Side, Target};
 pub use model::{Action, DockError, Floating, Layout, Location, MAX_DEPTH, MAX_PANELS, Node, Permissions, Placement, StackEntry, Zone};
 pub use surface::{
@@ -31,6 +36,8 @@ mod dock_tests;
 mod floating_tests;
 #[cfg(test)]
 mod group_tests;
+#[cfg(test)]
+mod iconic_tests;
 #[cfg(test)]
 mod model_tests;
 #[cfg(test)]
