@@ -68,6 +68,15 @@ fn move_targets_skip_the_panel_itself_and_protected_anchors() {
 }
 
 #[test]
+fn move_targets_skip_the_panels_own_group() {
+    let layout = sample();
+    let all = |_: &u32| Permissions::default();
+    assert_eq!(layout.move_targets(&3, all), vec![&1, &5, &6]);
+    let pair = Layout { root: Some(tabs(&[1, 2], 0)), floating: Vec::new() };
+    assert!(pair.move_targets(&1, all).is_empty());
+}
+
+#[test]
 fn invalid_moves_are_atomic_including_after_a_source_would_have_been_removed() {
     let layout = sample();
     for action in [
