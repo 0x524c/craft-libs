@@ -26,6 +26,8 @@ use crate::ui::state::{Answer, DialogState, Env, Prompt, Recording, Target};
 use crate::ui::style::{self, DialogStyle};
 use crate::ui::text::trigger_text;
 
+#[path = "keyboard.rs"]
+pub(crate) mod keyboard;
 #[path = "review.rs"]
 mod review;
 #[path = "sets.rs"]
@@ -321,6 +323,7 @@ impl Draw<'_, '_> {
                     capture::lock_focus(ui, r.id);
                 }
             }
+            self.keyboard_toggle(ui);
         });
     }
 
@@ -405,7 +408,20 @@ impl Draw<'_, '_> {
 
     // ---- Table and detail pane ----
 
+    /// The table and detail pane, with the keyboard pane under both when it is on.
     fn middle(&mut self, ui: &mut Ui, mid: Rect) {
+        let Some(kb_h) = self.keyboard_height(mid.height()) else {
+            self.table_and_detail(ui, mid);
+            return;
+        };
+        let gap = ui.spacing().item_spacing.y;
+        let top = Rect::from_min_max(mid.min, pos2(mid.max.x, mid.max.y - kb_h - gap));
+        let pane = Rect::from_min_max(pos2(mid.min.x, mid.max.y - kb_h), mid.max);
+        self.table_and_detail(ui, top);
+        self.child(ui, pane, |d, ui| d.keyboard_pane(ui));
+    }
+
+    fn table_and_detail(&mut self, ui: &mut Ui, mid: Rect) {
         let wide = mid.width() >= NARROW;
         let axis = if wide { SplitAxis::Horizontal } else { SplitAxis::Vertical };
         // Right to left: the detail pane goes on the left.
@@ -791,11 +807,15 @@ impl Draw<'_, '_> {
         ui.painter().galley(pos2(rect.min.x + 8.0, rect.center().y - g.size().y / 2.0), g, color);
         let keys = ui.painter().layout_job(LayoutJob::single_section(f.keys.clone(), fmt));
         ui.painter().galley(pos2(rect.max.x - shortcut_w - ICON - 4.0, rect.center().y - keys.size().y / 2.0), keys, color);
-        if let Some(by) = &f.now_used_by {
-            let tip = fill(self.ui("Now used by {label}"), &[("label", by)]);
-            let resp = ui.interact(rect, self.base.with(("fixed", &f.label, &f.keys)), Sense::hover());
-            resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, format!("{}: {} ({tip})", f.label, f.keys)));
-            resp.on_hover_text(self.vis(&tip));
+        let resp = ui.interact(rect, self.base.with(("fixed", &f.label, &f.keys)), Sense::hover());
+        let label = fill(self.ui("{label}: {chord}"), &[("label", &f.label), ("chord", &f.keys)]);
+        match &f.now_used_by {
+            Some(by) => {
+                let tip = fill(self.ui("Now used by {label}"), &[("label", by)]);
+                resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, format!("{label} ({tip})")));
+                resp.on_hover_text(self.vis(&tip));
+            }
+            None => resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &label)),
         }
     }
 
@@ -1167,7 +1187,7 @@ impl Draw<'_, '_> {
         let right: Vec<(String, &str)> = if editable {
             vec![(self.ui("Cancel"), "shortcuts.cancel"), (self.ui("OK"), "shortcuts.ok")]
         } else {
-            vec![(self.ui("Close"), "shortcuts.ok")]
+            vec![(self.ui("Close"), "shortcuts.close")]
         };
         ui.horizontal(|ui| {
             if editable {
@@ -1181,7 +1201,8 @@ impl Draw<'_, '_> {
                     self.state.ask_reset_all();
                 }
             }
-            if self.env.sets.is_none() && self.env.options.summary {
+            // With sets, Summarize… is in the set row, which a read-only dialog does not show.
+            if (self.env.sets.is_none() || !editable) && self.env.options.summary {
                 let label = self.ui("Summarize…");
                 if self.button(ui, true, &label, "shortcuts.summarize") {
                     self.state.summarize(self.env);

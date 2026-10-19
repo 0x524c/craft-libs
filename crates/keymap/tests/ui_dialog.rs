@@ -4,7 +4,7 @@
 
 use std::borrow::Cow;
 
-use craft_keymap::ui::{ConflictMode, DialogState, English, Options, Outcome, ShortcutsDialog, Text};
+use craft_keymap::ui::{ConflictMode, DialogState, English, FixedRow, Options, Outcome, ShortcutsDialog, Text};
 use craft_keymap::{
     Bindable, Chord, CommandRef, ConflictKind, ContextRule, Flavor, ForeignEntry, ForeignKey, ForeignSet, ImportOptions, Keymap, Kind, Overrides,
     Platform, Profiles, Scope, Scopes, Trigger,
@@ -468,6 +468,7 @@ fn window_close_is_cancel() {
 fn automation_ids_are_reported() {
     let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
     let mut fx = Fx::new(fixture(Platform::Mac));
+    fx.options.keyboard = true;
     let sink = seen.clone();
     fx.options.on_widget = Some(Box::new(move |id, rect, label| {
         assert!(rect.is_finite() && !label.is_empty(), "{id}");
@@ -496,6 +497,9 @@ fn automation_ids_are_reported() {
         "shortcuts.resetAll",
         "shortcuts.cancel",
         "shortcuts.ok",
+        "shortcuts.keyboard",
+        "shortcuts.mod.cmd",
+        "shortcuts.key.F7",
     ] {
         assert!(ids.iter().any(|s| s == id), "{id} not reported");
     }
@@ -718,4 +722,113 @@ fn narrow_set_row_moves_actions_into_more() {
     click(&mut h, "More");
     click(&mut h, "Summarize…");
     assert!(h.state().outcomes.iter().any(|o| matches!(o, Outcome::Summary { name, .. } if name == "Fixture Defaults")));
+}
+
+// ---- On-screen keyboard, fixed rows, read-only ----
+
+fn with_keyboard(options: impl FnOnce(&mut Fx)) -> Harness<'static, Fx> {
+    let mut fx = Fx::new(fixture(Platform::Mac));
+    fx.options.keyboard = true;
+    options(&mut fx);
+    open(fx)
+}
+
+/// What a key's colour means, as its accessibility description says it.
+fn holders_class(h: &Harness<'_, Fx>, key: &str) -> String {
+    h.get_by_role_and_label(Role::Button, key).accesskit_node().description().unwrap_or_default().to_string()
+}
+
+#[test]
+fn keyboard_colours_keys_and_assigns_to_the_selected_command() {
+    let mut h = with_keyboard(|_| {});
+    assert_eq!(holders_class(&h, "M: Marquee Tool, Elliptical Marquee Tool"), "Application");
+    assert_eq!(holders_class(&h, "L: Loop (Timeline)"), "Panel or context");
+    assert_eq!(holders_class(&h, "F7"), "Not assigned");
+
+    click(&mut h, "⌘ Command");
+    assert_eq!(holders_class(&h, "⌘S: Save"), "Application");
+    assert_eq!(holders_class(&h, "⌘B: Bold (Text)"), "Panel or context");
+    // Held modifiers add to the toggles.
+    h.event(Event::ModifiersChanged(Modifiers::SHIFT));
+    h.run();
+    assert!(has(&h, "⇧⌘S: Save As…"));
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
+    h.run();
+    click(&mut h, "⌘ Command");
+
+    click(&mut h, "L: Loop (Timeline)");
+    assert!(has(&h, "Key: L"));
+    assert!(h.get_by_label("Assign to Selected").accesskit_node().is_disabled(), "no command selected");
+    click(&mut h, "Save");
+    click(&mut h, "Assign to Selected");
+    assert_eq!(h.state().bindings("file.save"), ["Cmd+S", "L"]);
+    assert_eq!(holders_class(&h, "L: Save, Loop (Timeline)"), "Both");
+
+    // A holder in the key list selects its command.
+    click(&mut h, "Loop (Timeline)");
+    assert!(selected(&h, "Loop"));
+}
+
+#[test]
+fn fixed_rows_are_struck_through_when_a_command_takes_their_key() {
+    let mut fx = Fx::new(fixture(Platform::Mac));
+    let row = |label: &str, keys: &str, chord: Option<&str>| FixedRow {
+        group: "Rating".into(),
+        label: label.into(),
+        keys: keys.into(),
+        chord: chord.map(|c| Trigger::parse(c).unwrap_or_else(|e| panic!("{c}: {e}"))),
+    };
+    fx.options.fixed = vec![row("Rate 1", "1", Some("1")), row("Rate 2", "2", Some("2")), row("Pan", "Space (hold)", None)];
+    let mut h = open(fx);
+    choose_area(&mut h, "Fixed Keys");
+    assert!(has(&h, "Rate 1: 1"));
+    assert!(has(&h, "Pan: Space (hold)"));
+
+    choose_area(&mut h, "All Commands");
+    click(&mut h, "Save: ⌘S");
+    press(&mut h, Modifiers::NONE, EguiKey::Num1);
+    assert_eq!(h.state().bindings("file.save"), ["1"]);
+    choose_area(&mut h, "Fixed Keys");
+    assert!(has(&h, "Rate 1: 1 (Now used by Save)"));
+    assert!(has(&h, "Rate 2: 2"));
+}
+
+#[test]
+fn read_only_has_no_edit_controls() {
+    let mut h = with_keyboard(|fx| {
+        fx.options.editable = false;
+        fx.sets = Some((Profiles::default(), vec![("Fixture Defaults", Overrides::new())]));
+    });
+    click(&mut h, "Save");
+    click(&mut h, "Save: ⌘S");
+    assert!(!has(&h, "Save: press keys"), "no recording");
+    click(&mut h, "S");
+    assert!(has(&h, "Key: S"));
+    for label in [
+        "Undo",
+        "Redo",
+        "Reset All…",
+        "OK",
+        "Cancel",
+        "Set:",
+        "New Set…",
+        "Import…",
+        "Add a shortcut to Save",
+        "Restore the default for Save",
+        "Remove ⌘S from Save",
+        "New shortcut:",
+        "Context:",
+        "Assign",
+        "Use Default",
+        "Clear",
+        "Assign to Selected",
+    ] {
+        assert!(!has(&h, label), "{label} is shown");
+    }
+    press(&mut h, Modifiers::COMMAND, EguiKey::Z);
+    assert_eq!(h.state().bindings("file.save"), ["Cmd+S"]);
+    click(&mut h, "Summarize…");
+    assert!(h.state().outcomes.iter().any(|o| matches!(o, Outcome::Summary { .. })));
+    click(&mut h, "Close");
+    assert!(h.state().cancelled());
 }

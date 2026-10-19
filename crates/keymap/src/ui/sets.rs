@@ -31,14 +31,16 @@ struct Item {
 }
 
 impl Draw<'_, '_> {
-    /// Drawn above the header when the app passes sets.
+    /// Drawn above the header when the app passes sets and the dialog is editable.
     pub(super) fn sets_row(&mut self, ui: &mut Ui) {
+        if !self.env.options.editable {
+            return;
+        }
         let Some((p, b)) = self.env.sets.as_ref() else { return };
         let names = p.names(b);
         let active = p.active_name(b).to_string();
         let builtin = Profiles::is_builtin(&active, b);
         let modified = DialogState::is_modified(self.env);
-        let editable = self.env.options.editable;
         let items = self.set_items(builtin, modified);
         let mut act = None;
         ui.add_enabled_ui(self.state.review.is_none(), |ui| {
@@ -46,16 +48,14 @@ impl Draw<'_, '_> {
                 let set_label = self.ui("Set:");
                 let l = ui.label(self.vis(&set_label));
                 let mut pick = None;
-                let combo = ui.add_enabled_ui(editable, |ui| {
-                    ComboBox::from_id_salt(self.base.with("set")).selected_text(self.vis(&active)).show_ui(ui, |ui| {
-                        for n in &names {
-                            if ui.selectable_label(*n == active, self.vis(n)).clicked() {
-                                pick = Some(n.clone());
-                            }
+                let combo = ComboBox::from_id_salt(self.base.with("set")).selected_text(self.vis(&active)).show_ui(ui, |ui| {
+                    for n in &names {
+                        if ui.selectable_label(*n == active, self.vis(n)).clicked() {
+                            pick = Some(n.clone());
                         }
-                    })
+                    }
                 });
-                let combo = combo.inner.response.labelled_by(l.id);
+                let combo = combo.response.labelled_by(l.id);
                 self.tag(|| "shortcuts.set".into(), combo.rect, &set_label);
                 if modified {
                     ui.label(RichText::new(self.vis(&self.ui("(modified)"))).color(self.style.dim));
@@ -75,19 +75,16 @@ impl Draw<'_, '_> {
 
     fn set_items(&self, builtin: bool, modified: bool) -> Vec<Item> {
         let item = |act, text: &str, id, enabled| Item { act, text: self.ui(text), id, enabled };
-        let mut items = Vec::new();
-        if self.env.options.editable {
-            items.push(item(Act::New, "New Set…", "shortcuts.set.new", true));
-            items.push(item(Act::Rename, "Rename…", "shortcuts.set.rename", !builtin));
-            items.push(item(Act::Delete, "Delete", "shortcuts.set.delete", !builtin));
-            items.push(item(Act::Save, "Save", "shortcuts.set.save", modified));
-            items.push(item(Act::Revert, "Revert Set", "shortcuts.set.revert", modified));
-        }
         let export = if self.env.options.export_formats.is_empty() { "Export…" } else { "Export" };
-        items.push(item(Act::Export, export, "shortcuts.set.export", true));
-        if self.env.options.editable {
-            items.push(item(Act::Import, "Import…", "shortcuts.set.import", true));
-        }
+        let mut items = vec![
+            item(Act::New, "New Set…", "shortcuts.set.new", true),
+            item(Act::Rename, "Rename…", "shortcuts.set.rename", !builtin),
+            item(Act::Delete, "Delete", "shortcuts.set.delete", !builtin),
+            item(Act::Save, "Save", "shortcuts.set.save", modified),
+            item(Act::Revert, "Revert Set", "shortcuts.set.revert", modified),
+            item(Act::Export, export, "shortcuts.set.export", true),
+            item(Act::Import, "Import…", "shortcuts.set.import", true),
+        ];
         if self.env.options.summary {
             items.push(item(Act::Summarize, "Summarize…", "shortcuts.summarize", true));
         }

@@ -12,6 +12,7 @@ use crate::profiles::{Builtins, ProfileError, Profiles};
 use crate::scope::Scope;
 use crate::ui::rows::{AreaEntry, AreaId, Built, Filter, RowCache, View};
 use crate::ui::text::{Text, trigger_text};
+use crate::ui::view::keyboard::KeyboardState;
 use crate::ui::{ConflictMode, JSON_FORMAT, Options, Outcome, capture, summary};
 
 /// What the dialog edits this frame.
@@ -215,6 +216,7 @@ pub struct DialogState {
     /// The table lines drawn last frame.
     pub(crate) visible: std::ops::Range<usize>,
     pub(crate) set_form: Option<SetForm>,
+    pub(crate) keyboard: KeyboardState,
 }
 
 impl Default for DialogState {
@@ -256,6 +258,7 @@ impl DialogState {
             text_focus: false,
             visible: 0..0,
             set_form: None,
+            keyboard: KeyboardState::default(),
         }
     }
 
