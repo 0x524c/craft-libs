@@ -3,8 +3,9 @@
 //! ```ignore
 //! let mut driver = DockDriver::new(app_layout(), Panels::default());
 //! let bar = driver.hit(&Hit::DragBar(PanelId::Layers)).unwrap();
-//! driver.drag(bar.center(), egui::pos2(4.0, 300.0));
-//! assert!(driver.layout.dock_path(Side::Start).is_some());
+//! driver.drag(bar.center(), egui::pos2(2.0, 300.0));
+//! driver.settle();
+//! assert!(driver.hit(&Hit::ColumnBar(PanelId::Layers)).is_some());
 //! ```
 
 use std::{fmt::Debug, hash::Hash};

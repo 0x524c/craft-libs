@@ -1,4 +1,5 @@
 //! `DockCommand`: every documented shape parses and maps to atomic layout actions.
+#![cfg(feature = "serde")]
 
 use std::collections::BTreeSet;
 
@@ -158,7 +159,10 @@ fn dock_commands_parse_every_documented_shape_and_map_to_atomic_actions() {
         actions(json!({"command": "window.panel.minimize", "panel": "layers", "minimized": false})),
         vec![Action::SetMinimized { panel: s("layers"), minimized: false }]
     );
-    assert_eq!(actions(id(json!({"command": "window.panel.iconic", "panel": "history"}))), vec![Action::SetIconic { panel: s("history"), iconic: true }]);
+    assert_eq!(
+        actions(id(json!({"command": "window.panel.iconic", "panel": "history"}))),
+        vec![Action::SetIconic { panel: s("history"), iconic: true }]
+    );
 
     // window: a floating window goes native at its rect; a docked group floats first.
     assert_eq!(
@@ -170,7 +174,10 @@ fn dock_commands_parse_every_documented_shape_and_map_to_atomic_actions() {
         matches!(docked.as_slice(), [Action::MoveGroup { to: Target::Float { rect: None }, .. }, Action::SetNative { rect: Some(_), .. }]),
         "{docked:?}"
     );
-    assert_eq!(actions(json!({"command": "window.panel.window", "panel": "color", "native": false})), vec![Action::SetNative { panel: s("color"), rect: None }]);
+    assert_eq!(
+        actions(json!({"command": "window.panel.window", "panel": "color", "native": false})),
+        vec![Action::SetNative { panel: s("color"), rect: None }]
+    );
 
     // Named workspaces and Reset belong to the application.
     for params in [
@@ -210,7 +217,10 @@ fn dock_commands_parse_every_documented_shape_and_map_to_atomic_actions() {
     );
     let to_layers = |placement| vec![Action::Move { panel: s("color"), anchor: s("layers"), placement }];
     assert_eq!(actions(op(json!({"operation": "move", "panel": "color", "target": "layers"}))), to_layers(Placement::Split(Zone::Center)));
-    assert_eq!(actions(op(json!({"operation": "move", "panel": "color", "target": "layers", "zone": "left"}))), to_layers(Placement::Split(Zone::Left)));
+    assert_eq!(
+        actions(op(json!({"operation": "move", "panel": "color", "target": "layers", "zone": "left"}))),
+        to_layers(Placement::Split(Zone::Left))
+    );
     assert_eq!(actions(op(json!({"operation": "move", "panel": "color", "target": "layers", "before": null}))), to_layers(tab(None)));
     assert_eq!(
         actions(op(json!({"operation": "move", "panel": "color", "target": "layers", "before": "channels"}))),
@@ -252,11 +262,17 @@ fn dock_commands_parse_every_documented_shape_and_map_to_atomic_actions() {
     }
     rejected(json!({"command": "window.panel.move", "panel": "layers", "anchor": "nowhere"}), DockError::MissingTarget);
     rejected(json!({"command": "window.panel.move", "panel": "nowhere", "anchor": "layers"}), DockError::MissingPanel);
-    rejected(json!({"command": "window.panel.move", "panel": "layers", "anchor": "history", "zone": "left", "before": null}), DockError::InvalidPlacement);
+    rejected(
+        json!({"command": "window.panel.move", "panel": "layers", "anchor": "history", "zone": "left", "before": null}),
+        DockError::InvalidPlacement,
+    );
     rejected(json!({"command": "window.panel.float", "panel": "layers", "width": 1e30}), DockError::InvalidGeometry);
     rejected(json!({"command": "window.panel.move", "panel": "canvas", "anchor": "layers"}), DockError::NotAllowed);
     rejected(op(json!({"operation": "moveFloating", "panel": "color", "rect": [0, 0, -5, 10]})), DockError::InvalidGeometry);
-    rejected(op(json!({"operation": "move", "panel": "color", "target": "layers", "zone": "top", "before": "channels"})), DockError::InvalidPlacement);
+    rejected(
+        op(json!({"operation": "move", "panel": "color", "target": "layers", "zone": "top", "before": "channels"})),
+        DockError::InvalidPlacement,
+    );
     rejected(op(json!({"operation": "resizeSplit", "path": [true, true, true], "size": {"Ratio": 0.5}})), DockError::MissingTarget);
     // A docked group cannot float into a native window when locked.
     let mut locked = workspace();

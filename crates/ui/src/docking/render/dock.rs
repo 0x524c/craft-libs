@@ -41,11 +41,7 @@ fn side_at(edge: Edge, right_to_left: bool) -> Side {
 }
 
 pub(in crate::docking) fn column_width<P>(column: &Column<P>, style: &DockStyle) -> f32 {
-    if column.iconic {
-        column.iconic_width.unwrap_or(style.iconic_width).clamp(style.iconic_width, style.iconic_max_width)
-    } else {
-        column.width
-    }
+    if column.iconic { column.iconic_width.unwrap_or(style.iconic_width).clamp(style.iconic_width, style.iconic_max_width) } else { column.width }
 }
 
 /// Heights of stacked groups in a column body `room` high. Each entry is (minimized, saved

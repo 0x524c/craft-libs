@@ -162,11 +162,23 @@ pub enum UiDock<P> {
 #[non_exhaustive]
 pub enum DockOperation<P> {
     /// Show a panel at its last location and select it.
-    Open { panel: P },
-    Close { panel: P },
-    Activate { panel: P },
-    Float { panel: P, rect: [f32; 4] },
-    MoveFloating { panel: P, rect: [f32; 4] },
+    Open {
+        panel: P,
+    },
+    Close {
+        panel: P,
+    },
+    Activate {
+        panel: P,
+    },
+    Float {
+        panel: P,
+        rect: [f32; 4],
+    },
+    MoveFloating {
+        panel: P,
+        rect: [f32; 4],
+    },
     Move {
         panel: P,
         target: P,
@@ -175,14 +187,20 @@ pub enum DockOperation<P> {
         #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
         before: Option<Option<P>>,
     },
-    SetStackOpen { panel: P, open: bool },
+    SetStackOpen {
+        panel: P,
+        open: bool,
+    },
     /// `height` is required; `null` clears it.
     ResizeStack {
         panel: P,
         #[serde(deserialize_with = "required")]
         height: Option<f32>,
     },
-    ResizeSplit { path: Vec<bool>, size: SplitSize },
+    ResizeSplit {
+        path: Vec<bool>,
+        size: SplitSize,
+    },
 }
 
 /// A drop zone by name, as control protocols write it. PascalCase [`Zone`] names also parse.
@@ -365,11 +383,11 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
                 let anchor = docked.or_else(framed).cloned().ok_or(DockError::MissingTarget)?;
                 one(unit.to(layout, panel, Target::At { anchor, placement: Placement::Tab { before: None } })?)
             }
-            Self::Activate { panel } | Self::UiDock(UiDock::Operation(DockOperation::Activate { panel } | DockOperation::Open { panel })) => {
+            Self::Activate { panel } => {
                 shown(panel)?;
                 one(Action::Activate { panel: panel.clone() })
             }
-            Self::Close { panel } | Self::UiDock(UiDock::Operation(DockOperation::Close { panel })) => one(Action::Close { panel: panel.clone() }),
+            Self::Close { panel } => one(Action::Close { panel: panel.clone() }),
             Self::CloseGroup { panel } => one(Action::CloseGroup { panel: panel.clone() }),
             Self::CloseOthers { panel } => one(Action::CloseOthers { panel: panel.clone() }),
             Self::Minimize { panel, minimized } => {
@@ -399,6 +417,11 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
                 Ok(actions)
             }
             Self::UiDock(UiDock::Operation(operation)) => match operation {
+                DockOperation::Open { panel } | DockOperation::Activate { panel } => {
+                    shown(panel)?;
+                    one(Action::Activate { panel: panel.clone() })
+                }
+                DockOperation::Close { panel } => one(Action::Close { panel: panel.clone() }),
                 DockOperation::Float { panel, rect } => one(Action::Float { panel: panel.clone(), rect: *rect }),
                 DockOperation::MoveFloating { panel, rect } => one(Action::MoveFloating { panel: panel.clone(), rect: *rect }),
                 DockOperation::Move { panel, target, zone, before } => {
@@ -408,7 +431,6 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
                 DockOperation::SetStackOpen { panel, open } => one(Action::SetStackOpen { panel: panel.clone(), open: *open }),
                 DockOperation::ResizeStack { panel, height } => one(Action::ResizeStack { panel: panel.clone(), height: *height }),
                 DockOperation::ResizeSplit { path, size } => one(Action::ResizeSplit { path: path.clone(), size: *size }),
-                DockOperation::Open { .. } | DockOperation::Close { .. } | DockOperation::Activate { .. } => unreachable!("matched above"),
             },
             Self::Workspace { .. } | Self::NewWorkspace { .. } | Self::DeleteWorkspace { .. } | Self::ResetWorkspace {} | Self::Lock { .. } => {
                 Err(DockError::NotAllowed)
@@ -469,7 +491,9 @@ fn members<P: Clone + Eq + Hash>(layout: &Layout<P>, panel: &P, unit: Unit) -> V
                 }
                 _ => Vec::new(),
             },
-            Some(Place::Floating { .. }) => layout.floating.iter().find(|w| w.contains(panel)).map(|w| w.panels().cloned().collect()).unwrap_or_default(),
+            Some(Place::Floating { .. }) => {
+                layout.floating.iter().find(|w| w.contains(panel)).map(|w| w.panels().cloned().collect()).unwrap_or_default()
+            }
             _ => vec![panel.clone()],
         },
     }

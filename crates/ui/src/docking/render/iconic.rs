@@ -112,8 +112,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if let Some(panel) = self.activation.as_ref().filter(|p| column.groups.iter().any(|g| g.panels.contains(p))) {
             open_flyout(ui.ctx(), self.id, panel.clone());
         }
-        let total: f32 = column.groups.iter().map(|g| self.icon_group_height(g)).sum::<f32>()
-            + column.groups.len().saturating_sub(1) as f32 * SEPARATOR;
+        let total: f32 =
+            column.groups.iter().map(|g| self.icon_group_height(g)).sum::<f32>() + column.groups.len().saturating_sub(1) as f32 * SEPARATOR;
         if total > body.height() + 0.5 {
             let Some(first) = column.groups.first().and_then(|g| g.panels.first()) else { return };
             let mut child =
@@ -239,7 +239,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         if labels {
             let text = self.content.label(ui, panel, &label, &self.style.font, color);
-            let galley = text.into_galley(ui, Some(egui::TextWrapMode::Truncate), (cell.right() - icon.right() - 12.0).max(0.0), self.style.font.clone());
+            let galley =
+                text.into_galley(ui, Some(egui::TextWrapMode::Truncate), (cell.right() - icon.right() - 12.0).max(0.0), self.style.font.clone());
             painter.galley(pos2(icon.right() + 6.0, cell.center().y - galley.size().y * 0.5), galley, color);
         } else if response.hovered() && !response.dragged() {
             response.clone().on_hover_text(&label);

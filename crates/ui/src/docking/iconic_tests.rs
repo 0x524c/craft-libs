@@ -21,6 +21,9 @@ impl DockContent<u32> for Content {
 
 type Driver = DockDriver<u32, Content>;
 
+/// A name and a test for one kind of [`Hit`].
+type Check<'a> = (&'a str, &'a dyn Fn(&Hit<u32>) -> bool);
+
 /// A left dock with one column of `groups`, iconic when `iconic`, beside canvas 0.
 fn docked(groups: &[&[u32]], iconic: bool) -> Layout<u32> {
     let mut column = Column::new(groups.iter().map(|g| Group::new(g.to_vec(), 0)).collect(), 240.0);
@@ -267,9 +270,7 @@ fn hit_rects_cover_every_gesture_source() {
     let mut icons = Column::new(vec![Group::new(vec![9], 0)], 240.0);
     icons.iconic = true;
     let dock = Node::Dock { side: Side::Start, columns: vec![icons, expanded] };
-    let stack = Node::Stack {
-        entries: vec![StackEntry { panel: 10, open: true, height: None }, StackEntry { panel: 11, open: true, height: None }],
-    };
+    let stack = Node::Stack { entries: vec![StackEntry { panel: 10, open: true, height: None }, StackEntry { panel: 11, open: true, height: None }] };
     let frames = Node::Split {
         axis: SplitAxis::Vertical,
         size: SplitSize::Ratio(0.5),
@@ -285,7 +286,7 @@ fn hit_rects_cover_every_gesture_source() {
     let d = DockDriver::new(layout.clone(), Content);
     let hits = d.hits();
     let kinds = |f: &dyn Fn(&Hit<u32>) -> bool| hits.iter().filter(|(h, _)| f(h)).count();
-    let expected: [(&str, &dyn Fn(&Hit<u32>) -> bool); 15] = [
+    let expected: [Check<'_>; 15] = [
         ("tab", &|h| matches!(h, Hit::Tab(_))),
         ("drag bar", &|h| matches!(h, Hit::DragBar(_))),
         ("border", &|h| matches!(h, Hit::Border(_))),

@@ -21,10 +21,10 @@ mod workspace;
 
 #[cfg(feature = "serde")]
 pub use command::{DockCommand, DockOperation, UiDock, ZoneName};
-pub use hits::{Divider, Hit, ResizeEdge};
-pub use render::{close_flyout, flyout, open_flyout};
 pub use dock_model::{Column, ColumnLocation, Group, GroupLocation, PanelState, Side, Target};
+pub use hits::{Divider, Hit, ResizeEdge};
 pub use model::{Action, DockError, Floating, Layout, Location, MAX_DEPTH, MAX_PANELS, Node, Permissions, Placement, StackEntry, Zone};
+pub use render::{close_flyout, flyout, open_flyout};
 pub use surface::{
     DockArea, DockContent, DockEvent, DockOutput, DockStyle, DropFeedback, DropRequest, HidePanels, PanelLimits, Profile, begin_drag, cancel_drag,
     is_dragging,
@@ -34,7 +34,7 @@ pub use workspace::Workspace;
 
 use surface::{Drag, GroupDrag, GroupGesture};
 
-#[cfg(all(test, feature = "serde"))]
+#[cfg(test)]
 mod command_tests;
 #[cfg(test)]
 mod dock_tests;
