@@ -230,6 +230,32 @@ fn title_bar_drag_moves_every_stacked_group_and_drops_into_a_dock_as_stacked_gro
 }
 
 #[test]
+fn title_bar_drag_onto_dock_targets_docks_the_window() {
+    // Released on the seam between two docked groups: the window's group stacks between them.
+    let mut d = Driver::new(workspace(), Profile::Dock);
+    let title = d.title(8).center();
+    let seam = pos2(120.0, d.tab(4).unwrap().top());
+    let out = d.drag(title, seam);
+    assert!(
+        out.actions.contains(&Action::MoveWindow { panel: 8, to: Target::At { anchor: 2, placement: Placement::Group { below: true } } }),
+        "{:?}",
+        out.actions
+    );
+    assert!(window_of(&d.layout, 8).is_none());
+    let Some(Node::Split { first, .. }) = &d.layout.root else { panic!("{:?}", d.layout.root) };
+    let Node::Dock { columns, .. } = first.as_ref() else { panic!("{first:?}") };
+    let stacked: Vec<_> = columns[0].groups.iter().map(|g| g.panels.clone()).collect();
+    assert_eq!(stacked, vec![vec![2, 3], vec![8], vec![4]]);
+
+    // Released on the new-dock band along the right edge: the window becomes an end dock.
+    let mut d = Driver::new(workspace(), Profile::Dock);
+    let title = d.title(5).center();
+    let out = d.drag(title, pos2(796.0, 300.0));
+    assert!(out.actions.contains(&Action::MoveWindow { panel: 5, to: Target::NewDock { side: Side::End } }), "{:?}", out.actions);
+    assert!(window_of(&d.layout, 5).is_none() && window_of(&d.layout, 6).is_none());
+}
+
+#[test]
 fn floating_stack_seams_and_bands_insert_groups() {
     // A group dragged by its bar to another window's top band stacks above that group.
     let mut d = Driver::new(workspace(), Profile::Dock);
