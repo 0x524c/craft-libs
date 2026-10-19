@@ -428,6 +428,40 @@ fn suggestions_are_reported_never_applied() {
 
 #[test]
 fn hostile_sets_are_capped_and_counted() {
+    let mut km = keymap(Platform::Windows);
+    let long: String = "ä€𝄞 x".repeat(MAX_IMPORT_TEXT);
+    let mut big = ForeignEntry::new(Some(long.as_str()), std::iter::repeat_n(long.clone(), 100));
+    for _ in 0..MAX_KEYS_PER_ENTRY + 10 {
+        let trigger = Err(ForeignError::UnknownKey(long.clone()));
+        big = big.with_key(ForeignKey { context: Some(long.clone()), text: long.clone(), trigger, notes: vec![ReadNote::Numpad; 1000] });
+    }
+    // Unmatched entries with keys, more than the suggestions take.
+    let near = win("Edit", &["Chek Spelling Now"], &[("Default", "Ctrl+F12")]);
+    let mut entries: Vec<ForeignEntry> = std::iter::repeat_n(near, MAX_SUGGESTIONS + 10).collect();
+    entries.push(big);
+    entries.push(win("Edit", &["Paste"], &[("Default", &long), ("Default", "Ctrl+\u{0}"), ("Default", "Win+E")]));
+    // Entries without keys fill the set to the cap and 500 past it.
+    let keyless = MAX_IMPORT_ENTRIES - entries.len();
+    entries.extend(std::iter::repeat_n(ForeignEntry::new(None, Vec::<String>::new()), keyless + 500));
+    let set = ForeignSet { name: Some(long.clone()), entries };
+    let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], suggest: true, ..ImportOptions::default() };
+    let r = plan(&set, &km, &options).apply(&mut km);
+    assert_eq!(r.suggestions.len(), MAX_SUGGESTIONS);
+    // The set name, entries and keys past the caps, and suggestions past the cap (with the big entry's).
+    assert!(r.truncated >= 1 + 500 + 10 + 11, "{}", r.truncated);
+    assert_eq!(r.set.as_ref().map(|s| s.chars().count()), Some(MAX_IMPORT_TEXT));
+    let row = r.unmatched.iter().find(|u| u.item.starts_with('ä')).unwrap();
+    assert!(row.item.chars().count() <= MAX_IMPORT_TEXT * 34, "item of capped segments");
+    assert!(row.keys.chars().count() <= (2 * MAX_IMPORT_TEXT + 4) * MAX_KEYS_PER_ENTRY);
+    assert_eq!(r.unreadable.len(), 1, "Paste's keys");
+    has(&km, "edit.paste", &["Cmd+V"]);
+    // Entries past the cap are left out.
+    assert_eq!(r.unmatched_without_shortcut, keyless);
+}
+
+#[test]
+#[ignore = "worst-case timing; run with --ignored"]
+fn hostile_sets_finish_in_time() {
     // A full catalogue whose labels share words with every unmatched entry below, so each
     // suggestion scores every command.
     let mut catalogue = catalogue();

@@ -7,10 +7,12 @@
 //! [`command`] names what a binding runs, [`scope`] where it works, and [`keymap`] holds an app's
 //! catalogue with default bindings, the user's [`Overrides`], dispatch ([`Keymap::lookup`]),
 //! editing and conflicts. [`profiles`] keeps named sets of overrides; [`reserved`] lists the
-//! chords each operating system takes. [`import`] brings in other applications' shortcut sets.
-//! [`editor`] is the model of a shortcut editor: undo, a chord recorder, conflict queries and
-//! search. With the `egui` feature, the `egui` module converts to and from egui keys, matches key
-//! presses against bindings and dispatches a frame's key events.
+//! chords each operating system takes, and a keymap reserves no chord unless the app opts in with
+//! [`Keymap::with_reserved`], e.g. `with_reserved(reserved::system(platform))`. [`import`] brings
+//! in other applications' shortcut sets. [`editor`] is the model of a shortcut editor: undo, a
+//! chord recorder, conflict queries and search. With the `egui` feature, the `egui` module
+//! converts to and from egui keys, matches key presses against bindings and dispatches a frame's
+//! key events.
 //!
 //! ```
 //! use craft_keymap::{Chord, Platform};

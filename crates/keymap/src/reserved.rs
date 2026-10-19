@@ -1,4 +1,7 @@
 //! Chords the operating system takes before the app sees them.
+//!
+//! A keymap reserves these only when the app passes them to
+//! [`Keymap::with_reserved`](crate::Keymap::with_reserved).
 
 use crate::chord::{Chord, Platform};
 
@@ -25,7 +28,8 @@ const LINUX: &[&str] = &[
     "Cmd+Alt+F12",
 ];
 
-/// The window switching, closing and session chords of `platform`.
+/// The window switching, closing and session chords of `platform`, for
+/// [`Keymap::with_reserved`](crate::Keymap::with_reserved).
 pub fn system(platform: Platform) -> Vec<Chord> {
     let list = match platform {
         Platform::Mac => MAC,

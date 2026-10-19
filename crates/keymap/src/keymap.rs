@@ -434,7 +434,8 @@ impl Keymap {
         self
     }
 
-    /// Chords that cannot be assigned, e.g. [`reserved::system`](crate::reserved::system).
+    /// Chords that cannot be assigned or bound, e.g. [`reserved::system`](crate::reserved::system).
+    /// Without this call the keymap reserves no chord.
     pub fn with_reserved(mut self, chords: Vec<Chord>) -> Keymap {
         self.reserved = chords;
         self.reload();
