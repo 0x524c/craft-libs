@@ -184,16 +184,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         Some((anchor, zone, preview))
     }
 
-    pub(super) fn float_label(&self) -> &str {
-        if self.style.profile == Profile::Frame { &self.style.undock_label } else { &self.style.float_label }
+    pub(super) fn float_label(&self) -> String {
+        if self.style.profile == Profile::Frame { self.style.undock_label.clone() } else { self.style.float_label.clone() }
     }
 
-    pub(super) fn float_group_label(&self) -> &str {
-        if self.style.profile == Profile::Frame { &self.style.undock_group_label } else { &self.style.float_group_label }
+    pub(super) fn float_group_label(&self) -> String {
+        if self.style.profile == Profile::Frame { self.style.undock_group_label.clone() } else { self.style.float_group_label.clone() }
     }
 
-    pub(super) fn close_group_label(&self) -> &str {
-        if self.style.profile == Profile::Frame { &self.style.close_panel_group_label } else { &self.style.close_group_label }
+    pub(super) fn close_group_label(&self) -> String {
+        if self.style.profile == Profile::Frame { self.style.close_panel_group_label.clone() } else { self.style.close_group_label.clone() }
     }
 
     /// Ctrl/Cmd held when a frame-profile tab drag starts: the drop floats (S9).

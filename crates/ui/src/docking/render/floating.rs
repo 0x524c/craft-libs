@@ -74,12 +74,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let movable = window.panels().all(|panel| self.permissions(panel).movable);
         let style = ChromeStyle::from_dock(self.style);
         let resize_label = self.style.resize_window_label.clone();
-        let response = FloatingFrame::new(id, rect)
-            .bounds(screen)
-            .limits(limits)
-            .resizable(movable)
-            .resize_label(&resize_label)
-            .show(ctx, &style, |ui, rect| self.window_contents(ui, window, rect, &style));
+        let response = FloatingFrame::new(id, rect).bounds(screen).limits(limits).resizable(movable).resize_label(&resize_label).show(
+            ctx,
+            &style,
+            |ui, rect| self.window_contents(ui, window, rect, &style),
+        );
         for handle in &response.handles {
             self.register_interaction(ctx, handle.id);
         }
@@ -93,7 +92,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
         });
         if let Some(resized) = response.resized {
-            self.output.actions.push(Action::MoveFloating { panel: first.clone(), rect: [resized.left(), resized.top(), resized.width(), resized.height()] });
+            self.output
+                .actions
+                .push(Action::MoveFloating { panel: first.clone(), rect: [resized.left(), resized.top(), resized.width(), resized.height()] });
         }
     }
 
@@ -228,7 +229,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             if !in_group {
                 // The title bar occludes what lies behind the window.
                 let anchor = members.first()?.clone();
-                return Some(DropProposal { anchor, placement: Placement::Tab { before: None }, preview: Rect::NOTHING, insertion: None, noop: true });
+                return Some(DropProposal {
+                    anchor,
+                    placement: Placement::Tab { before: None },
+                    preview: Rect::NOTHING,
+                    insertion: None,
+                    noop: true,
+                });
             }
             return self.stack_proposal(window, members, pointer);
         }
@@ -249,7 +256,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let line = line(rect.bottom() + GAP * 0.5);
             if same(a) || same(b) {
                 let anchor = members.first()?.clone();
-                return Some(DropProposal { anchor, placement: Placement::Group { below: true }, preview: Rect::NOTHING, insertion: None, noop: true });
+                return Some(DropProposal {
+                    anchor,
+                    placement: Placement::Group { below: true },
+                    preview: Rect::NOTHING,
+                    insertion: None,
+                    noop: true,
+                });
             }
             let (anchor, below) = match anchor(a) {
                 Some(panel) => (panel, true),

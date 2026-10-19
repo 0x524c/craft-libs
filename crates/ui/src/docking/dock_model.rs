@@ -526,8 +526,7 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                         let new = Node::Tabs { panels, active };
                         let old = std::mem::replace(node, Node::Tabs { panels: Vec::new(), active: 0 });
                         let axis = if matches!(zone, Zone::Top | Zone::Bottom) { SplitAxis::Vertical } else { SplitAxis::Horizontal };
-                        let (first, second, size) =
-                            if matches!(zone, Zone::Top | Zone::Left) { (new, old, 0.25) } else { (old, new, 0.75) };
+                        let (first, second, size) = if matches!(zone, Zone::Top | Zone::Left) { (new, old, 0.25) } else { (old, new, 0.75) };
                         *node = Node::Split { axis, size: SplitSize::Ratio(size), first: Box::new(first), second: Box::new(second) };
                         Ok(())
                     }

@@ -77,7 +77,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let window = drag.gesture == GroupGesture::Window;
         let valid = |proposal: DropProposal<P>| {
             let to = Target::At { anchor: proposal.anchor.clone(), placement: proposal.placement.clone() };
-            (proposal.noop || self.layout.clone().apply_with_permissions(self.group_action(drag, to), |p| self.permissions(p)).is_ok()).then_some(proposal)
+            (proposal.noop || self.layout.clone().apply_with_permissions(self.group_action(drag, to), |p| self.permissions(p)).is_ok())
+                .then_some(proposal)
         };
         if let Some(proposal) = self.extra_proposal(&drag.members, pointer, window) {
             return valid(proposal);

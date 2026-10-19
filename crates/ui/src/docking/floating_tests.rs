@@ -248,11 +248,7 @@ fn floating_stack_seams_and_bands_insert_groups() {
     let tab = d.tab(8).unwrap().center();
     let seam = pos2(420.0, 237.0);
     let out = d.drag(tab, seam);
-    assert!(
-        out.actions.contains(&Action::Move { panel: 8, anchor: 5, placement: Placement::Group { below: true } }),
-        "{:?}",
-        out.actions
-    );
+    assert!(out.actions.contains(&Action::Move { panel: 8, anchor: 5, placement: Placement::Group { below: true } }), "{:?}", out.actions);
     assert_eq!(groups_of(window_of(&d.layout, 5).unwrap()), vec![vec![5], vec![8], vec![6, 7]]);
 
     // The divider between two open groups resizes both.
@@ -496,7 +492,8 @@ fn chrome_frame_and_title_bar_work_without_a_dock_area() {
     let mut time = 0.0;
     let mut frame = |events: Vec<Event>| {
         time += 1.0 / 60.0;
-        let input = RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), events, time: Some(time), ..Default::default() };
+        let input =
+            RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), events, time: Some(time), ..Default::default() };
         let mut result = None;
         done(ctx.run_ui(input, |ui| {
             let style = ChromeStyle::from_ui(ui);
@@ -511,7 +508,8 @@ fn chrome_frame_and_title_bar_work_without_a_dock_area() {
     };
     frame(vec![]);
     frame(vec![]);
-    let click = |frame: &mut dyn FnMut(Vec<Event>) -> ((bool, Vec2, bool, bool), Option<Rect>), at| {
+    type Shown = ((bool, Vec2, bool, bool), Option<Rect>);
+    let click = |frame: &mut dyn FnMut(Vec<Event>) -> Shown, at| {
         frame(vec![Event::PointerMoved(at), button(at, true)]);
         frame(vec![button(at, false)])
     };

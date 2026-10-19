@@ -203,7 +203,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let closable = all(&|p| p.closable);
         let movable = all(&|p| p.movable);
         let floatable = movable && all(&|p| p.floatable);
-        if closable && self.menu_action(ui, &self.close_group_label().to_owned()) {
+        if closable && self.menu_action(ui, &self.close_group_label()) {
             self.output.actions.push(Action::CloseGroup { panel: panel.clone() });
         }
         if owner.kind != GroupKind::Frame {
@@ -212,7 +212,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 self.output.actions.push(Action::SetMinimized { panel: panel.clone(), minimized: !owner.minimized });
             }
         }
-        if floatable && !matches!(owner.kind, GroupKind::Floating { .. }) && self.menu_action(ui, &self.float_group_label().to_owned()) {
+        if floatable && !matches!(owner.kind, GroupKind::Floating { .. }) && self.menu_action(ui, &self.float_group_label()) {
             let rect = clamp_float(owner.rect.translate(vec2(24.0, 24.0)), ui.ctx().content_rect());
             self.output.actions.push(Action::MoveGroup {
                 panel: panel.clone(),
@@ -321,7 +321,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         response.context_menu(|ui| {
             self.content.panel_menu(ui, panel);
             if policy.movable && policy.floatable {
-                let logical = self.float_label().to_owned();
+                let logical = self.float_label();
                 let text = self.content.action_label(ui, &logical, &self.style.font, self.style.text);
                 let response = ui.button(text);
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &logical));

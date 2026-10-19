@@ -119,9 +119,19 @@ impl DockStyle {
     }
 
     pub(super) fn valid(&self) -> bool {
-        [self.tab_height, self.gap, self.min_pane, self.border.width, self.font.size, self.drag_bar_width, self.floating_stroke.width, self.title_height, self.edge_band]
-            .iter()
-            .all(|v| v.is_finite() && (0.0..=4096.0).contains(v))
+        [
+            self.tab_height,
+            self.gap,
+            self.min_pane,
+            self.border.width,
+            self.font.size,
+            self.drag_bar_width,
+            self.floating_stroke.width,
+            self.title_height,
+            self.edge_band,
+        ]
+        .iter()
+        .all(|v| v.is_finite() && (0.0..=4096.0).contains(v))
             && self.tab_height > 0.0
             && self.font.size > 0.0
     }
@@ -449,13 +459,10 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
         };
         for floating in &layout.floating {
             if floating.groups.iter().any(|g| group(&g.panels))
-                || floating
-                    .panels()
-                    .next()
-                    .is_some_and(|first| {
-                        RESIZE_HANDLES.iter().any(|name| matches(self.id.with(("floating", first)).with(*name)))
-                            || matches(self.id.with(("move-group", Some(first))).with("close"))
-                    })
+                || floating.panels().next().is_some_and(|first| {
+                    RESIZE_HANDLES.iter().any(|name| matches(self.id.with(("floating", first)).with(*name)))
+                        || matches(self.id.with(("move-group", Some(first))).with("close"))
+                })
                 || floating.groups.iter().any(|g| matches(self.id.with(("floating-divider", g.panels.first()))))
             {
                 return true;

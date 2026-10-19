@@ -66,7 +66,10 @@ fn handles(rect: Rect) -> [(&'static str, Rect, Vec2); 5] {
         ),
         (
             "resize-bottom-left",
-            Rect::from_min_max(pos2(rect.left(), (rect.bottom() - 12.0).max(rect.top())), pos2((rect.left() + 12.0).min(rect.right()), rect.bottom())),
+            Rect::from_min_max(
+                pos2(rect.left(), (rect.bottom() - 12.0).max(rect.top())),
+                pos2((rect.left() + 12.0).min(rect.right()), rect.bottom()),
+            ),
             vec2(-1.0, 1.0),
         ),
     ]
@@ -133,7 +136,10 @@ impl<'a> FloatingFrame<'a> {
     pub fn show<R>(self, ctx: &Context, style: &ChromeStyle, add_contents: impl FnOnce(&mut Ui, Rect) -> R) -> FrameResponse<R> {
         let bounds = self.bounds.unwrap_or_else(|| ctx.content_rect());
         let rect = clamp(self.rect, bounds);
-        let area = egui::Area::new(self.id).fade_in(false).order(Order::Middle).fixed_pos(rect.min)
+        let area = egui::Area::new(self.id)
+            .fade_in(false)
+            .order(Order::Middle)
+            .fixed_pos(rect.min)
             .default_size(rect.size())
             .movable(false)
             .constrain_to(bounds);
@@ -144,8 +150,7 @@ impl<'a> FloatingFrame<'a> {
             ui.painter().rect_filled(rect, 0.0, style.background);
             let inner = add_contents(ui, rect);
             ui.painter().rect_stroke(rect, 0.0, style.stroke, StrokeKind::Outside);
-            let (resized, resize_started, handles) =
-                if self.resizable { self.handles(ui, rect, bounds, style) } else { (None, None, Vec::new()) };
+            let (resized, resize_started, handles) = if self.resizable { self.handles(ui, rect, bounds, style) } else { (None, None, Vec::new()) };
             FrameResponse { inner, rect, layer: Self::layer(self.id), resized, resize_started, handles }
         });
         shown.inner
@@ -185,10 +190,18 @@ impl<'a> FloatingFrame<'a> {
             let mut delta = Vec2::ZERO;
             if response.has_focus() {
                 ui.memory_mut(|memory| {
-                    memory.set_focus_lock_filter(response.id, egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() })
+                    memory.set_focus_lock_filter(
+                        response.id,
+                        egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() },
+                    )
                 });
                 ui.input_mut(|input| {
-                    for (key, step) in [(Key::ArrowLeft, vec2(-8.0, 0.0)), (Key::ArrowRight, vec2(8.0, 0.0)), (Key::ArrowUp, vec2(0.0, -8.0)), (Key::ArrowDown, vec2(0.0, 8.0))] {
+                    for (key, step) in [
+                        (Key::ArrowLeft, vec2(-8.0, 0.0)),
+                        (Key::ArrowRight, vec2(8.0, 0.0)),
+                        (Key::ArrowUp, vec2(0.0, -8.0)),
+                        (Key::ArrowDown, vec2(0.0, 8.0)),
+                    ] {
                         if input.consume_key(egui::Modifiers::NONE, key) {
                             delta += step;
                         }
