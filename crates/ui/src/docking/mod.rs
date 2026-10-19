@@ -5,6 +5,7 @@
 //! Validate deserialized layouts before rendering them. Every transaction checks its complete
 //! input and commits only a valid result; a rejected move cannot lose the source panel.
 
+pub mod chrome;
 mod dock_model;
 mod model;
 mod render;
