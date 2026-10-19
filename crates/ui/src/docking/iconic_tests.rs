@@ -324,3 +324,46 @@ fn hit_rects_cover_every_gesture_source() {
         assert!(opened || !out.actions.is_empty(), "{hit:?} at {rect:?} does nothing");
     }
 }
+
+/// Paints panel 1's icon as a dot in code; panel 2 has neither a painted icon nor an image.
+struct Painted;
+
+impl DockContent<u32> for Painted {
+    fn body(&mut self, _: &mut egui::Ui, _: &u32) {}
+    fn logical_label(&self, panel: &u32) -> String {
+        format!("Panel {panel}")
+    }
+    fn paint_icon(&mut self, painter: &egui::Painter, rect: Rect, panel: &u32, color: egui::Color32) -> bool {
+        if *panel != 1 {
+            return false;
+        }
+        painter.circle_filled(rect.center(), 3.0, color);
+        true
+    }
+}
+
+#[test]
+fn an_icon_painted_in_code_replaces_the_initial_and_others_fall_back() {
+    let d = DockDriver::new(docked(&[&[1, 2]], true), Painted);
+    let (one, two) = (d.hit(&Hit::Icon(1)).unwrap(), d.hit(&Hit::Icon(2)).unwrap());
+    let dots: Vec<Pos2> = d
+        .shapes()
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Circle(circle) if circle.radius == 3.0 => Some(circle.center),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dots.len(), 1, "{dots:?}");
+    assert!(one.contains(dots[0]) && !two.contains(dots[0]), "the dot sits in panel 1's cell: {dots:?}");
+    let initials: Vec<Pos2> = d
+        .shapes()
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.text() == "P" => Some(text.pos),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(initials.len(), 1, "only panel 2 draws its initial: {initials:?}");
+    assert!(two.contains(initials[0]));
+}

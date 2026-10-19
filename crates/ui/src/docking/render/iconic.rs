@@ -230,12 +230,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let inset = ((self.style.iconic_width - size) * 0.5).max(2.0);
         let icon = Rect::from_min_size(pos2(cell.left() + inset, cell.center().y - size * 0.5), vec2(size, size));
         let color = if current { self.style.text } else { self.style.inactive_text };
-        if let Some(source) = self.content.icon(panel) {
-            egui::Image::new(source).tint(color).paint_at(ui, icon.intersect(cell));
-        } else {
-            let initial: String = label.chars().next().into_iter().flat_map(char::to_uppercase).collect();
-            painter.rect_stroke(icon, 3.0, Stroke::new(1.0, color), StrokeKind::Inside);
-            painter.text(icon.center(), egui::Align2::CENTER_CENTER, initial, self.style.font.clone(), color);
+        if !self.content.paint_icon(&painter, icon, panel, color) {
+            if let Some(source) = self.content.icon(panel) {
+                egui::Image::new(source).tint(color).paint_at(ui, icon.intersect(cell));
+            } else {
+                let initial: String = label.chars().next().into_iter().flat_map(char::to_uppercase).collect();
+                painter.rect_stroke(icon, 3.0, Stroke::new(1.0, color), StrokeKind::Inside);
+                painter.text(icon.center(), egui::Align2::CENTER_CENTER, initial, self.style.font.clone(), color);
+            }
         }
         if labels {
             let text = self.content.label(ui, panel, &label, &self.style.font, color);

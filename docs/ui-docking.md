@@ -104,7 +104,8 @@ its own command path, so pointer, keyboard and control commands share one path.
 
 `DockContent<P>` is the app's adapter. It draws each panel body and gives its label, icon,
 permissions, size limits, preferred floating size, panel menu and group header. `bare` hides the
-tab strip of a lone panel. Panel bodies keep a stable egui id when they move, so widget memory
+tab strip of a lone panel. An icon is an image (`icon`), or drawn in code by `paint_icon`, which
+gets a painter, the icon rect and the tint color and returns true when it painted. Panel bodies keep a stable egui id when they move, so widget memory
 survives.
 
 `DockOutput` also has:

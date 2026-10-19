@@ -371,8 +371,15 @@ pub trait DockContent<P> {
     fn floating_size(&self, _panel: &P) -> Option<Vec2> {
         None
     }
+    /// An image for the panel's icon, tinted with the icon color. [`Self::paint_icon`] goes first.
     fn icon(&self, _panel: &P) -> Option<egui::ImageSource<'static>> {
         None
+    }
+    /// Paint the panel's icon in code into `rect` with `color`, and return true. False draws
+    /// [`Self::icon`], or the label's initial when that is `None`. `painter` is clipped to the
+    /// icon's cell.
+    fn paint_icon(&mut self, _painter: &egui::Painter, _rect: Rect, _panel: &P, _color: Color32) -> bool {
+        false
     }
     /// Whether the panel may move to a native OS window (feature `native-windows`).
     fn allow_native(&self, _panel: &P) -> bool {
@@ -454,6 +461,9 @@ impl<P, C: DockContent<P> + ?Sized> DockContent<P> for Overrides<'_, P, C> {
     }
     fn icon(&self, panel: &P) -> Option<egui::ImageSource<'static>> {
         self.inner.icon(panel)
+    }
+    fn paint_icon(&mut self, painter: &egui::Painter, rect: Rect, panel: &P, color: Color32) -> bool {
+        self.inner.paint_icon(painter, rect, panel, color)
     }
     fn allow_native(&self, panel: &P) -> bool {
         self.inner.allow_native(panel)
