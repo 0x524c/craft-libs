@@ -53,7 +53,9 @@ pub struct ForeignEntry {
     /// submenu of [`ForeignEntry::menu`], which is usually `None`. Sources write such items as
     /// `Character: All Caps` (InDesign's Panel Menus area, the panel-menu areas of Illustrator and
     /// Photoshop sets); the reader splits them into segments. Such an entry also matches a
-    /// catalogue path that ends with its path, and its last segment alone.
+    /// catalogue path that ends with its path, and its last segment alone when its first segment
+    /// is a segment of some catalogue path. Without keys, an entry matched only these ways
+    /// changes nothing ([`ImportReport::matched_without_change`]).
     pub panel_menu: bool,
 }
 
@@ -153,7 +155,8 @@ pub enum Start {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NoneDefined {
-    /// The command loses its shortcuts.
+    /// The command loses its shortcuts, unless another entry matched to it has keys or the entry
+    /// matched only through a panel-menu rule ([`NoChangeReason::PanelMenu`]).
     #[default]
     Clear,
     /// The command keeps its shortcuts.
@@ -195,7 +198,8 @@ pub struct Planned {
     pub item: String,
     pub line: Option<usize>,
     pub bindings: Vec<PlannedBinding>,
-    /// Every matched entry had no keys.
+    /// Every matched entry had no keys, so [`NoneDefined::Clear`] clears the command. One entry
+    /// with keys, in any order, keeps an entry without keys from clearing them.
     pub none_defined: bool,
 }
 
@@ -210,7 +214,8 @@ pub struct ImportPlan {
     pub commands: Vec<Planned>,
     pub start: Start,
     pub none_defined: NoneDefined,
-    /// `unmatched`, `unreadable`, `approximated`, `suggestions` and the counts;
+    /// `unmatched`, `unreadable`, `approximated`, `suggestions`, `matched_without_change` and the
+    /// counts;
     /// [`ImportPlan::apply`] adds the rest.
     pub report: ImportReport,
 }
@@ -327,6 +332,27 @@ pub struct Unreadable {
     pub reason: ForeignError,
 }
 
+/// An entry without keys that matched a command and left its shortcuts alone.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchedWithoutChange {
+    pub command: CommandRef,
+    pub label: String,
+    pub item: String,
+    pub line: Option<usize>,
+    pub reason: NoChangeReason,
+}
+
+/// Why a [`MatchedWithoutChange`] entry did not clear its command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NoChangeReason {
+    /// The entry matched only through a panel-menu rule (a catalogue path ending with its
+    /// segments, or its last segment alone). Such a match is close enough to bind the entry's
+    /// keys, not to take a command's shortcuts away.
+    PanelMenu,
+}
+
 /// Likely commands for an unmatched entry, best first. Never applied.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -361,6 +387,9 @@ pub struct ImportReport {
     pub skipped: Vec<Skipped>,
     #[serde(default)]
     pub failed: Vec<Failed>,
+    /// Entries without keys that matched a command and changed nothing.
+    #[serde(default)]
+    pub matched_without_change: Vec<MatchedWithoutChange>,
     pub unmatched: Vec<Unmatched>,
     /// Entries that matched no command and have no keys, or keys only in
     /// [`ContextRule::Skip`] contexts.
@@ -413,7 +442,7 @@ pub fn plan(set: &ForeignSet, keymap: &Keymap, options: &ImportOptions) -> Impor
         let entry = capped(raw, &mut cut);
         let item = entry.item();
         let found = index.find(&entry, entry.is_tool, &options.remembered);
-        let Found::One(i) = found else {
+        let Found::One(i, by_panel) = found else {
             // Keys in skipped contexts would bind nothing, so they neither make a row nor count
             // toward the suggestion cap.
             let keys: Vec<&ForeignKey> = entry.keys.iter().filter(|k| rule_of(k) != Some(&ContextRule::Skip)).collect();
@@ -423,7 +452,7 @@ pub fn plan(set: &ForeignSet, keymap: &Keymap, options: &ImportOptions) -> Impor
             }
             let reason = match found {
                 Found::Many => UnmatchedReason::Ambiguous,
-                _ if matches!(index.find(&entry, !entry.is_tool, &BTreeMap::new()), Found::One(_)) => UnmatchedReason::Tool,
+                _ if matches!(index.find(&entry, !entry.is_tool, &BTreeMap::new()), Found::One(..)) => UnmatchedReason::Tool,
                 _ => UnmatchedReason::NoMatch,
             };
             if options.suggest && reason != UnmatchedReason::Tool {
@@ -437,6 +466,13 @@ pub fn plan(set: &ForeignSet, keymap: &Keymap, options: &ImportOptions) -> Impor
             report.unmatched.push(Unmatched { item, line: entry.line, keys: keys_text(keys.into_iter()), reason });
             continue;
         };
+
+        if by_panel && entry.keys.is_empty() {
+            let (command, label) =
+                keymap.catalogue().get(i).map(|b| (b.command.clone(), b.label.clone())).unwrap_or_else(|| (CommandRef::new(""), String::new()));
+            report.matched_without_change.push(MatchedWithoutChange { command, label, item, line: entry.line, reason: NoChangeReason::PanelMenu });
+            continue;
+        }
 
         let has_home = entry.keys.iter().any(|k| rule_of(k) == Some(&ContextRule::Home));
         let mut unlisted = Vec::new();
@@ -727,7 +763,8 @@ fn capped(e: &ForeignEntry, cut: &mut usize) -> ForeignEntry {
 }
 
 enum Found {
-    One(usize),
+    /// The command, and whether only a panel-menu step found it.
+    One(usize, bool),
     Many,
     None,
 }
@@ -789,26 +826,30 @@ impl Names {
     }
 
     /// The lists the match steps look up for an entry's normalised menu and path, most specific
-    /// first.
-    fn steps(&self, menu: Option<&String>, segs: &[String], panel_menu: bool) -> Vec<Option<&Vec<usize>>> {
+    /// first, each with whether it is a panel-menu step. `panel` is `Some(known)` for a panel-menu
+    /// entry, `known` saying whether the catalogue has its panel; only then does its last segment
+    /// alone match.
+    fn steps(&self, menu: Option<&String>, segs: &[String], panel: Option<bool>) -> Vec<(Option<&Vec<usize>>, bool)> {
         let Some(last) = segs.last() else { return Vec::new() };
         let full = menu.into_iter().chain(segs).map(String::as_str).collect::<Vec<_>>().join("\u{1f}");
-        let mut steps = vec![self.paths.get(&full)];
+        let mut steps = vec![(self.paths.get(&full), false)];
         let joined = (segs.len() > 1).then(|| segs.join(" "));
         if let Some(m) = menu {
             if let Some(j) = &joined {
-                steps.push(self.in_menu.get(&(m.clone(), j.clone())));
+                steps.push((self.in_menu.get(&(m.clone(), j.clone())), false));
             }
-            steps.push(self.in_menu.get(&(m.clone(), last.clone())));
+            steps.push((self.in_menu.get(&(m.clone(), last.clone())), false));
         }
-        if panel_menu && segs.len() > 1 {
-            steps.push(self.ends.get(&segs.join("\u{1f}")));
+        if panel.is_some() && segs.len() > 1 {
+            steps.push((self.ends.get(&segs.join("\u{1f}")), true));
         }
         if let Some(j) = &joined {
-            steps.push(self.anywhere.get(j));
+            steps.push((self.anywhere.get(j), false));
         }
-        if menu.is_some() || segs.len() == 1 || panel_menu {
-            steps.push(self.anywhere.get(last));
+        if menu.is_some() || segs.len() == 1 {
+            steps.push((self.anywhere.get(last), false));
+        } else if panel == Some(true) {
+            steps.push((self.anywhere.get(last), true));
         }
         steps
     }
@@ -822,15 +863,18 @@ struct Index {
     names: Names,
     /// Toggle commands by their names without a leading Show/Hide ([`toggle_name`]).
     toggles: Names,
+    /// Every normalised segment of every catalogue path: the panels and menus the app has.
+    segments: HashSet<String>,
 }
 
 impl Index {
     fn new(keymap: &Keymap) -> Index {
-        let mut ix = Index { tool: Vec::new(), keys: HashMap::new(), names: Names::default(), toggles: Names::default() };
+        let mut ix = Index { tool: Vec::new(), keys: HashMap::new(), names: Names::default(), toggles: Names::default(), segments: HashSet::new() };
         for (i, b) in keymap.catalogue().iter().enumerate() {
             ix.tool.push(matches!(b.kind, Kind::Tool { .. }));
             ix.keys.insert(b.command.key(), i);
             ix.names.add(i, b, str::to_string);
+            ix.segments.extend(b.paths.iter().flatten().map(|s| normalize_label(s)));
             if b.is_toggle {
                 ix.toggles.add(i, b, toggle_name);
             }
@@ -841,7 +885,7 @@ impl Index {
     fn pick(&self, list: Option<&Vec<usize>>, tool: bool) -> Found {
         let mut fits = list.into_iter().flatten().filter(|i| self.tool.get(**i) == Some(&tool));
         match (fits.next(), fits.next()) {
-            (Some(i), None) => Found::One(*i),
+            (Some(i), None) => Found::One(*i, false),
             (Some(_), Some(_)) => Found::Many,
             _ => Found::None,
         }
@@ -849,13 +893,14 @@ impl Index {
 
     /// The match steps in order; the first that finds exactly one command decides. The steps run
     /// on the names as written, then on toggle commands with the entry's label and theirs
-    /// without a leading Show/Hide.
+    /// without a leading Show/Hide. A panel-menu entry's last segment alone matches only when
+    /// its first segment, the panel, is a segment of some catalogue path.
     fn find(&self, entry: &ForeignEntry, tool: bool, remembered: &BTreeMap<String, CommandRef>) -> Found {
         if let Some(c) = remembered.get(&entry.remember_key())
             && let Some(&i) = self.keys.get(&c.key())
             && self.tool.get(i) == Some(&tool)
         {
-            return Found::One(i);
+            return Found::One(i, false);
         }
         let segs: Vec<String> = entry.path.iter().map(|s| normalize_label(s)).collect();
         let mut toggle_segs = segs.clone();
@@ -863,12 +908,13 @@ impl Index {
             *last = toggle_name(last);
         }
         let menu = entry.menu.as_deref().map(normalize_label);
-        let steps = self.names.steps(menu.as_ref(), &segs, entry.panel_menu);
-        let toggle_steps = self.toggles.steps(menu.as_ref(), &toggle_segs, entry.panel_menu);
+        let panel = entry.panel_menu.then(|| segs.first().is_some_and(|p| self.segments.contains(p)));
+        let steps = self.names.steps(menu.as_ref(), &segs, panel);
+        let toggle_steps = self.toggles.steps(menu.as_ref(), &toggle_segs, panel);
         let mut many = false;
-        for list in steps.into_iter().chain(toggle_steps) {
+        for (list, by_panel) in steps.into_iter().chain(toggle_steps) {
             match self.pick(list, tool) {
-                Found::One(i) => return Found::One(i),
+                Found::One(i, _) => return Found::One(i, by_panel),
                 Found::Many => many = true,
                 Found::None => {}
             }

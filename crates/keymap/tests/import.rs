@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use craft_keymap::chord::foreign::ReadNote;
 use craft_keymap::chord::foreign::{Flavor, ForeignError};
 use craft_keymap::import::{
-    Failed, FailedChange, MAX_IMPORT_ENTRIES, MAX_IMPORT_TEXT, MAX_KEYS_PER_ENTRY, MAX_SUGGESTIONS, SkipReason, Skipped, UnmatchedReason,
-    normalize_label,
+    Failed, FailedChange, MAX_IMPORT_ENTRIES, MAX_IMPORT_TEXT, MAX_KEYS_PER_ENTRY, MAX_SUGGESTIONS, NoChangeReason, SkipReason, Skipped,
+    UnmatchedReason, normalize_label,
 };
 use craft_keymap::{
     Bindable, Binding, CommandRef, ContextRule, ForeignEntry, ForeignKey, ForeignSet, ImportOptions, ImportReport, Keymap, Kind, MAX_COMMANDS,
@@ -513,6 +513,7 @@ fn report_json_uses_camel_case_names() {
             "conflictsCleared",
             "failed",
             "imported",
+            "matchedWithoutChange",
             "set",
             "skipped",
             "suggestions",
@@ -567,6 +568,9 @@ fn panel_menu_entries_match_by_path_end_or_label() {
         command("swatches.new", "New Swatch", &["Swatches", "New Swatch"], &[]),
         command("gradient.new", "New Swatch", &["Gradient", "New Swatch"], &[]),
         command("character.smallCaps", "Small Caps", &[], &[]).with_alias("Character: Small Caps"),
+        // The app has Paragraph and Color panels.
+        command(panel("paragraph"), "Paragraph", &["Window", "Paragraph"], &[]),
+        command(panel("color"), "Color", &["Window", "Color"], &[]),
     ];
     let d = "Default";
     let panel_entry = |path: &[&str], key: &str| entry(None, path, &[(d, key)], Flavor::Windows).in_panel_menu();
@@ -575,8 +579,10 @@ fn panel_menu_entries_match_by_path_end_or_label() {
         panel_entry(&["Character", "All Caps"], "Ctrl+F1"),
         // The end of a path whose last segment differs from the label.
         panel_entry(&["Pages", "Override All Parent Page Items"], "Ctrl+F2"),
-        // The last segment alone, as one command's label.
+        // The last segment alone, as one command's label, for a panel the app has.
         panel_entry(&["Paragraph", "Justification..."], "Ctrl+F3"),
+        // The last segment alone matches nothing for a panel the app lacks.
+        panel_entry(&["History", "Justification..."], "Ctrl+F8"),
         // The panel picks one of two commands with the label.
         panel_entry(&["Swatches", "New Swatch"], "Ctrl+F4"),
         // The joined segments as an alias.
@@ -593,7 +599,14 @@ fn panel_menu_entries_match_by_path_end_or_label() {
     has(&km, "swatches.new", &["Cmd+F4"]);
     has(&km, "character.smallCaps", &["Cmd+F5"]);
     has(&km, "gradient.new", &[]);
-    assert_eq!(unmatched(&r), [("Color > New Swatch", UnmatchedReason::Ambiguous), ("Character > All Caps", UnmatchedReason::NoMatch)]);
+    assert_eq!(
+        unmatched(&r),
+        [
+            ("History > Justification...", UnmatchedReason::NoMatch),
+            ("Color > New Swatch", UnmatchedReason::Ambiguous),
+            ("Character > All Caps", UnmatchedReason::NoMatch)
+        ]
+    );
 }
 
 #[test]
@@ -672,4 +685,72 @@ fn only_entries_with_keys_to_bind_count_toward_suggestions() {
     assert_eq!(r.suggestions.len(), 1);
     assert_eq!(r.suggestions[0].candidates, [CommandRef::new("edit.checkSpelling")]);
     assert_eq!(r.truncated, 0);
+}
+
+fn pages_catalogue() -> Vec<Bindable> {
+    vec![
+        command("app.newDocumentDialog", "New Document…", &["File", "New Document…"], &["Cmd+N"]),
+        command("layout.pages.insert", "Insert Pages…", &["Layout", "Pages", "Insert Pages…"], &["Cmd+Shift+P"]),
+        command("file.close", "Close", &["File", "Close"], &["Cmd+W"]),
+    ]
+}
+
+#[test]
+fn panel_menu_entries_without_keys_change_nothing() {
+    let none = |path: &[&str]| ForeignEntry::new(None, path.iter().copied()).in_panel_menu();
+    let entries = vec![
+        // The app has no History panel, so the last segment alone does not match.
+        none(&["History", "New Document"]),
+        // A path end matches, but without keys the command keeps its shortcuts.
+        none(&["Pages", "Insert Pages..."]),
+        // The same for the last segment alone, with a panel the app has.
+        none(&["Pages", "New Document"]),
+    ];
+    let (km, r) = import_into(pages_catalogue(), entries, &default_context());
+    has(&km, "app.newDocumentDialog", &["Cmd+N"]);
+    has(&km, "layout.pages.insert", &["Cmd+Shift+P"]);
+    assert!(r.changed.is_empty(), "{:?}", r.changed);
+    assert_eq!(r.unmatched_without_shortcut, 1);
+    let rows: Vec<(&str, &str, NoChangeReason)> =
+        r.matched_without_change.iter().map(|m| (m.item.as_str(), m.command.id.as_str(), m.reason)).collect();
+    assert_eq!(
+        rows,
+        [
+            ("Pages > Insert Pages...", "layout.pages.insert", NoChangeReason::PanelMenu),
+            ("Pages > New Document", "app.newDocumentDialog", NoChangeReason::PanelMenu)
+        ]
+    );
+    let v = serde_json::to_value(&r).unwrap();
+    let mut fields: Vec<String> = v["matchedWithoutChange"][0].as_object().unwrap().keys().cloned().collect();
+    fields.sort();
+    assert_eq!(fields, ["command", "item", "label", "line", "reason"]);
+    assert_eq!(v["matchedWithoutChange"][0]["reason"], "panelMenu");
+}
+
+#[test]
+fn an_entry_without_keys_never_clears_keys_another_entry_gives() {
+    let d = "Default";
+    let keyed = || win("Layout", &["Pages", "Insert Pages..."], &[(d, "Ctrl+Alt+P")]);
+    let keyless = || win("Layout", &["Insert Pages..."], &[]);
+    for entries in [vec![keyed(), keyless()], vec![keyless(), keyed()]] {
+        let (km, _) = import_into(pages_catalogue(), entries, &default_context());
+        has(&km, "layout.pages.insert", &["Cmd+Alt+P"]);
+    }
+
+    // A panel-menu entry without keys, and the menu entry with the command's keys.
+    let entries = vec![
+        ForeignEntry::new(None, ["Pages", "Insert Pages..."]).in_panel_menu(),
+        win("Layout", &["Pages", "Insert Pages..."], &[(d, "Ctrl+Shift+P")]),
+    ];
+    let (km, r) = import_into(pages_catalogue(), entries, &default_context());
+    has(&km, "layout.pages.insert", &["Cmd+Shift+P"]);
+    assert_eq!(r.matched_without_change.len(), 1);
+
+    // The later entry still takes the chord from another command; the entry without keys does
+    // not clear the command that lost it.
+    let entries = vec![keyless(), keyed(), win("File", &["Close"], &[(d, "Ctrl+Alt+P")])];
+    let (km, r) = import_into(pages_catalogue(), entries, &default_context());
+    has(&km, "file.close", &["Cmd+Alt+P"]);
+    has(&km, "layout.pages.insert", &["Cmd+Shift+P"]);
+    assert_eq!(r.skipped.iter().map(|s| (s.command.id.as_str(), s.reason)).collect::<Vec<_>>(), [("layout.pages.insert", SkipReason::Taken)]);
 }

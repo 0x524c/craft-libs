@@ -175,7 +175,11 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
   Menus area writes `Character: All Caps`; Illustrator and Photoshop sets have similar areas).
   The reader splits the name into segments and marks the entry `ForeignEntry::in_panel_menu()`.
   Such an entry also matches a catalogue path that ends with its segments (with the command's
-  label or the path's last segment last), and its last segment alone as a label.
+  label or the path's last segment last), and its last segment alone as a label. The last
+  segment alone counts only when the first segment, the panel, is a segment of some catalogue
+  path, so `History: New Document` matches nothing in an app without a History panel. An entry
+  without keys that matched only these ways leaves the command's shortcuts alone and is listed
+  in `matched_without_change` (reason `PanelMenu`).
 - Show/Hide: a source often lists one toggle as two items, `Show Rulers` and `Hide Rulers`. Names
   are matched as written first. When no step finds a command, the steps run again on commands
   marked `Bindable::toggle()`, with a leading `Show `, `Hide ` or `Show/Hide ` dropped from the
@@ -186,7 +190,8 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
 - The set wins: a chord it gives to a command is taken from commands outside it (except twins
   sharing it as a default), a later entry takes a chord from an earlier one (as when the entries
   are applied in file order; the earlier key is listed in `skipped`), and an entry without keys
-  can clear its command.
+  can clear its command. It clears it only when no entry matched to the same command has keys,
+  whatever the order of the entries.
 - Keys read approximately (a numeric keypad key bound as the main key) are listed in
   `approximated`.
 - With `ImportOptions.suggest`, unmatched entries get fuzzy candidates (`import::namematch`);
