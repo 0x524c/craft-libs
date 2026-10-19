@@ -912,7 +912,8 @@ fn custom_chrome_shaped_labels_and_programmatic_raise_are_available() {
         custom_frame(&ctx, &layout, &mut content, vec![], &[], false);
     }
     let out = custom_frame(&ctx, &layout, &mut content, vec![], &[], true);
-    assert_eq!(out.focused, Some(5));
+    assert_eq!(out.focused, None, "a programmatic raise is not user focus");
+    assert_eq!(ctx.memory(|m| m.focused()), None, "a raise draws no keyboard-focus ring");
     assert!(out.actions.is_empty());
     assert!(content.headers >= 3 && content.bodies >= 3);
     assert!(content.labels.iter().any(|s| s == "Logical 5"));

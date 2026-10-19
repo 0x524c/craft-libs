@@ -201,8 +201,9 @@ impl DockStyle {
 pub struct DockOutput<P> {
     pub actions: Vec<Action<P>>,
     pub error: Option<DockError>,
-    /// The panel the user focused this frame: a clicked tab or menu entry, a drop, a raised
-    /// window, or a press of any pointer button in a panel body, stripless panels included.
+    /// The panel the user focused this frame: a clicked tab or menu entry, a drop, or a press
+    /// of any pointer button in a panel body, stripless panels included. Only user input sets
+    /// it; [`DockArea::raise_panel`] and host commands do not.
     pub focused: Option<P>,
     /// Whole-floating-group gesture identity; host may display its own group drop preview.
     pub group_drag: Option<P>,
@@ -307,6 +308,37 @@ pub fn float_space<P: Clone + Send + Sync + 'static>(ctx: &Context, area_id: Id)
 
 fn float_space_key(area: Id) -> Id {
     area.with("float-space")
+}
+
+/// The panel whose tab held keyboard focus at the end of the last frame, where it was, and
+/// whether that frame's own actions may have moved it.
+type TabFocus<P> = (P, super::dock_model::Place, bool);
+
+fn tab_focus_key(area: Id) -> Id {
+    area.with("tab-focus")
+}
+
+/// Keyboard focus stays on a tab only while its panel stays where the user put it: a panel
+/// hidden, closed or moved by the host (a command or a workspace reset) gives focus up.
+fn release_moved_tab_focus<P: Clone + Eq + Hash + Debug + Send + Sync + 'static>(ctx: &Context, area: Id, layout: &Layout<P>) {
+    let Some((panel, place, moved_by_area)) = ctx.data(|d| d.get_temp::<TabFocus<P>>(tab_focus_key(area))) else { return };
+    let tab = area.with(("tab", &panel));
+    let place_now = layout.place(&panel);
+    if ctx.memory(|m| m.has_focus(tab)) && (place_now.is_none() || (place_now != Some(place) && !moved_by_area)) {
+        ctx.memory_mut(|m| m.surrender_focus(tab));
+    }
+}
+
+fn record_tab_focus<P: Clone + Eq + Hash + Debug + Send + Sync + 'static>(ctx: &Context, area: Id, layout: &Layout<P>, acted: bool) {
+    let focused = ctx.memory(|m| m.focused());
+    let tab = focused.and_then(|id| layout.panels().into_iter().find(|panel| area.with(("tab", *panel)) == id));
+    let record = tab.and_then(|panel| Some((panel.clone(), layout.place(panel)?, acted)));
+    ctx.data_mut(|d| match record {
+        Some(record) => {
+            d.insert_temp(tab_focus_key(area), record);
+        }
+        None => d.remove::<TabFocus<P>>(tab_focus_key(area)),
+    });
 }
 
 /// A request for host state outside the layout.
@@ -692,8 +724,9 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
         false
     }
 
-    /// Raise and focus a panel's owning floating area on this frame. Apply Activate through
-    /// the application's command path as well to select its tab.
+    /// Raise a panel's floating window (or open its flyout) on this frame. Apply Activate
+    /// through the application's command path as well to select its tab. A raise is not user
+    /// input: it moves no keyboard focus and is not reported as [`DockOutput::focused`].
     pub fn raise_panel(mut self, panel: P) -> Self {
         self.activation = Some(panel);
         self
@@ -764,6 +797,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             cancel_drag::<P>(ui.ctx(), self.id);
             return DockOutput { error: Some(DockError::InvalidGeometry), ..Default::default() };
         }
+        release_moved_tab_focus(ui.ctx(), self.id, layout);
         let (view, frame) = super::render::view(layout, self.maximized.as_ref(), self.hide, &*content);
         let mut renderer = Renderer {
             id: self.id,
@@ -797,6 +831,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
         renderer.finish_drag(ui.ctx());
         renderer.report_flyout(ui.ctx());
         super::hits::record(ui.ctx(), self.id, &view, &renderer.owned_interactions);
+        record_tab_focus(ui.ctx(), self.id, layout, !renderer.output.actions.is_empty());
         ui.ctx().data_mut(|d| d.insert_temp(float_space_key(self.id), renderer.float_space));
         ui.ctx().data_mut(|d| d.insert_temp(self.id.with("owned-interactions"), renderer.owned_interactions));
         renderer.output

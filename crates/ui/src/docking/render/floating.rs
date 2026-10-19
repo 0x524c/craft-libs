@@ -66,8 +66,6 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let id = self.id.with(("floating", first));
         if self.activation.as_ref().is_some_and(|panel| window.contains(panel)) {
             ctx.move_to_top(FloatingFrame::layer(id));
-            ctx.memory_mut(|memory| memory.request_focus(self.id.with(("tab", self.activation.as_ref().unwrap_or(first)))));
-            self.output.focused = self.activation.clone();
         }
         let movable = window.panels().all(|panel| self.permissions(panel).movable);
         let style = ChromeStyle::from_dock(self.style);

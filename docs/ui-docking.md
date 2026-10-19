@@ -110,8 +110,10 @@ survives.
 
 `DockOutput` also has:
 
-- `focused`: the panel the user focused this frame: a clicked tab, a drop, a raised window, or a
-  press of any pointer button in a panel body, bare and protected panels included.
+- `focused`: the panel the user focused this frame: a clicked tab, a drop, or a press of any
+  pointer button in a panel body, bare and protected panels included. Commands, `raise_panel` and
+  workspace resets never set it; a host that tracks the last focused panel clears it when a reset
+  or command hides, closes or moves that panel.
 - `events`: requests outside the layout, such as `DockEvent::ToggleMaximize` (Frame) and
   `DockEvent::ToggleAutoCollapse` (Dock), and `DockEvent::FlyoutChanged { panel }` (Dock): the
   flyout opened, switched or closed (`None`). It comes once per change, whatever made it: an
@@ -125,7 +127,7 @@ Builder options on `DockArea`:
 | `maximized(panel)` | Maximize Frame: that frame fills the area. |
 | `hide_panels(HidePanels)` | Hide panels for Tab and Shift+Tab. Protected panels stay. |
 | `auto_collapse_iconic(on)` | Close a flyout on Escape or a click outside (default on). |
-| `raise_panel(panel)` | Raise and focus a panel's floating window this frame. |
+| `raise_panel(panel)` | Raise a panel's floating window, or open its flyout, this frame. It moves no keyboard focus and does not set `DockOutput::focused`. |
 | `blocked_rects(rects)` | App overlays that docking gestures must ignore. |
 
 `DockStyle::close_menu_items` and `DockStyle::close_button` hide the built-in Close menu items
@@ -133,7 +135,8 @@ and the floating window ×. They hide controls only: a panel that stays `closabl
 by the app's own Close items and commands.
 
 `DockArea::chrome_has_focus` tells whether keyboard focus is on docking chrome rather than on a
-panel body. `begin_drag` hands a drag that started in the app's own chrome to the area.
+panel body. Focus follows only the user's input: a tab keeps keyboard focus until a command or a
+workspace reset hides, closes or moves its panel, and then gives it up. `begin_drag` hands a drag that started in the app's own chrome to the area.
 `docking::chrome` has the floating frame, the title bar and `drop_preview` (the drop preview
 docking and `craft_ui::panes` both draw) for apps that draw their own windows.
 

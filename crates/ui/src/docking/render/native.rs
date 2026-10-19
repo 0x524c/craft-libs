@@ -79,7 +79,6 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             .with_min_inner_size(MIN_SIZE);
         if self.activation.as_ref().is_some_and(|panel| window.contains(panel)) {
             ctx.send_viewport_cmd_to(viewport, ViewportCommand::Focus);
-            self.output.focused = self.activation.clone();
         }
         let (targets, stacks) = (self.targets.len(), self.frame.stacks.len());
         let (closed, placed) = ctx.show_viewport_immediate(viewport, builder, |ui, class| {

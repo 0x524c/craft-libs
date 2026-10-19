@@ -588,3 +588,40 @@ fn a_short_docked_panel_floats_at_its_content_height_up_to_its_floating_size() {
     let Some(Target::Float { rect: Some([_, _, _, height]) }) = moved_group(&out.actions) else { panic!("{:?}", out.actions) };
     assert_eq!(*height, title + strip + 150.0);
 }
+
+#[test]
+fn tab_focus_follows_only_the_users_input() {
+    let mut d = Driver::new(docked());
+    let tab = Id::new(AREA).with(("tab", &4u32));
+    // Keyboard focus as Tab gives it.
+    d.ctx.memory_mut(|m| m.request_focus(tab));
+    d.step(vec![]);
+    assert!(d.ctx.memory(|m| m.has_focus(tab)));
+
+    // A reset that moves the panel takes its focus away and reports no new focus.
+    let mut reset = docked();
+    let Some(Node::Split { first, .. }) = &mut reset.root else { panic!() };
+    let Node::Dock { columns, .. } = first.as_mut() else { panic!() };
+    columns[0].groups.reverse();
+    d.layout = reset;
+    let out = d.step(vec![]);
+    assert_eq!(out.focused, None);
+    d.step(vec![]);
+    assert_eq!(d.ctx.memory(|m| m.focused()), None, "the moved tab gives up keyboard focus");
+
+    // A user drag keeps the dragged tab's focus where the user put it.
+    let mut d = Driver::new(docked());
+    d.ctx.memory_mut(|m| m.request_focus(tab));
+    d.drag(d.tab(4).center(), d.tab(2).center());
+    d.step(vec![]);
+    assert!(d.layout.place(&4) != docked().place(&4));
+    assert!(d.ctx.memory(|m| m.has_focus(tab)), "a tab moved by the user keeps focus");
+
+    // A closed panel's tab gives focus up too.
+    let out = d.step(vec![]);
+    assert!(out.actions.is_empty());
+    d.layout.apply(Action::Close { panel: 4 }).unwrap();
+    d.step(vec![]);
+    d.step(vec![]);
+    assert_eq!(d.ctx.memory(|m| m.focused()), None);
+}
