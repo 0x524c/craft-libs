@@ -63,10 +63,11 @@
 //!
 //! # Storing overrides
 //!
-//! [`Overrides`] is a field of the app's craft-settings type. It is stored as an array of
-//! `{ command, keys }` tables, not as a table keyed by command: craft-settings merges tables key
-//! by key with what the file holds, but replaces an array whole, so a reset command (an entry
-//! removed) stays removed after saving.
+//! [`Overrides`] is a field of the app's craft-settings type, marked
+//! `#[serde(with = "craft_keymap::keymap::overrides_list")]` so that it is stored as an array of
+//! `{ command, keys }` tables. craft-settings merges tables key by key with what the file holds,
+//! but replaces an array whole, so a reset command (an entry removed) stays removed after saving.
+//! Without the attribute, overrides with at most one text per command are written as a table.
 //!
 //! ```no_run
 //! use craft_keymap::{Binding, Keymap, Overrides, Platform, Policy, Profiles, Scopes};
@@ -76,6 +77,7 @@
 //! #[derive(Serialize, Deserialize, Default, Clone, PartialEq)]
 //! #[serde(default)]
 //! struct Prefs {
+//!     #[serde(with = "craft_keymap::keymap::overrides_list")]
 //!     shortcuts: Overrides,
 //!     shortcut_sets: Profiles,
 //! }
