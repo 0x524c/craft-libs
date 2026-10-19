@@ -279,11 +279,11 @@ fn conflicts_tell_clashes_from_shadows() {
     assert!(!strict.conflicts().iter().any(|c| c.chord.to_string() == "Cmd+R"));
 }
 
-/// 4096 commands, each with 16 bindings on one chord in 16 panels.
-fn crowded(scopes: Scopes, kind: Kind) -> (Keymap, Overrides) {
-    let catalogue: Vec<Bindable> = (0..MAX_COMMANDS).map(|n| app(&format!("c.{n}"), &[]).with_kind(kind.clone())).collect();
+/// `commands` commands, each with 16 bindings on one chord in 16 panels.
+fn crowded(commands: usize, scopes: Scopes, kind: Kind) -> (Keymap, Overrides) {
+    let catalogue: Vec<Bindable> = (0..commands).map(|n| app(&format!("c.{n}"), &[]).with_kind(kind.clone())).collect();
     let mut o = Overrides::new();
-    for n in 0..MAX_COMMANDS {
+    for n in 0..commands {
         assert!(o.insert(format!("c.{n}"), (1..=MAX_BINDINGS).map(|p| format!("P{p}: K")).collect()));
     }
     (Keymap::new(catalogue, scopes, Platform::Mac), o)
@@ -294,11 +294,31 @@ fn panels(n: usize) -> Scopes {
 }
 
 #[test]
+fn crowded_chords_are_capped() {
+    // Panels the app never registered are not bound.
+    let (km, o) = crowded(2, Scopes::new(), Kind::Command);
+    let km = km.with_overrides(o);
+    assert!(km.conflicts().is_empty());
+    assert!(km.bindings(&cmd("c.0")).is_empty());
+    assert_eq!(km.overrides().get("c.0").map(<[String]>::len), Some(MAX_BINDINGS), "kept verbatim");
+    assert!(km.problems().contains(&Problem::UnknownScope { key: "c.0".into(), text: "P1: K".into() }));
+
+    // Registered panels that never share: 32 commands make 16 × 496 pairs, capped.
+    let (km, o) = crowded(32, panels(MAX_BINDINGS).with_panel_fallthrough(false), Kind::Command);
+    assert_eq!(km.with_overrides(o).conflicts().len(), MAX_CONFLICTS);
+
+    // Tools of one group: no conflicts.
+    let (km, o) = crowded(32, panels(MAX_BINDINGS), Kind::Tool { group: None });
+    assert!(km.with_overrides(o).conflicts().is_empty());
+}
+
+#[test]
+#[ignore = "worst-case timing; run with --ignored"]
 fn crowded_chords_stay_fast() {
     let limit = Duration::from_secs(8);
 
     // Panels the app never registered are not bound.
-    let (km, o) = crowded(Scopes::new(), Kind::Command);
+    let (km, o) = crowded(MAX_COMMANDS, Scopes::new(), Kind::Command);
     let km = km.with_overrides(o);
     let t = Instant::now();
     assert!(km.conflicts().is_empty());
@@ -308,14 +328,14 @@ fn crowded_chords_stay_fast() {
     assert!(km.problems().contains(&Problem::UnknownScope { key: "c.0".into(), text: "P1: K".into() }));
 
     // Registered panels that never share: many conflicts, capped.
-    let (km, o) = crowded(panels(MAX_BINDINGS).with_panel_fallthrough(false), Kind::Command);
+    let (km, o) = crowded(MAX_COMMANDS, panels(MAX_BINDINGS).with_panel_fallthrough(false), Kind::Command);
     let km = km.with_overrides(o);
     let t = Instant::now();
     assert_eq!(km.conflicts().len(), MAX_CONFLICTS);
     assert!(t.elapsed() < limit, "{:?}", t.elapsed());
 
     // Tools of one group: no conflicts, and no pair is compared.
-    let (km, o) = crowded(panels(MAX_BINDINGS), Kind::Tool { group: None });
+    let (km, o) = crowded(MAX_COMMANDS, panels(MAX_BINDINGS), Kind::Tool { group: None });
     let km = km.with_overrides(o);
     let t = Instant::now();
     assert!(km.conflicts().is_empty());
