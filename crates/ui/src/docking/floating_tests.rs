@@ -530,3 +530,32 @@ fn chrome_frame_and_title_bar_work_without_a_dock_area() {
     let (_, resized) = frame(vec![Event::PointerMoved(edge + vec2(50.0, 0.0))]);
     assert_eq!(resized, Some(Rect::from_min_size(rect.min, vec2(350.0, 200.0))));
 }
+
+#[test]
+fn hidden_panels_leave_their_split_and_resizing_names_the_layout_path() {
+    let layout = Layout {
+        root: Some(Node::Split {
+            axis: SplitAxis::Horizontal,
+            size: SplitSize::FixedFirst(200.0),
+            first: Box::new(tabs(&[9], 0)),
+            second: Box::new(Node::Split {
+                axis: SplitAxis::Vertical,
+                size: SplitSize::Ratio(0.5),
+                first: Box::new(tabs(&[1], 0)),
+                second: Box::new(tabs(&[2], 0)),
+            }),
+        }),
+        floating: Vec::new(),
+    };
+    let mut d = Driver::new(layout, Profile::Frame);
+    d.hide = Hide::Keep;
+    d.content.keep = vec![1, 2];
+    d.step(vec![]);
+    d.step(vec![]);
+    assert_eq!(d.tab(1).map(|r| r.left()), Some(0.0), "the hidden frame's space goes to the others");
+    let divider = d.response(Id::new(AREA).with(("split", &Vec::<bool>::new()))).unwrap().center();
+    let out = d.hold(divider, divider + vec2(0.0, 60.0));
+    assert!(out.actions.iter().any(|a| matches!(a, Action::ResizeSplit { path, .. } if path == &vec![true])), "{:?}", out.actions);
+    let Some(Node::Split { size: SplitSize::FixedFirst(200.0), second, .. }) = &d.layout.root else { panic!("{:?}", d.layout) };
+    assert!(matches!(**second, Node::Split { size, .. } if size != SplitSize::Ratio(0.5)));
+}
