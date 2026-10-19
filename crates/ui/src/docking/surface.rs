@@ -208,7 +208,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
                 || matches(self.id.with(("move-group", panels.first())))
         };
         for floating in &layout.floating {
-            if group(&floating.panels) || floating.panels.first().is_some_and(|first| matches(self.id.with(("floating", first)).with("resize"))) {
+            if floating.groups.iter().any(|g| group(&g.panels))
+                || floating.panels().next().is_some_and(|first| matches(self.id.with(("floating", first)).with("resize")))
+            {
                 return true;
             }
         }
@@ -216,6 +218,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
         while let Some((node, path)) = nodes.pop() {
             match node {
                 Node::Tabs { panels, .. } if group(panels) => return true,
+                Node::Dock { columns, .. } if columns.iter().flat_map(|c| c.groups.iter()).any(|g| group(&g.panels)) => return true,
                 Node::Stack { entries } => {
                     if entries.iter().any(|entry| {
                         matches(self.id.with(("tab", &entry.panel)))
@@ -401,6 +404,17 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 }
             }
             Node::Tabs { panels, active } => self.group(ui, panels, *active, rect, false),
+            Node::Dock { columns, .. } => {
+                // Interim rendering: columns side by side, groups stacked evenly.
+                let total: f32 = columns.iter().map(|c| c.width).sum();
+                let mut left = rect.left();
+                for column in columns {
+                    let width = if total > 0.0 { rect.width() * column.width / total } else { 0.0 };
+                    let column_rect = Rect::from_min_max(pos2(left, rect.top()), pos2(left + width, rect.bottom()));
+                    left += width;
+                    self.stacked_groups(ui, &column.groups, column_rect, false);
+                }
+            }
             Node::Stack { entries } => {
                 let total_header = (entries.len() as f32 * self.style.tab_height).min(rect.height());
                 let remaining = (rect.height() - total_header).max(0.0);
@@ -487,8 +501,19 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
     }
 
+    /// Groups stacked top to bottom in equal shares of `rect`.
+    fn stacked_groups(&mut self, ui: &mut Ui, groups: &[super::Group<P>], rect: Rect, floating: bool) {
+        let share = rect.height() / groups.len().max(1) as f32;
+        for (index, group) in groups.iter().enumerate() {
+            let top = rect.top() + share * index as f32;
+            let group_rect = Rect::from_min_max(pos2(rect.left(), top), pos2(rect.right(), top + share));
+            self.group(ui, &group.panels, group.active, group_rect, floating);
+        }
+    }
+
     fn node_limits(&self, node: &Node<P>) -> PanelLimits {
         match node {
+            Node::Dock { .. } => PanelLimits { min: Vec2::splat(self.style.min_pane), ..PanelLimits::default() },
             Node::Tabs { panels, .. } => {
                 let mut limits = PanelLimits::default();
                 for panel in panels {
@@ -750,17 +775,17 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let layers = ctx.memory(|memory| memory.layer_ids().collect::<Vec<_>>());
         let mut groups: Vec<_> = self.layout.floating.iter().collect();
         groups.sort_by_key(|group| {
-            let id = group.panels.first().map(|panel| self.id.with(("floating", panel)));
+            let id = group.panels().next().map(|panel| self.id.with(("floating", panel)));
             layers.iter().position(|layer| Some(layer.id) == id).unwrap_or(usize::MAX)
         });
         for group in groups {
-            let Some(first) = group.panels.first() else { continue };
+            let Some(first) = group.panels().next() else { continue };
             let [x, y, width, height] = group.rect;
-            let limits = self.node_limits(&Node::Tabs { panels: group.panels.clone(), active: group.active });
+            let limits = self.node_limits(&Node::Tabs { panels: group.panels().cloned().collect(), active: 0 });
             let size = vec2(width, height).max(limits.min).min(limits.max);
             let rect = clamp_float(Rect::from_min_size(pos2(x, y), size), screen);
             let id = self.id.with(("floating", first));
-            if self.activation.as_ref().is_some_and(|panel| group.panels.contains(panel)) {
+            if self.activation.as_ref().is_some_and(|panel| group.contains(panel)) {
                 ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, id));
                 ctx.memory_mut(|memory| memory.request_focus(self.id.with(("tab", self.activation.as_ref().unwrap_or(first)))));
                 self.output.focused = self.activation.clone();
@@ -769,7 +794,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 ui.set_min_size(rect.size());
                 let rect = Rect::from_min_size(ui.min_rect().min, rect.size());
                 ui.allocate_rect(rect, Sense::hover());
-                self.group(ui, &group.panels, group.active, rect, true);
+                self.stacked_groups(ui, &group.groups, rect, true);
                 let corner = Rect::from_min_max((rect.max - vec2(12.0, 12.0)).max(rect.min), rect.max);
                 let response = ui.interact(corner, id.with("resize"), Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeNwSe);
                 self.register_interaction(ui.ctx(), response.id);
@@ -813,7 +838,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 
     fn finish_group_drag(&mut self, ctx: &Context) {
         let Some(drag) = ctx.data(|d| d.get_temp::<GroupDrag<P>>(self.id.with("group-drag"))) else { return };
-        if !self.layout.floating.iter().any(|g| g.panels.contains(&drag.panel) && g.panels.iter().all(|p| (self.permissions)(p).movable)) {
+        if !self.layout.floating.iter().any(|g| g.contains(&drag.panel) && g.panels().all(|p| (self.permissions)(p).movable)) {
             ctx.data_mut(|d| d.remove::<GroupDrag<P>>(self.id.with("group-drag")));
             return;
         }
@@ -873,7 +898,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let action = if let Some(proposal) = proposal.filter(|_| !gone) {
                 Some(Action::Move { panel: drag.panel.clone(), anchor: proposal.anchor, placement: proposal.placement })
             } else if (self.permissions)(&drag.panel).floatable
-                && (gone || !drag.source.contains(pointer) || self.layout.floating.iter().any(|g| g.panels.contains(&drag.panel)))
+                && (gone || !drag.source.contains(pointer) || self.layout.floating.iter().any(|g| g.contains(&drag.panel)))
             {
                 let rect = clamp_float(Rect::from_min_size(pointer - drag.grab, drag.source.size()), ctx.content_rect());
                 Some(Action::Float { panel: drag.panel.clone(), rect: [rect.left(), rect.top(), rect.width(), rect.height()] })

@@ -55,7 +55,7 @@ impl Harness {
                 first: Box::new(Node::Tabs { panels: vec![CANVAS], active: 0 }),
                 second: Box::new(Node::Tabs { panels: vec![LAYERS, PROPERTIES], active: 0 }),
             }),
-            floating: vec![Floating { panels: vec![BRUSHES], active: 0, rect: [38.0, 76.0, 210.0, 250.0] }],
+            floating: vec![Floating::single(vec![BRUSHES], 0, [38.0, 76.0, 210.0, 250.0])],
         };
         let mut harness = Self {
             ctx,
@@ -235,7 +235,7 @@ fn floating_brushes_merge_detach_and_redock_through_real_pointer_input() {
                 assert_eq!(h.body_ids[&BRUSHES], brush_id);
                 h.capture(&directory, "02-merged-main-tabs");
                 h.drag(h.tab(BRUSHES).center(), pos2((width - 240.0) * 0.5, 270.0));
-                assert!(h.layout.floating.iter().any(|g| g.panels.contains(&BRUSHES)), "{name}: {:?}", h.applied);
+                assert!(h.layout.floating.iter().any(|g| g.contains(&BRUSHES)), "{name}: {:?}", h.applied);
                 h.capture(&directory, "03-detached-again");
                 h.drag(h.tab(BRUSHES).center(), h.tab(LAYERS).left_center() + vec2(4.0, 0.0));
                 assert!(h.layout.floating.is_empty(), "{name}");

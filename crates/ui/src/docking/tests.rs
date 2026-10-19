@@ -14,7 +14,7 @@ fn sample() -> Layout<u32> {
             first: Box::new(tabs(&[1], 0)),
             second: Box::new(tabs(&[2, 3, 4], 1)),
         }),
-        floating: vec![Floating { panels: vec![5, 6], active: 1, rect: [80.0, 70.0, 300.0, 220.0] }],
+        floating: vec![Floating::single(vec![5, 6], 1, [80.0, 70.0, 300.0, 220.0])],
     }
 }
 
@@ -29,8 +29,8 @@ fn floating_brush_panel_joins_main_tabs_without_losing_other_panels() {
     let Node::Split { size, second, .. } = layout.root.as_ref().unwrap() else { panic!() };
     assert_eq!(*size, SplitSize::FixedSecond(240.0));
     assert_eq!(**second, tabs(&[2, 3, 5, 4], 2));
-    assert_eq!(layout.floating[0].panels, vec![6]);
-    assert_eq!(layout.floating[0].active, 0);
+    assert_eq!(layout.floating[0].groups[0].panels, vec![6]);
+    assert_eq!(layout.floating[0].groups[0].active, 0);
     layout.validate().unwrap();
     assert_eq!(layout.panels().len(), 6);
 }
@@ -43,8 +43,8 @@ fn detach_redock_merge_and_collapse_empty_source_containers() {
     layout.apply(move_to(1, 2, Zone::Left)).unwrap();
     assert_eq!(layout.floating.len(), 1);
     layout.apply(move_to(5, 6, Zone::Center)).unwrap();
-    assert_eq!(layout.floating[0].panels, vec![6, 5]);
-    assert_eq!(layout.floating[0].active, 1);
+    assert_eq!(layout.floating[0].groups[0].panels, vec![6, 5]);
+    assert_eq!(layout.floating[0].groups[0].active, 1);
     layout.apply(move_to(6, 3, Zone::Center)).unwrap();
     layout.apply(move_to(5, 3, Zone::Center)).unwrap();
     assert!(layout.floating.is_empty());
@@ -154,7 +154,7 @@ fn close_and_restore_preserve_fixed_side_and_floating_geometry() {
             first: Box::new(tabs(&[1], 0)),
             second: Box::new(tabs(&[2], 0)),
         }),
-        floating: vec![Floating { panels: vec![3], active: 0, rect: [41.0, 52.0, 233.0, 244.0] }],
+        floating: vec![Floating::single(vec![3], 0, [41.0, 52.0, 233.0, 244.0])],
     };
     let saved = layout.clone();
     let first = layout.location(&1).unwrap();
@@ -197,12 +197,12 @@ fn closing_and_reopening_an_entire_accordion_restores_its_kind_and_heights() {
 #[test]
 fn invalid_saved_layouts_reject_duplicates_selection_depth_and_nonfinite_geometry() {
     let mut duplicate = sample();
-    duplicate.floating[0].panels.push(1);
+    duplicate.floating[0].groups[0].panels.push(1);
     assert_eq!(duplicate.validate(), Err(DockError::DuplicatePanel));
     let mut invalid = sample();
-    invalid.floating[0].active = usize::MAX;
+    invalid.floating[0].groups[0].active = usize::MAX;
     assert_eq!(invalid.validate(), Err(DockError::InvalidSelection));
-    invalid.floating[0].active = 0;
+    invalid.floating[0].groups[0].active = 0;
     invalid.floating[0].rect[3] = f32::INFINITY;
     assert_eq!(invalid.validate(), Err(DockError::InvalidGeometry));
     let mut deep = tabs(&[0], 0);
@@ -404,7 +404,7 @@ fn actual_pointer_drag_docks_a_floating_panel_into_the_main_tab_strip() {
     step(&ctx, &mut layout, vec![Event::PointerMoved(target)]);
     let actions = step(&ctx, &mut layout, vec![pointer_button(target, false)]);
     assert!(actions.iter().any(|a| matches!(a, Action::Move { panel: 5, .. })), "{actions:?}");
-    assert!(!layout.floating.iter().any(|g| g.panels.contains(&5)));
+    assert!(!layout.floating.iter().any(|g| g.contains(&5)));
     assert_eq!(layout.panels().len(), 6);
     let Node::Split { second, .. } = layout.root.as_ref().unwrap() else { panic!() };
     let Node::Tabs { panels, active } = second.as_ref() else { panic!() };
@@ -429,7 +429,7 @@ fn tab_dragged_out_of_the_window_floats_where_it_left() {
     step(&ctx, &mut layout, vec![Event::PointerMoved(exit)]);
     let actions = step(&ctx, &mut layout, vec![Event::PointerGone]);
     assert!(actions.iter().any(|a| matches!(a, Action::Float { panel: 3, .. })), "{actions:?}");
-    assert!(layout.floating.iter().any(|g| g.panels == [3]), "{layout:?}");
+    assert!(layout.floating.iter().any(|g| g.panels().eq([3].iter())), "{layout:?}");
     let back = pos2(400.0, 300.0);
     assert!(step(&ctx, &mut layout, vec![Event::PointerMoved(back)]).is_empty());
     assert!(step(&ctx, &mut layout, vec![pointer_button(back, false)]).is_empty(), "the drag ended when the pointer left");
@@ -634,7 +634,7 @@ fn restoring_a_panel_beside_a_nested_subtree_preserves_the_complete_workspace() 
 #[test]
 fn floating_only_surface_does_not_allocate_the_callers_document_region() {
     let ctx = Context::default();
-    let layout = Layout { root: None, floating: vec![Floating { panels: vec![1u32], active: 0, rect: [30.0, 40.0, 200.0, 200.0] }] };
+    let layout = Layout { root: None, floating: vec![Floating::single(vec![1u32], 0, [30.0, 40.0, 200.0, 200.0])] };
     ctx.run_ui(RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), ..Default::default() }, |ui| {
         let before = ui.available_rect_before_wrap();
         let out = DockArea::new(Id::new("float-only")).show(
@@ -666,8 +666,8 @@ fn floating_group_grip_moves_every_member_while_tab_drag_detaches_one() {
     step(&ctx, &mut layout, vec![Event::PointerMoved(start), pointer_button(start, true)]);
     let actions = step(&ctx, &mut layout, vec![Event::PointerMoved(start + vec2(50.0, 40.0))]);
     assert!(actions.iter().any(|a| matches!(a, Action::MoveFloating { .. })));
-    assert_eq!(layout.floating[0].panels, original.panels);
-    assert_eq!(layout.floating[0].active, original.active);
+    assert_eq!(layout.floating[0].groups[0].panels, original.groups[0].panels);
+    assert_eq!(layout.floating[0].groups[0].active, original.groups[0].active);
     assert_ne!(layout.floating[0].rect, original.rect);
     step(&ctx, &mut layout, vec![pointer_button(start + vec2(50.0, 40.0), false)]);
     for _ in 0..2 {
@@ -680,7 +680,7 @@ fn floating_group_grip_moves_every_member_while_tab_drag_detaches_one() {
     let detached = step(&ctx, &mut layout, vec![pointer_button(tab + vec2(100.0, 100.0), false)]);
     assert!(detached.iter().any(|a| matches!(a, Action::Float { panel: 5, .. })));
     assert_eq!(layout.floating.len(), 2);
-    assert_eq!(layout.floating[0].panels, vec![6]);
+    assert_eq!(layout.floating[0].groups[0].panels, vec![6]);
 }
 
 #[test]
@@ -1026,7 +1026,7 @@ fn chrome_focus_classifies_rendered_tab_but_excludes_body_text_field_and_invalid
     assert!(!DockArea::new(Id::new("focus-area")).chrome_has_focus(&ctx, &layout));
     paint(tab);
     let mut invalid = layout.clone();
-    invalid.floating.push(Floating { panels: vec![3], active: 0, rect: [10.0, 10.0, 100.0, 100.0] });
+    invalid.floating.push(Floating::single(vec![3], 0, [10.0, 10.0, 100.0, 100.0]));
     assert!(!DockArea::new(Id::new("focus-area")).chrome_has_focus(&ctx, &invalid));
     assert!(!DockArea::<u32>::new(Id::new("focus-area")).chrome_has_focus(&ctx, &Layout::default()));
     ctx.memory_mut(|memory| memory.request_focus(Id::new("unrendered")));
