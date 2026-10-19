@@ -309,10 +309,15 @@ impl DialogState {
         }
     }
 
-    /// The frame's outcome: a closing or file outcome first, else Changed after an edit.
+    /// The frame's outcome: a closing or file outcome first, else Changed after an edit. An edit
+    /// that comes with another outcome stays pending and is reported by the next call.
     pub(crate) fn finish(&mut self) -> Option<Outcome> {
-        let changed = std::mem::take(&mut self.changed);
-        self.outcome.take().or(changed.then_some(Outcome::Changed))
+        self.outcome.take().or_else(|| std::mem::take(&mut self.changed).then_some(Outcome::Changed))
+    }
+
+    /// Whether an edit waits for the next [`finish`](Self::finish).
+    pub(crate) fn change_pending(&self) -> bool {
+        self.changed
     }
 
     /// The table's lines for the current view.
@@ -708,6 +713,8 @@ impl DialogState {
         self.recording = None;
         self.conflict = None;
         self.prompt = None;
+        // Ok and Cancel cover every edit.
+        self.changed = false;
         self.outcome = Some(outcome);
     }
 
@@ -1335,6 +1342,22 @@ mod tests {
         assert_eq!(fx.p.active, "Theirs");
         assert_eq!(fx.p.get("Theirs", &fx.b).and_then(|o| o.get("object.front")), None);
         assert!(fx.p.get("Mine", &fx.b).is_some_and(Overrides::is_empty));
+    }
+
+    #[test]
+    fn save_prompt_before_import_reports_changed_after_import() {
+        for answer in [Answer::No, Answer::Yes] {
+            let mut fx = Fx::new(Options::default());
+            fx.p.save_as("Mine", Overrides::new(), &fx.b).ok();
+            let mut st = open(&mut fx);
+            record(&mut st, &mut fx, add("object.front"), &["F2"]);
+            assert!(matches!(st.finish(), Some(Outcome::Changed)));
+            st.request_import(&mut fx.env());
+            st.answer(&mut fx.env(), answer);
+            assert!(matches!(st.finish(), Some(Outcome::Import { .. })), "{answer:?}");
+            assert!(matches!(st.finish(), Some(Outcome::Changed)), "{answer:?}");
+            assert!(st.finish().is_none());
+        }
     }
 
     #[test]

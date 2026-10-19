@@ -36,7 +36,8 @@ pub enum Outcome {
     Ok,
     /// Closed with Cancel: the keymap and profiles are back as they were when it opened.
     Cancel,
-    /// An edit this frame (for live menus and live saving).
+    /// An edit (for live menus and live saving). When a frame also has another outcome, such as
+    /// `Import` after the Save changes prompt, `Changed` follows on the next frame.
     Changed,
     /// The user asked to import: the app opens a file of one of these formats and calls
     /// [`ShortcutsDialog::import_json`] or [`ShortcutsDialog::review_import`].
@@ -274,5 +275,9 @@ fn frame(ui: &mut egui::Ui, env: &mut Env, state: &mut DialogState) -> Option<Ou
     if state.is_open() {
         view::body(ui, env, state);
     }
-    state.finish()
+    let out = state.finish();
+    if state.change_pending() {
+        ui.ctx().request_repaint();
+    }
+    out
 }

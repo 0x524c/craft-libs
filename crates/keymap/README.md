@@ -322,7 +322,7 @@ Outcomes:
 |---|---|
 | `Ok` | Saves `Profiles` (with sets) or `keymap.overrides()`. |
 | `Cancel` | Nothing to do: the keymap and the sets are as they were at open. |
-| `Changed` | Updates its menus, or saves at once if it saves live. |
+| `Changed` | Updates its menus, or saves at once if it saves live. When a frame also has another outcome, `Changed` comes on the next frame. |
 | `Import { formats }` | Opens a file of one of the formats, then calls `import_json` (craft-keymap JSON, `ui::JSON_FORMAT`) or reads it into a `ForeignSet` and calls `review_import`. |
 | `Export { name, json }`, `ExportAs { format, name, keymap }` | Writes the set where the user chooses (a download on the web). |
 | `Summary { name, html, text }` | Shows, saves or prints the summary. |
