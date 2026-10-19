@@ -256,12 +256,19 @@ fn conflicts_tell_clashes_from_shadows() {
     assert!(with("nope").is_empty());
     for entry in km.catalogue() {
         let id = entry.command.id.as_str();
-        let mut direct: Vec<_> = km.conflicts_with(&entry.command).into_iter().map(|c| (c.chord, c.a.0.id, c.b.0.id, c.kind, c.in_defaults)).collect();
+        let mut direct: Vec<_> =
+            km.conflicts_with(&entry.command).into_iter().map(|c| (c.chord, c.a.0.id, c.b.0.id, c.kind, c.in_defaults)).collect();
         let mut filtered: Vec<_> = km
             .conflicts()
             .into_iter()
             .filter(|c| c.a.0.id == id || c.b.0.id == id)
-            .map(|c| if c.a.0.id == id { (c.chord, c.a.0.id, c.b.0.id, c.kind, c.in_defaults) } else { (c.chord, c.b.0.id, c.a.0.id, c.kind, c.in_defaults) })
+            .map(|c| {
+                if c.a.0.id == id {
+                    (c.chord, c.a.0.id, c.b.0.id, c.kind, c.in_defaults)
+                } else {
+                    (c.chord, c.b.0.id, c.a.0.id, c.kind, c.in_defaults)
+                }
+            })
             .collect();
         direct.sort();
         filtered.sort();
