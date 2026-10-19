@@ -58,22 +58,31 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             let Some(pointer) = pointer.filter(|p| !self.blockers.iter().any(|r| r.contains(*p))) else { return };
             match drag.gesture {
-                GroupGesture::Window => self.output.group_drop = Some((drag.panel, pointer)),
+                GroupGesture::Window => self.drop_window(ctx, &drag, pointer, float_only),
                 GroupGesture::Group | GroupGesture::Column => self.drop_group(ctx, &drag, pointer, float_only),
             }
         } else if let Some(pointer) = pointer.filter(|p| !self.blockers.iter().any(|r| r.contains(*p))) {
             self.output.group_drag = Some(drag.panel.clone());
-            if drag.gesture != GroupGesture::Window {
-                self.paint_group_drag(ctx, &drag, pointer, float_only);
-            }
+            self.paint_group_drag(ctx, &drag, pointer, float_only);
         }
     }
 
     /// The valid target under the pointer for a whole group. A target holding the group
-    /// itself is a no-op proposal; a target the model would reject is no target.
-    fn group_proposal(&self, drag: &GroupDrag<P>, pointer: Pos2) -> Option<DropProposal<P>> {
-        let target = self.targets.iter().rev().find(|t| crate::docking::targets::usable(t.rect) && t.rect.contains(pointer))?;
-        if target.tabs.iter().any(|(p, _)| drag.members.contains(p)) {
+    /// itself is a no-op proposal; a target the model would reject is no target. A window
+    /// moving live looks through itself and does not split frames or join a body's centre.
+    pub(super) fn group_proposal(&self, drag: &GroupDrag<P>, pointer: Pos2) -> Option<DropProposal<P>> {
+        let window = drag.gesture == GroupGesture::Window;
+        let valid = |proposal: DropProposal<P>| {
+            let to = Target::At { anchor: proposal.anchor.clone(), placement: proposal.placement.clone() };
+            (proposal.noop || self.layout.clone().apply_with_permissions(group_action(drag, to), |p| self.permissions(p)).is_ok()).then_some(proposal)
+        };
+        if let Some(proposal) = self.extra_proposal(&drag.members, pointer, window) {
+            return valid(proposal);
+        }
+        let own = |t: &crate::docking::DropTarget<P>| t.tabs.iter().any(|(p, _)| drag.members.contains(p));
+        let target =
+            self.targets.iter().rev().find(|t| crate::docking::targets::usable(t.rect) && t.rect.contains(pointer) && !(window && own(t)))?;
+        if own(target) {
             return Some(DropProposal {
                 anchor: drag.panel.clone(),
                 placement: Placement::Tab { before: None },
@@ -83,8 +92,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             });
         }
         let proposal = resolve_drop(&drag.panel, pointer, std::slice::from_ref(target))?;
-        let action = group_action(drag, Target::At { anchor: proposal.anchor.clone(), placement: proposal.placement.clone() });
-        self.layout.clone().apply_with_permissions(action, |p| self.permissions(p)).is_ok().then_some(proposal)
+        if window && matches!(proposal.placement, Placement::Split(_)) {
+            return None;
+        }
+        valid(proposal)
     }
 
     /// Release of a group drag: join or split at the target, or float at the ghost with the
@@ -117,11 +128,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
     }
 
-    /// Ghost outline at the pointer and one destination preview.
+    /// Ghost outline at the pointer (a window moving live is its own ghost) and one
+    /// destination preview.
     fn paint_group_drag(&self, ctx: &Context, drag: &GroupDrag<P>, pointer: Pos2, float_only: bool) {
         let painter = self.preview_painter(ctx);
-        let ghost = clamp_float(drag.source.translate(pointer - drag.origin), ctx.content_rect());
-        painter.rect_stroke(ghost, 0.0, Stroke::new(1.0, self.style.accent.gamma_multiply(0.6)), StrokeKind::Inside);
+        if drag.gesture != GroupGesture::Window {
+            let ghost = clamp_float(drag.source.translate(pointer - drag.origin), ctx.content_rect());
+            painter.rect_stroke(ghost, 0.0, Stroke::new(1.0, self.style.accent.gamma_multiply(0.6)), StrokeKind::Inside);
+        }
         if float_only {
             return;
         }
@@ -132,9 +146,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             return;
         }
         if let Some(proposal) = self.group_proposal(drag, pointer).filter(|p| !p.noop) {
-            let split = matches!(proposal.placement, Placement::Split(zone) if zone != Zone::Center);
+            let split = matches!(proposal.placement, Placement::Split(zone) | Placement::Edge(zone) if zone != Zone::Center);
             let fill = if split { self.style.accent.gamma_multiply(0.15) } else { Color32::TRANSPARENT };
-            painter.rect(proposal.preview.shrink(1.0), 0.0, fill, Stroke::new(2.0, self.style.accent), StrokeKind::Inside);
+            if crate::docking::targets::usable(proposal.preview) {
+                painter.rect(proposal.preview.shrink(1.0), 0.0, fill, Stroke::new(2.0, self.style.accent), StrokeKind::Inside);
+            }
             if let Some(marker) = proposal.insertion {
                 painter.rect_filled(marker, 0.0, self.style.accent);
             }
@@ -166,7 +182,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             return;
         }
-        let float_only = float_only(ctx);
+        let float_only = float_only(ctx) || drag.undock;
         let floatable = self.permissions(&drag.panel).floatable
             && (float_only || gone || !drag.source.contains(pointer) || self.layout.floating.iter().any(|g| g.contains(&drag.panel)));
         let floating_rect = floatable.then(|| self.tab_float_rect(ctx, &drag, pointer));
@@ -189,7 +205,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             return;
         }
-        let proposal = if float_only { None } else { resolve_drop(&drag.panel, pointer, &self.targets) };
+        let proposal = if float_only {
+            None
+        } else {
+            self.extra_proposal(std::slice::from_ref(&drag.panel), pointer, false).or_else(|| resolve_drop(&drag.panel, pointer, &self.targets))
+        };
         if released {
             cancel_drag::<P>(ctx, self.id);
             if pointer.distance(drag.origin) < 2.0 || proposal.as_ref().is_some_and(|proposal| proposal.noop && !gone) {
@@ -218,7 +238,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             // Reordering inside the source strip shows only the insertion line.
             let same_group = proposal.insertion.is_some()
                 && self.targets.iter().any(|target| target.rect == proposal.preview && target.tabs.iter().any(|(panel, _)| panel == &drag.panel));
-            if !same_group && !proposal.noop {
+            if !same_group && !proposal.noop && crate::docking::targets::usable(proposal.preview) {
                 painter.rect(
                     proposal.preview.shrink(1.0),
                     0.0,

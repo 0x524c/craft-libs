@@ -45,12 +45,20 @@ pub struct DockStyle {
     /// Painted under every floating window, so it stays opaque when the panel colours are not.
     pub floating_background: Color32,
     pub floating_stroke: Stroke,
+    /// Dock: docks, columns and stacked groups. Frame: a split tree of tab frames, with
+    /// Maximize, Ctrl/Cmd-drag undock, splits on all four outer edges and frame menu labels.
+    pub profile: Profile,
+    /// Height of a floating window's title bar.
+    pub title_height: f32,
+    /// Width of the band along the layout's outer edge that splits at the root.
+    pub edge_band: f32,
     /// [D] Height of the bar above each dock column. It drags the column and holds its »/« button.
     pub column_bar_height: f32,
-    /// [D] Height of the band around the seam between two stacked groups.
+    /// [D] Height of the band around the seam between two stacked groups, in docks and
+    /// floating windows.
     pub seam_band: f32,
-    /// [D] Width of the band along the window's left and right edges that makes a new dock.
-    pub edge_band: f32,
+    /// [D] Width of the band along the docked area's left and right edges that makes a new dock.
+    pub new_dock_band: f32,
     /// [D] Lay docks out right to left: `Side::Start` is the right edge. egui has no app-wide
     /// layout direction, so the host sets this from its locale. Frame splits keep their sides.
     pub right_to_left: bool,
@@ -58,6 +66,25 @@ pub struct DockStyle {
     pub move_column_label: String,
     pub collapse_to_icons_label: String,
     pub expand_panels_label: String,
+    pub move_window_label: String,
+    pub close_window_label: String,
+    /// Frame profile menu labels.
+    pub undock_label: String,
+    pub undock_group_label: String,
+    pub close_panel_group_label: String,
+    pub close_others_label: String,
+    pub maximize_label: String,
+    pub restore_frame_label: String,
+    /// Shown where native windows are available (feature `native-windows`).
+    pub new_window_label: String,
+}
+
+/// Which arrangement a [`DockStyle`] renders and labels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Profile {
+    #[default]
+    Dock,
+    Frame,
 }
 
 impl DockStyle {
@@ -90,21 +117,45 @@ impl DockStyle {
             drag_bar_width: 40.0,
             floating_background: visuals.window_fill,
             floating_stroke: visuals.window_stroke,
+            profile: Profile::Dock,
+            title_height: super::chrome::TITLE_HEIGHT,
+            edge_band: 8.0,
             column_bar_height: 14.0,
             seam_band: 8.0,
-            edge_band: 12.0,
+            new_dock_band: 12.0,
             right_to_left: false,
             move_column_label: "Move panel column".into(),
             collapse_to_icons_label: "Collapse to Icons".into(),
             expand_panels_label: "Expand Panels".into(),
+            move_window_label: "Move panel window".into(),
+            close_window_label: "Close panel window".into(),
+            undock_label: "Undock Panel".into(),
+            undock_group_label: "Undock Panel Group".into(),
+            close_panel_group_label: "Close Panel Group".into(),
+            close_others_label: "Close Other Panels in Group".into(),
+            maximize_label: "Maximize Frame".into(),
+            restore_frame_label: "Restore Frame Size".into(),
+            new_window_label: "Move Panel to New Window".into(),
         }
     }
 
     pub(super) fn valid(&self) -> bool {
-        [self.tab_height, self.gap, self.min_pane, self.border.width, self.font.size, self.drag_bar_width, self.floating_stroke.width]
-            .iter()
-            .chain(&[self.column_bar_height, self.seam_band, self.edge_band])
-            .all(|v| v.is_finite() && (0.0..=4096.0).contains(v))
+        [
+            self.tab_height,
+            self.gap,
+            self.min_pane,
+            self.border.width,
+            self.font.size,
+            self.drag_bar_width,
+            self.floating_stroke.width,
+            self.title_height,
+            self.edge_band,
+            self.column_bar_height,
+            self.seam_band,
+            self.new_dock_band,
+        ]
+        .iter()
+        .all(|v| v.is_finite() && (0.0..=4096.0).contains(v))
             && self.tab_height > 0.0
             && self.font.size > 0.0
     }
@@ -119,13 +170,40 @@ pub struct DockOutput<P> {
     pub group_drag: Option<P>,
     /// Whole-group release for host-owned atomic docking policy.
     pub group_drop: Option<(P, Pos2)>,
+    /// Requests that are not layout actions.
+    pub events: Vec<DockEvent<P>>,
 }
 
 impl<P> Default for DockOutput<P> {
     fn default() -> Self {
-        Self { actions: Vec::new(), error: None, focused: None, group_drag: None, group_drop: None }
+        Self { actions: Vec::new(), error: None, focused: None, group_drag: None, group_drop: None, events: Vec::new() }
     }
 }
+
+/// A request for host state outside the layout.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DockEvent<P> {
+    /// Maximize Frame: maximize the frame holding `panel`, or restore it when it is the one
+    /// passed to [`DockArea::maximized`].
+    ToggleMaximize { panel: P },
+}
+
+/// Which panels [`DockArea::hide_panels`] hides. Protected panels always stay.
+pub enum HidePanels<'a, P> {
+    None,
+    All,
+    /// Every panel except those for which the function returns true.
+    Except(&'a dyn Fn(&P) -> bool),
+}
+
+impl<P> Clone for HidePanels<'_, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<P> Copy for HidePanels<'_, P> {}
 
 /// Preferred body bounds. Tiny viewports relax minima proportionally rather than producing
 /// inverted rectangles. Maximums constrain a pane when its sibling can occupy the remainder.
@@ -160,6 +238,8 @@ pub(super) struct Drag<P> {
     pub(super) origin: Pos2,
     pub(super) source: Rect,
     pub(super) grab: Vec2,
+    /// Ctrl/Cmd held at the press of a frame-profile tab drag: the drop always floats.
+    pub(super) undock: bool,
 }
 
 /// What a group gesture moves.
@@ -194,7 +274,7 @@ pub fn begin_drag<P: Clone + Send + Sync + 'static>(ctx: &Context, area_id: Id, 
         return false;
     }
     let grab = (origin - source_rect.min).clamp(Vec2::ZERO, source_rect.size());
-    ctx.data_mut(|d| d.insert_temp(area_id.with("drag"), Drag { panel, origin, source: source_rect, grab }));
+    ctx.data_mut(|d| d.insert_temp(area_id.with("drag"), Drag { panel, origin, source: source_rect, grab, undock: false }));
     true
 }
 
@@ -362,15 +442,31 @@ impl<P, C: DockContent<P> + ?Sized> DockContent<P> for Overrides<'_, P, C> {
 
 /// Optional renderer for applications without an existing docking surface. Apps with custom
 /// chrome can instead use the model, target resolver and resize/tab primitives independently.
-pub struct DockArea<P = ()> {
+pub struct DockArea<'a, P = ()> {
     id: Id,
     activation: Option<P>,
     blockers: Vec<Rect>,
+    maximized: Option<P>,
+    hide: HidePanels<'a, P>,
 }
 
-impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
+impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
     pub fn new(id: Id) -> Self {
-        Self { id, activation: None, blockers: Vec::new() }
+        Self { id, activation: None, blockers: Vec::new(), maximized: None, hide: HidePanels::None }
+    }
+
+    /// Maximize Frame: the docked frame holding `panel` fills the area; other frames and
+    /// floating windows do not render or take input. A floating or absent panel is ignored.
+    pub fn maximized(mut self, panel: Option<P>) -> Self {
+        self.maximized = panel;
+        self
+    }
+
+    /// Hide panels (Tab, Shift+Tab); their space goes to the panels that stay. Protected
+    /// panels always stay. The layout is unchanged.
+    pub fn hide_panels(mut self, hide: HidePanels<'a, P>) -> Self {
+        self.hide = hide;
+        self
     }
 
     /// Whether keyboard focus belongs to a rendered docking control in this layout.
@@ -389,10 +485,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
         };
         for floating in &layout.floating {
             if floating.groups.iter().any(|g| group(&g.panels))
-                || floating
-                    .panels()
-                    .next()
-                    .is_some_and(|first| RESIZE_HANDLES.iter().any(|name| matches(self.id.with(("floating", first)).with(*name))))
+                || floating.panels().next().is_some_and(|first| {
+                    RESIZE_HANDLES.iter().any(|name| matches(self.id.with(("floating", first)).with(*name)))
+                        || matches(self.id.with(("move-group", Some(first))).with("close"))
+                })
+                || floating.groups.iter().any(|g| matches(self.id.with(("floating-divider", g.panels.first()))))
             {
                 return true;
             }
@@ -452,7 +549,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
 
     /// Render a validated snapshot and return requested actions for the app's command handler.
     /// No action is applied here. Panel contents get a global stable egui ID across moves.
-    /// Floating groups are egui areas inside this viewport; this does not create native windows.
+    /// Floating windows are egui areas inside this viewport; with feature `native-windows`, a
+    /// window with a native rect gets its own OS window where the backend has viewports.
     pub fn show(
         self,
         ui: &mut Ui,
@@ -508,6 +606,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
             cancel_drag::<P>(ui.ctx(), self.id);
             return DockOutput { error: Some(DockError::InvalidGeometry), ..Default::default() };
         }
+        let (view, frame) = super::render::view(layout, self.maximized.as_ref(), self.hide, &*content);
         let mut renderer = Renderer {
             id: self.id,
             style,
@@ -520,12 +619,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
             dock_targets: Vec::new(),
             owned_interactions: Vec::new(),
             output: DockOutput::default(),
+            frame,
         };
-        if let Some(root) = &layout.root {
+        if let Some(root) = &view.root {
             renderer.node(ui, root, rect, &mut Vec::new());
             ui.allocate_rect(rect, Sense::hover());
         }
-        renderer.floating(ui.ctx());
+        renderer.floating(ui.ctx(), &view.floating);
         renderer.finish_group_drag(ui.ctx());
         renderer.finish_drag(ui.ctx());
         ui.ctx().data_mut(|d| d.insert_temp(self.id.with("owned-interactions"), renderer.owned_interactions));

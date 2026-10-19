@@ -3,7 +3,7 @@ use std::{fmt::Debug, hash::Hash};
 use egui::{Key, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 
 use super::{Renderer, clamp_float, stripless};
-use crate::docking::{Action, DropTarget, Group, GroupDrag, GroupGesture, Placement, Target, begin_drag, surface::TAB_PADDING};
+use crate::docking::{Action, DropTarget, GroupDrag, GroupGesture, Placement, Target, begin_drag, surface::TAB_PADDING};
 use crate::tabs;
 
 /// Where a group is drawn. It decides the drop targets the group offers and its gestures.
@@ -26,28 +26,10 @@ pub(super) struct TabGroup<'a, P> {
     pub(super) rect: Rect,
 }
 
-/// Width of a floating window's move grip at the left of each strip.
-const GRIP_WIDTH: f32 = 12.0;
 /// The top band of a strip that drags the whole group.
 const BORDER_BAND: f32 = 4.0;
 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
-    /// Groups stacked top to bottom. Minimized groups take their strip; the others share the
-    /// rest equally.
-    pub(super) fn stacked_groups(&mut self, ui: &mut Ui, groups: &[Group<P>], rect: Rect, kind: GroupKind) {
-        let strip = self.style.tab_height;
-        let open = groups.iter().filter(|g| !g.minimized).count();
-        let fixed = groups.len().saturating_sub(open) as f32 * strip;
-        let share = if open > 0 { (rect.height() - fixed).max(0.0) / open as f32 } else { 0.0 };
-        let mut top = rect.top();
-        for group in groups {
-            let bottom = (top + if group.minimized { strip } else { share }).min(rect.bottom());
-            let group_rect = Rect::from_min_max(pos2(rect.left(), top), pos2(rect.right(), bottom));
-            self.group(ui, &group.panels, group.active, group.minimized, group_rect, kind);
-            top = bottom;
-        }
-    }
-
     pub(super) fn group(&mut self, ui: &mut Ui, panels: &[P], active: usize, minimized: bool, rect: Rect, kind: GroupKind) {
         let Some(selected) = panels.get(active) else { return };
         let policy = self.permissions(selected);
@@ -65,13 +47,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             return;
         }
         let movable = panels.iter().all(|p| self.permissions(p).movable);
-        let mut strip = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.top() + self.style.tab_height).min(rect.bottom())));
+        let strip = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.top() + self.style.tab_height).min(rect.bottom())));
         ui.painter().rect_filled(strip, 0.0, self.style.tab_background);
-        if let GroupKind::Floating { window } = kind {
-            let grip = Rect::from_min_max(strip.min, pos2((strip.left() + GRIP_WIDTH).min(strip.right()), strip.bottom()));
-            self.window_grip(ui, panels, grip, window, movable);
-            strip.min.x = grip.right();
-        }
         let floating = matches!(kind, GroupKind::Floating { .. });
         let requested = self.content.group_header_width(panels, selected, floating);
         let header_width = if requested.is_finite() { requested.clamp(0.0, strip.width()) } else { 0.0 };
@@ -149,38 +126,6 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         ui.painter().rect_stroke(rect, 0.0, self.style.border, StrokeKind::Inside);
     }
 
-    /// The floating window's own move: the window follows the pointer, every group included.
-    fn window_grip(&mut self, ui: &mut Ui, panels: &[P], grip: Rect, window: Rect, movable: bool) {
-        let Some(first) = panels.first() else { return };
-        let response = ui.interact(grip, self.id.with(("move-group", Some(first))), Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
-        self.register_interaction(ui.ctx(), response.id);
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.move_label));
-        if movable && response.drag_started() {
-            let origin = ui.input(|i| i.pointer.press_origin()).or_else(|| ui.ctx().pointer_interact_pos()).unwrap_or(grip.center());
-            let drag = GroupDrag {
-                panel: first.clone(),
-                original: [window.left(), window.top(), window.width(), window.height()],
-                gesture: GroupGesture::Window,
-                members: panels.to_vec(),
-                origin,
-                source: window,
-            };
-            ui.ctx().data_mut(|d| d.insert_temp(self.id.with("group-drag"), drag));
-        }
-        if movable
-            && response.dragged()
-            && let Some(drag) = ui.ctx().data(|d| d.get_temp::<GroupDrag<P>>(self.id.with("group-drag")))
-            && drag.gesture == GroupGesture::Window
-            && let Some(pointer) = ui.ctx().pointer_interact_pos()
-            && !ui.input(|i| i.key_pressed(Key::Escape) || !i.focused)
-        {
-            // From the press origin, so fractional pointer steps do not accumulate rounding.
-            let moved = clamp_float(drag.source.translate(pointer - drag.origin), ui.ctx().content_rect());
-            self.output.actions.push(Action::MoveFloating { panel: first.clone(), rect: [moved.left(), moved.top(), moved.width(), moved.height()] });
-        }
-        ui.painter().line_segment([grip.center() - vec2(0.0, 5.0), grip.center() + vec2(0.0, 5.0)], self.style.border);
-    }
-
     /// The drag bar (`drag-bar`: click, double-click, menu and drag) or the top border band
     /// (`drag-border`: drag only). Both move the whole group.
     fn group_handle(&mut self, ui: &mut Ui, name: &'static str, hit: Rect, owner: &TabGroup<'_, P>, movable: bool) {
@@ -194,7 +139,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         self.register_interaction(ui.ctx(), response.id);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.move_group_label));
         if movable && response.drag_started() {
-            self.start_group_drag(ui, owner.panels, owner.rect);
+            self.start_group_drag(ui, owner.panels, self.drag_source(owner));
         }
         if !bar {
             return;
@@ -242,7 +187,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let closable = all(&|p| p.closable);
         let movable = all(&|p| p.movable);
         let floatable = movable && all(&|p| p.floatable);
-        if closable && self.menu_action(ui, &self.style.close_group_label.clone()) {
+        if closable && self.menu_action(ui, &self.close_group_label()) {
             self.output.actions.push(Action::CloseGroup { panel: panel.clone() });
         }
         if owner.kind != GroupKind::Frame {
@@ -254,7 +199,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if owner.kind == GroupKind::Dock && self.menu_action(ui, &self.style.collapse_to_icons_label.clone()) {
             self.output.actions.push(Action::SetIconic { panel: panel.clone(), iconic: true });
         }
-        if floatable && !matches!(owner.kind, GroupKind::Floating { .. }) && self.menu_action(ui, &self.style.float_group_label.clone()) {
+        if floatable && !matches!(owner.kind, GroupKind::Floating { .. }) && self.menu_action(ui, &self.float_group_label()) {
             let rect = clamp_float(owner.rect.translate(vec2(24.0, 24.0)), ui.ctx().content_rect());
             self.output.actions.push(Action::MoveGroup {
                 panel: panel.clone(),
@@ -280,6 +225,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             });
             response.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &logical));
         }
+        self.frame_items(ui, owner, panel);
     }
 
     /// A stock menu button with shaped text and its logical accessibility label; true when
@@ -356,15 +302,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         {
             self.output.actions.push(Action::SetMinimized { panel: panel.clone(), minimized: !minimized });
         }
-        if policy.movable && response.drag_started() {
-            begin_drag(ui.ctx(), self.id, panel.clone(), group);
+        if policy.movable && response.drag_started() && begin_drag(ui.ctx(), self.id, panel.clone(), group) {
+            self.latch_undock(ui.ctx(), owner.map(|owner| owner.kind));
         }
         response.context_menu(|ui| {
             self.content.panel_menu(ui, panel);
             if policy.movable && policy.floatable {
-                let text = self.content.action_label(ui, &self.style.float_label, &self.style.font, self.style.text);
+                let logical = self.float_label();
+                let text = self.content.action_label(ui, &logical, &self.style.font, self.style.text);
                 let response = ui.button(text);
-                response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.float_label));
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &logical));
                 if response.clicked() {
                     let size = self.float_size(panel, group.size());
                     let rect = clamp_float(Rect::from_min_size(group.min + vec2(24.0, 24.0), size), ui.ctx().content_rect());

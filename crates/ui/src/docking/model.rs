@@ -169,6 +169,10 @@ pub enum Placement<P> {
     Group { below: bool },
     /// A new column before (towards the window edge) or after the anchor's column.
     Column { after: bool },
+    /// A new frame along one edge of the docked layout, a quarter of its width or height: the
+    /// root is split, or in a layout with docks, the part between them. The anchor names any
+    /// docked panel. `Center` is invalid.
+    Edge(Zone),
 }
 
 /// A closed panel's former placement. Applications may retain this beside visibility flags.
@@ -572,7 +576,8 @@ impl<P: Clone + Eq + Hash> Layout<P> {
     }
 
     /// Restore an absent panel at a captured location. Missing anchors are reported without
-    /// changes, allowing the app to choose an explicit default. Unrelated tabs retain selection.
+    /// changes, allowing the app to choose an explicit default; a floating panel whose
+    /// window is gone floats at its last rect instead. Unrelated tabs retain selection.
     pub fn restore(&mut self, panel: P, location: &Location<P>) -> Result<(), DockError> {
         self.validate()?;
         if self.contains(&panel) {
@@ -604,10 +609,8 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             if !valid_rect(rect) {
                 return Err(DockError::InvalidGeometry);
             }
-            if let Some(anchor) = &location.anchor {
-                if !proposed.floating.iter().any(|g| g.contains(anchor)) {
-                    return Err(DockError::MissingTarget);
-                }
+            // A window that closed as a whole reopens at its last rect.
+            if let Some(anchor) = location.anchor.as_ref().filter(|anchor| proposed.floating.iter().any(|g| g.contains(anchor))) {
                 if let Placement::Group { .. } = location.placement {
                     proposed.insert_moving(moving(), Target::At { anchor: anchor.clone(), placement: location.placement.clone() })?;
                 } else {
@@ -970,7 +973,9 @@ impl<P: Clone + Eq + Hash> Layout<P> {
 
     fn insert(&mut self, entry: StackEntry<P>, anchor: &P, placement: Placement<P>) -> Result<(), DockError> {
         let place = self.place(anchor).ok_or(DockError::MissingTarget)?;
-        if matches!(place, Place::Dock { .. } | Place::Floating { .. }) || matches!(placement, Placement::Group { .. } | Placement::Column { .. }) {
+        if matches!(place, Place::Dock { .. } | Place::Floating { .. })
+            || matches!(placement, Placement::Group { .. } | Placement::Column { .. } | Placement::Edge(_))
+        {
             let group = Group::new(vec![entry.panel], 0);
             return self.insert_moving(Moving::group(group), Target::At { anchor: anchor.clone(), placement });
         }

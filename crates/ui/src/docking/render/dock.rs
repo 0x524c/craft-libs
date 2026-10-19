@@ -10,7 +10,7 @@ use egui::{Context, Key, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, p
 
 use super::{GroupKind, Renderer};
 use crate::docking::{
-    Action, Column, Group, GroupDrag, GroupGesture, Node, Side, Target,
+    Action, Column, Group, GroupDrag, GroupGesture, Node, Profile, Side, Target,
     targets::{DockDrop, DockTarget, column_edge, horizontal_line, resolve_dock, usable, vertical_line},
 };
 use crate::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis};
@@ -132,7 +132,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if columns.is_empty() {
             let (band, line) = column_edge(outer, inward, rect.y_range());
             let band = band.union(Rect::from_x_y_ranges(
-                outer.min(outer + inward * self.style.edge_band)..=outer.max(outer + inward * self.style.edge_band),
+                outer.min(outer + inward * self.style.new_dock_band)..=outer.max(outer + inward * self.style.new_dock_band),
                 rect.y_range(),
             ));
             self.dock_targets.push(DockDrop { target: DockTarget::NewDock { side }, band, line });
@@ -418,16 +418,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             })
     }
 
-    /// New docks are offered only where the dock profile is in use: in a layout with a dock.
-    fn has_dock(&self) -> bool {
-        self.layout.dock_path(Side::Start).is_some() || self.layout.dock_path(Side::End).is_some()
-    }
-
     /// Dock targets, with the new-dock bands along the docked area's left and right edges that
     /// have no dock yet.
     fn dock_candidates(&self) -> Vec<DockDrop<P>> {
         let mut candidates = self.dock_targets.clone();
-        if !self.has_dock() || !usable(self.workspace) {
+        if self.style.profile != Profile::Dock || !usable(self.workspace) {
             return candidates;
         }
         let rtl = self.style.right_to_left;
@@ -438,8 +433,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 continue;
             }
             let (x, inward) = match edge {
-                Edge::Left => (self.workspace.left(), self.style.edge_band),
-                Edge::Right => (self.workspace.right(), -self.style.edge_band),
+                Edge::Left => (self.workspace.left(), self.style.new_dock_band),
+                Edge::Right => (self.workspace.right(), -self.style.new_dock_band),
             };
             let band = Rect::from_x_y_ranges(x.min(x + inward)..=x.max(x + inward), ys);
             let line = vertical_line(x + inward.signum() * 2.0, ys);
@@ -496,10 +491,12 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 }
 
-/// The move a group gesture makes: the column for a column bar, else the group.
+/// The move a group gesture makes: the column for a column bar, every group for a window's
+/// title bar, else the group.
 pub(super) fn group_action<P: Clone>(drag: &GroupDrag<P>, to: Target<P>) -> Action<P> {
     match drag.gesture {
         GroupGesture::Column => Action::MoveColumn { panel: drag.panel.clone(), to },
-        GroupGesture::Window | GroupGesture::Group => Action::MoveGroup { panel: drag.panel.clone(), to },
+        GroupGesture::Window => Action::MoveWindow { panel: drag.panel.clone(), to },
+        GroupGesture::Group => Action::MoveGroup { panel: drag.panel.clone(), to },
     }
 }
