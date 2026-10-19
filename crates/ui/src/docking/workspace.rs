@@ -80,18 +80,19 @@ impl<P: Clone + Eq + Hash> Workspace<P> {
     }
 
     /// Apply one action. Closed panels record where they go back, so each one can be reopened
-    /// with [`Self::set_visible`]. Honours [`Self::locked`]. [`Layout::closed_by`], called
-    /// before applying, names the panels a close action removes.
-    pub fn apply(&mut self, action: Action<P>, permissions: impl Fn(&P) -> Permissions) -> Result<(), DockError> {
+    /// with [`Self::set_visible`]. Honours [`Self::locked`]. Returns the panels the action
+    /// closed, in group order, so the application can release their state.
+    pub fn apply(&mut self, action: Action<P>, permissions: impl Fn(&P) -> Permissions) -> Result<Vec<P>, DockError> {
         self.apply_all([action], permissions)
     }
 
-    /// Apply every action in order, or none.
-    pub fn apply_all(&mut self, actions: impl IntoIterator<Item = Action<P>>, permissions: impl Fn(&P) -> Permissions) -> Result<(), DockError> {
+    /// Apply every action in order, or none. Returns the panels the actions closed, in order.
+    pub fn apply_all(&mut self, actions: impl IntoIterator<Item = Action<P>>, permissions: impl Fn(&P) -> Permissions) -> Result<Vec<P>, DockError> {
         self.validate()?;
         let locked = self.locked;
         let policy = |panel: &P| if locked { permissions(panel).locked() } else { permissions(panel) };
         let mut proposed = self.clone();
+        let mut all_closed = Vec::new();
         for action in actions {
             let closed = proposed.layout.closed_by(&action)?;
             let locations = close_locations(&proposed.layout, &closed);
@@ -100,12 +101,15 @@ impl<P: Clone + Eq + Hash> Workspace<P> {
                 proposed.hidden.retain(|(p, _)| p != &panel);
                 proposed.hidden.push((panel, location));
             }
+            all_closed.extend(closed);
         }
         let visible: HashSet<P> = proposed.layout.panels().into_iter().cloned().collect();
         proposed.hidden.retain(|(p, _)| !visible.contains(p));
+        let mut seen = HashSet::new();
+        all_closed.retain(|p| !visible.contains(p) && seen.insert(p.clone()));
         proposed.validate()?;
         *self = proposed;
-        Ok(())
+        Ok(all_closed)
     }
 
     /// Show or hide one panel. Showing restores its recorded location, following the chain of
@@ -117,10 +121,10 @@ impl<P: Clone + Eq + Hash> Workspace<P> {
             if !self.layout.contains(&panel) {
                 return Ok(());
             }
-            return self.apply(Action::Close { panel }, |_| Permissions::default());
+            return self.apply(Action::Close { panel }, |_| Permissions::default()).map(drop);
         }
         if self.layout.contains(&panel) {
-            return self.apply(Action::Activate { panel }, |_| Permissions::default());
+            return self.apply(Action::Activate { panel }, |_| Permissions::default()).map(drop);
         }
         let mut layout = self.layout.clone();
         if self.restore_into(&mut layout, &panel).is_err() {

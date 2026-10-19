@@ -7,6 +7,7 @@
 
 pub mod chrome;
 mod dock_model;
+mod labels;
 mod model;
 mod render;
 mod resize;

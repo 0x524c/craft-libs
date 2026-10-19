@@ -77,11 +77,13 @@ impl<P> Floating<P> {
         self.groups.iter().flat_map(|group| group.panels.iter())
     }
 
-    pub fn contains(&self, panel: &P) -> bool
+    /// True when a group of this window holds `panel`. Takes any borrowed form of `P`, such
+    /// as `&str` for `String` panels.
+    pub fn contains<Q: ?Sized + PartialEq>(&self, panel: &Q) -> bool
     where
-        P: PartialEq,
+        P: std::borrow::Borrow<Q>,
     {
-        self.groups.iter().any(|group| group.panels.contains(panel))
+        self.panels().any(|p| p.borrow() == panel)
     }
 }
 

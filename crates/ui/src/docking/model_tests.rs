@@ -167,7 +167,7 @@ fn window_docks_as_stacked_groups_or_merges_as_tabs() {
 fn close_group_and_close_window_record_a_restorable_location_per_member() {
     let mut workspace = Workspace::new(docked());
     let allow = |_: &u32| Permissions::default();
-    workspace.apply(Action::CloseGroup { panel: 3 }, allow).unwrap();
+    assert_eq!(workspace.apply(Action::CloseGroup { panel: 3 }, allow).unwrap(), [2, 3]);
     assert_eq!(workspace.hidden.iter().map(|(p, _)| *p).collect::<Vec<_>>(), [2, 3]);
     assert_eq!(panels_of(&dock(&workspace.layout, Side::End)[0].groups), [vec![4]]);
     workspace.set_visible(2, true, None).unwrap();
@@ -175,7 +175,7 @@ fn close_group_and_close_window_record_a_restorable_location_per_member() {
     assert_eq!(panels_of(&dock(&workspace.layout, Side::End)[0].groups), [vec![2, 3], vec![4]]);
 
     assert_eq!(workspace.layout.closed_by(&Action::CloseWindow { panel: 7 }).unwrap(), [6, 7, 8]);
-    workspace.apply(Action::CloseWindow { panel: 7 }, allow).unwrap();
+    assert_eq!(workspace.apply(Action::CloseWindow { panel: 7 }, allow).unwrap(), [6, 7, 8]);
     assert!(workspace.layout.floating.is_empty());
     assert_eq!(workspace.hidden.len(), 3);
     for panel in [6, 7, 8] {
