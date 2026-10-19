@@ -1,7 +1,7 @@
 #![cfg(feature = "egui")]
 
 use craft_keymap::egui::{Dispatcher, Hit, matches};
-use craft_keymap::{Active, Bindable, Binding, Chord, CommandRef, Key, Keymap, Kind, Mods, Platform, Scope, Scopes};
+use craft_keymap::{Active, Bindable, Binding, Chord, CommandRef, Key, Keymap, Kind, Mods, Platform, Scope, Scopes, Trigger};
 use egui::{Event, InputState, Key as EguiKey, Modifiers};
 
 fn chord(text: &str) -> Chord {
@@ -71,6 +71,7 @@ fn dispatch_keymap() -> Keymap {
     let tool = |id: &str| app(id, &["M"]).with_kind(Kind::Tool { group: Some("select".into()) });
     let catalogue = vec![
         app("edit.copy", &["Cmd+C", "Cmd+Insert"]),
+        app("edit.paste", &["Cmd+V", "Shift+Insert"]),
         app("app.quit", &["Cmd+Alt+Q"]),
         app("view.refresh", &["Cmd+Alt+F5"]),
         app("file.save", &["Cmd+S"]),
@@ -139,21 +140,74 @@ fn shifted_symbols_and_zoom_keys_reach_their_bindings() {
 }
 
 #[test]
-fn clipboard_events_run_their_chords_outside_text_fields() {
+fn clipboard_events_stay_with_the_app_by_default() {
     let km = dispatch_keymap();
     let mut d = Dispatcher::new();
-    let (ran, left) = run(&mut d, &km, &Active::NONE, frame(1.0, CTRL, vec![Event::Copy]));
+    // egui-winit sends these in place of the Ctrl+C and Ctrl+V presses.
+    let events = vec![Event::Copy, Event::Paste("text".into())];
+    let (ran, left) = run(&mut d, &km, &Active::NONE, frame(1.0, CTRL, events.clone()));
+    assert!(ran.is_empty(), "{ran:?}");
+    assert_eq!(left, events);
+    // The web build sends the press and then the event: both stay.
+    let events = vec![press(EguiKey::C, CTRL), Event::Copy, press(EguiKey::S, CTRL)];
+    let (ran, left) = run(&mut d, &km, &Active::NONE, frame(2.0, CTRL, events.clone()));
+    assert_eq!(ran, ["file.save"]);
+    assert_eq!(left, events[..2]);
+    // A clipboard press with no clipboard event after it is an ordinary press.
+    let (ran, _) = run(&mut d, &km, &Active::NONE, frame(3.0, CTRL, vec![press(EguiKey::Insert, CTRL)]));
     assert_eq!(ran, ["edit.copy"]);
-    assert!(left.is_empty());
+}
+
+#[test]
+fn clipboard_events_run_their_chords_outside_text_fields_when_turned_on() {
+    let km = dispatch_keymap();
+    let mut d = Dispatcher::new().with_clipboard_events(true);
+    let mut input = frame(1.0, CTRL, vec![Event::Copy, Event::Paste("text".into())]);
+    let hits = d.dispatch(&mut input, &km, &Active::NONE);
+    let ran: Vec<_> = hits.iter().map(|h| (h.command.id.as_str(), h.pasted.as_deref())).collect();
+    assert_eq!(ran, [("edit.copy", None), ("edit.paste", Some("text"))]);
+    assert!(input.events.is_empty());
 
     let typing = Active { typing: true, ..Active::NONE };
     let (ran, left) = run(&mut d, &km, &typing, frame(2.0, CTRL, vec![Event::Copy]));
     assert!(ran.is_empty());
     assert_eq!(left, [Event::Copy]);
 
-    // The web build sends the key press and the Copy event it causes: one copy.
-    let (ran, _) = run(&mut d, &km, &Active::NONE, frame(3.0, CTRL, vec![press(EguiKey::C, CTRL), Event::Copy]));
-    assert_eq!(ran, ["edit.copy"]);
+    // The web build sends the key press and the clipboard event it causes: one run each.
+    for (time, key, mods, event, id) in [
+        (3.0, EguiKey::C, CTRL, Event::Copy, "edit.copy"),
+        (4.0, EguiKey::Insert, CTRL, Event::Copy, "edit.copy"),
+        (5.0, EguiKey::Insert, Modifiers::SHIFT, Event::Paste("text".into()), "edit.paste"),
+    ] {
+        let (ran, _) = run(&mut d, &km, &Active::NONE, frame(time, mods, vec![press(key, mods), event]));
+        assert_eq!(ran, [id], "{key:?}");
+    }
+}
+
+#[test]
+fn declined_hits_leave_their_events_in_order() {
+    let km = dispatch_keymap();
+    let mut d = Dispatcher::new();
+    let shift = Modifiers::SHIFT;
+    let events = vec![
+        press(EguiKey::B, Modifiers::NONE),
+        Event::Text("b".into()),
+        press(EguiKey::S, CTRL),
+        press(EguiKey::Colon, shift),
+        Event::Text(":".into()),
+        press(EguiKey::Equals, Modifiers::NONE),
+    ];
+    let mut input = frame(1.0, Modifiers::NONE, events.clone());
+    let mut seen = Vec::new();
+    let hits = d.dispatch_filtered(&mut input, &km, &Active::NONE, |hit| {
+        seen.push((hit.command.id.clone(), hit.trigger.chord.to_string(), hit.exact));
+        hit.command.id != "file.save" && hit.command.id != "tool.brush"
+    });
+    let s = |id: &str, chord: &str, exact| (id.to_string(), chord.to_string(), exact);
+    assert_eq!(seen, [s("tool.brush", "B", true), s("file.save", "Cmd+S", true), s("help.find", "Shift+;", false), s("view.zoomIn", "=", true)]);
+    let ran: Vec<_> = hits.iter().map(|h| h.command.id.as_str()).collect();
+    assert_eq!(ran, ["help.find", "view.zoomIn"]);
+    assert_eq!(input.events, events[..3], "the declined B keeps its text, and Ctrl+S stays in its place");
 }
 
 #[test]
@@ -234,7 +288,8 @@ fn the_focused_panel_wins_and_tool_groups_cycle() {
     let mut input = frame(2.0, Modifiers::NONE, vec![press(EguiKey::M, Modifiers::NONE)]);
     let hits = d.dispatch(&mut input, &km, &Active::NONE);
     let tools = vec![CommandRef::new("tool.marquee"), CommandRef::new("tool.ellipse")];
-    assert_eq!(hits, [Hit { command: tools[0].clone(), cycle: tools }]);
+    let trigger = Trigger::single(chord("M"));
+    assert_eq!(hits, [Hit { command: tools[0].clone(), cycle: tools, trigger, exact: true, pasted: None }]);
 }
 
 #[test]

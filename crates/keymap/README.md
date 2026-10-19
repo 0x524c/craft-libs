@@ -175,9 +175,18 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
   ```
 
   A press that runs a command is removed from egui's events, with the text it typed, so widgets
-  do not see it too. egui's Copy, Cut and Paste events count as Cmd+C, Cmd+X and Cmd+V outside
-  text fields. While a text field has the keyboard, clipboard events, clipboard key presses,
-  presses followed by text, and off macOS Ctrl+Alt with a letter, digit, punctuation or Space
-  stay with it: AltGr arrives as Ctrl+Alt on Windows and some Linux setups, and egui-winit sends
-  no text while Ctrl is held.
+  do not see it too. Each `Hit` carries the `trigger` that matched and `exact`, which is false
+  when the press matched through a stand-in (`:` for `Shift+;`, `+` for `=`).
+  `dispatch_filtered` takes a predicate that can decline a hit, for example a chord the native
+  menu has already handled: the press and its text then stay in egui's events, in their place.
+  While a text field has the keyboard, clipboard key presses, presses followed by text, and off
+  macOS Ctrl+Alt with a letter, digit, punctuation or Space stay with it: AltGr arrives as
+  Ctrl+Alt on Windows and some Linux setups, and egui-winit sends no text while Ctrl is held.
   `Dispatcher::new().with_repeat(true)` also runs commands on key repeats (held arrows).
+
+  egui's Copy, Cut and Paste events stay with the app by default. On the desktop, egui-winit
+  sends them in place of the Cmd+C, Cmd+X and Cmd+V presses (Ctrl off macOS), so a binding on
+  those chords runs only with `with_clipboard_events(true)`. Then the events count as their
+  chords outside text fields, and a Paste event's text moves to `Hit::pasted`. An app whose
+  paste command asks egui for a paste gets a Paste event back, which runs that command again;
+  such an app keeps the default.
