@@ -50,14 +50,14 @@ fn a_full_height_docked_group_floats_at_the_host_or_capped_height_inside_the_win
         let mut layout = docked();
         let Some(Node::Split { first, .. }) = &mut layout.root else { panic!() };
         **first = Node::Dock { side: Side::Start, columns: vec![Column::new(vec![Group::new(vec![2, 3], 1)], 240.0)] };
-        let content = TestContent { protected: vec![0], floating_size: size, ..Default::default() };
+        let content = TestContent { protected: vec![0], floating_size: size, body_height: Some(600.0), ..Default::default() };
         let mut d = Driver::with(layout, content, Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 600.0)));
         let bar = d.rect("drag-bar", 2);
         let out = d.drag(bar.center(), pos2(420.0, 300.0));
         let Some(Target::Float { rect: Some([x, y, width, height]) }) = moved_group(&out.actions) else { panic!("{:?}", out.actions) };
         match size {
             Some(size) => assert_eq!(*height, size.y),
-            None => assert!(*height <= 320.0, "{height}"),
+            None => assert_eq!(*height, 320.0),
         }
         assert!(*width > 100.0 && *width <= 240.0, "{width}");
         let window = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));

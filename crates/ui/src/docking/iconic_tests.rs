@@ -193,9 +193,13 @@ fn dragging_a_flyout_strip_floats_its_group() {
     let mut d = DockDriver::new(docked(&[&[1, 2], &[3]], true), Content);
     d.click(hit(&d, Hit::Icon(1)).center());
     d.settle();
+    // A one-line body: the flyout and the floated group take the least fitted height.
+    let flyout = d.ctx.memory(|m| m.area_rect(d.id.with("flyout"))).unwrap();
+    assert_eq!(flyout.height(), 120.0);
     let bar = hit(&d, Hit::DragBar(1));
     let out = d.drag(bar.center(), CANVAS);
-    assert!(matches!(out.actions.as_slice(), [Action::MoveGroup { panel: 1, to: Target::Float { .. } }]), "{:?}", out.actions);
+    let [Action::MoveGroup { panel: 1, to: Target::Float { rect: Some(rect) } }] = out.actions.as_slice() else { panic!("{:?}", out.actions) };
+    assert_eq!(rect[3], 120.0);
     assert_eq!(groups(&d.layout), vec![vec![3]]);
     assert_eq!(d.layout.floating.len(), 1);
     assert_eq!(d.layout.floating.first().map(|w| w.panels().copied().collect::<Vec<_>>()), Some(vec![1, 2]));

@@ -299,13 +299,17 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let screen = ctx.content_rect();
         let bounds = self.workspace.intersect(screen);
         let width = request.width.max(self.style.min_pane).min(bounds.width());
-        let height = self
+        let max = self
             .content
             .floating_size(&active)
             .map(|size| size.y)
             .or(request.group.height)
             .filter(|h| h.is_finite() && *h > 0.0)
-            .unwrap_or(FLYOUT_HEIGHT)
+            .unwrap_or(FLYOUT_HEIGHT);
+        // A flyout fits the content its panel last drew, up to that height.
+        let height = self
+            .fitted_height(&active, self.style.tab_height, max)
+            .unwrap_or(max)
             .max(self.style.tab_height + self.style.min_pane)
             .min(bounds.height());
         let left = match request.edge {

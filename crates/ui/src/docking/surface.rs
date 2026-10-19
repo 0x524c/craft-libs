@@ -237,13 +237,16 @@ pub struct FloatSpace<P> {
     pub(super) panels: Vec<(P, Vec2)>,
     pub(super) groups: Vec<(P, Vec2)>,
     pub(super) columns: Vec<(P, Vec2)>,
+    /// The height each panel's content used when it was last drawn, which fits a floated group
+    /// to its content.
+    pub(super) contents: Vec<(P, f32)>,
 }
 
 impl<P: PartialEq> FloatSpace<P> {
     /// An area with no recorded sizes: commands float a panel at 260x320, and a group or
     /// column at its dock column's width (else 260) by 320.
     pub fn new(area: Rect) -> Self {
-        Self { area, panels: Vec::new(), groups: Vec::new(), columns: Vec::new() }
+        Self { area, panels: Vec::new(), groups: Vec::new(), columns: Vec::new(), contents: Vec::new() }
     }
 
     /// Adds the size a command floats `panel` at alone when the area has not drawn it, such as
@@ -251,6 +254,16 @@ impl<P: PartialEq> FloatSpace<P> {
     pub fn with_panel_size(mut self, panel: P, size: Vec2) -> Self {
         self.panels.push((panel, size));
         self
+    }
+}
+
+impl<P: PartialEq> FloatSpace<P> {
+    pub(super) fn record_content(&mut self, panel: P, height: f32) {
+        let height = if height.is_finite() { height.max(0.0) } else { 0.0 };
+        match self.contents.iter_mut().find(|(p, _)| *p == panel) {
+            Some((_, recorded)) => *recorded = height,
+            None => self.contents.push((panel, height)),
+        }
     }
 }
 
@@ -267,6 +280,10 @@ impl<P: PartialEq> FloatSpace<P> {
 
     pub(super) fn column(&self, panel: &P) -> Option<Vec2> {
         Self::find(&self.columns, panel)
+    }
+
+    pub(super) fn content(&self, panel: &P) -> Option<f32> {
+        self.contents.iter().find(|(p, _)| p == panel).map(|(_, height)| *height)
     }
 
     /// The first record wins: an iconic panel is recorded at its icon before its flyout.
@@ -445,8 +462,11 @@ pub trait DockContent<P> {
     fn limits(&self, _panel: &P) -> PanelLimits {
         PanelLimits::default()
     }
-    /// Preferred floating size, independent of the current dock geometry. `None` falls back
-    /// to the panel limits.
+    /// Preferred floating size, independent of the current dock geometry: the width of a
+    /// floated panel and the most height it takes. A floated panel or group, and a flyout, fit
+    /// their height to the content the active panel last drew (at least 120 points), up to this
+    /// height, or up to 320 out of a dock when this is `None`. A rect a command gives and a
+    /// window the user resized keep their size.
     fn floating_size(&self, _panel: &P) -> Option<Vec2> {
         None
     }
@@ -759,7 +779,13 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             output: DockOutput::default(),
             frame,
             iconic: super::render::Iconic::new(self.auto_collapse),
-            float_space: FloatSpace::new(rect),
+            float_space: FloatSpace {
+                // A panel keeps the content height it last drew while hidden or minimized.
+                contents: float_space::<P>(ui.ctx(), self.id)
+                    .map(|space| space.contents.into_iter().filter(|(panel, _)| layout.contains(panel)).collect())
+                    .unwrap_or_default(),
+                ..FloatSpace::new(rect)
+            },
         };
         if let Some(root) = &view.root {
             renderer.node(ui, root, rect, &mut Vec::new());

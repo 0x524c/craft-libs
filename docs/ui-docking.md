@@ -146,6 +146,24 @@ the last of them. Only an active tab wider than the strip alone is cut with "…
 names it in full. The drag bar keeps its reserved width until the tabs overflow. A tab dropped on
 the "…" button goes to the end of the group.
 
+## Floating size
+
+A panel or group floated by a drag, a menu or a command without a rect takes its content height:
+the title bar, the tab strip and the height the active panel's content used when it was last
+drawn (the content ui's `min_rect`), at least 120 points. The most it takes is the height of
+`DockContent::floating_size`, or 320 points for a panel or group leaving a dock. A short panel
+therefore floats as a short window. A panel's width is its `floating_size` width, else its docked
+width; a group keeps its docked width.
+A flyout fits its content the same way, without the title bar.
+
+- A panel the area has not drawn floats at the `floating_size` height, else the docked height
+  capped at 320, or at a `FloatSpace::with_panel_size` size for commands.
+- A group from a frame without a `floating_size` keeps its frame size. A dock column of several
+  groups floats at the tallest `floating_size` height, else its column height capped at 320.
+- A rect from a command and a window the user resized keep their size; floating windows are not
+  refitted while open.
+- Docked layout does not change: a column's last group still fills the column.
+
 ## Gestures
 
 - A tab drags one panel. A group's drag bar (the space beside its tabs) or its top border drags
@@ -195,8 +213,8 @@ let closed = command.apply(&mut app.workspace, style.right_to_left, &space, |pan
   `to_actions` take the layout's `right_to_left` for that.
 - `group` moves the panel's whole group; `column` moves its dock column, or its whole window when
   it floats. `side` is `Start` or `End`.
-- `window.panel.float` without a rect floats what it moves at the size a drag floats it at: the
-  panel's `floating_size`, else its docked group or column size, capped like a drag. It goes
+- `window.panel.float` without a rect floats what it moves at the size a drag floats it at (see
+  Floating size). It goes
   inside the dock area, 24 points from its top-left corner, so it stays clear of the menu bar.
   The area records that geometry in a `FloatSpace` each frame; `float_space(ctx, id)` reads it
   and `apply` and `to_actions` take it. Before the area has drawn, `FloatSpace::new(area)` floats

@@ -340,7 +340,8 @@ fn float_without_a_rect_takes_the_drag_size_inside_the_dock_area() {
     let float = |params: Value| parse(params).unwrap().to_actions(&workspace(), false, &space).unwrap();
 
     let panel = float(json!({"command": "window.panel.float", "panel": "layers"}));
-    assert_eq!(panel, vec![Action::Float { panel: s("layers"), rect: [24.0, 54.0, 200.0, 150.0] }], "floating_size, inset in the area");
+    // The floating_size width, and an empty body's least fitted height under its 150 points.
+    assert_eq!(panel, vec![Action::Float { panel: s("layers"), rect: [24.0, 54.0, 200.0, 120.0] }], "floating_size, inset in the area");
     let [Action::MoveGroup { to: Target::Float { rect: Some([x, y, width, height]) }, .. }] =
         float(json!({"command": "window.panel.float", "panel": "history", "group": true}))[..]
     else {
@@ -365,7 +366,7 @@ fn float_without_a_rect_takes_the_drag_size_inside_the_dock_area() {
     let applied = parse(json!({"command": "window.panel.float", "panel": "layers"})).unwrap().to_actions(&workspace(), false, &seeded);
     assert_eq!(applied, Ok(vec![Action::Float { panel: s("layers"), rect: [24.0, 54.0, 180.0, 240.0] }]));
     let recorded = space.clone().with_panel_size(s("layers"), egui::vec2(180.0, 240.0));
-    assert_eq!(float_with(&recorded, "layers"), vec![Action::Float { panel: s("layers"), rect: [24.0, 54.0, 200.0, 150.0] }]);
+    assert_eq!(float_with(&recorded, "layers"), vec![Action::Float { panel: s("layers"), rect: [24.0, 54.0, 200.0, 120.0] }]);
 }
 
 fn float_with(space: &FloatSpace<P>, panel: &str) -> Vec<Action<P>> {

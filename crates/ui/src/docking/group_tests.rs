@@ -50,11 +50,16 @@ struct TestContent {
     floating_size: Option<Vec2>,
     host_owned: bool,
     whole_group: bool,
+    /// Height every body takes; `None` draws a one-line label.
+    body_height: Option<f32>,
 }
 
 impl DockContent<u32> for TestContent {
     fn body(&mut self, ui: &mut egui::Ui, _: &u32) {
-        ui.label("Body");
+        match self.body_height {
+            Some(height) => _ = ui.allocate_exact_size(vec2(10.0, height), egui::Sense::hover()),
+            None => _ = ui.label("Body"),
+        }
     }
     fn logical_label(&self, panel: &u32) -> String {
         format!("Panel {panel}")
@@ -349,12 +354,12 @@ fn group_drag_escape_focus_loss_pointer_exit_and_cancel_drag_leave_the_layout_un
 }
 
 #[test]
-fn floated_panel_uses_floating_size_not_the_column_height() {
+fn floated_panel_fits_its_content_up_to_floating_size_not_the_column_height() {
     for size in [Some(vec2(200.0, 150.0)), None] {
         let mut layout = docked();
         let Some(Node::Split { first, .. }) = &mut layout.root else { panic!() };
         **first = Node::Dock { side: Side::Start, columns: vec![Column::new(vec![Group::new(vec![2, 3], 1)], 240.0)] };
-        let content = TestContent { protected: vec![0], floating_size: size, ..Default::default() };
+        let content = TestContent { protected: vec![0], floating_size: size, body_height: Some(200.0), ..Default::default() };
         let mut d = Driver::with(layout, content, Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 600.0)));
         let out = d.drag(d.tab(3).center(), pos2(700.0, 100.0));
         let Some([_, _, width, height]) = out.actions.iter().find_map(|a| match a {
@@ -363,9 +368,10 @@ fn floated_panel_uses_floating_size_not_the_column_height() {
         }) else {
             panic!("{:?}", out.actions)
         };
+        let fitted = crate::docking::chrome::TITLE_HEIGHT + d.rect("drag-bar", 2).height() + 200.0;
         match size {
             Some(size) => assert_eq!((width, height), (size.x, size.y)),
-            None => assert!(height <= 320.0, "{height}"),
+            None => assert_eq!(height, fitted),
         }
     }
 }
@@ -541,4 +547,44 @@ fn a_group_dragged_out_of_a_floating_stack_tears_out_alone() {
     assert_eq!(d.layout.floating.len(), 2);
     assert_eq!(d.layout.floating[0].groups, vec![Group::new(vec![5], 0)]);
     assert_eq!(d.layout.floating[1].groups, vec![Group::new(vec![6, 7], 1)]);
+}
+
+#[test]
+fn a_short_docked_panel_floats_at_its_content_height_up_to_its_floating_size() {
+    let title = crate::docking::chrome::TITLE_HEIGHT;
+    let float = |body: f32, floating_size: Option<Vec2>| {
+        let content = TestContent { body_height: Some(body), floating_size, ..Default::default() };
+        let mut d = Driver::with(docked(), content, Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 600.0)));
+        let strip = d.rect("drag-bar", 4).height();
+        let recorded = crate::docking::float_space::<u32>(&d.ctx, Id::new(AREA)).unwrap().panel(&4).unwrap();
+        let target = pos2(400.0, 300.0);
+        d.hold(d.tab(4).center(), target);
+        d.modifiers = Modifiers::COMMAND;
+        let out = d.step(vec![button(target, false)]);
+        let Some([_, _, width, height]) = out.actions.iter().find_map(|a| match a {
+            Action::Float { panel: 4, rect } => Some(*rect),
+            _ => None,
+        }) else {
+            panic!("{:?}", out.actions)
+        };
+        assert_eq!(recorded, vec2(width, height), "a command floats at the size a drag does");
+        (strip, vec2(width, height))
+    };
+    let (strip, size) = float(150.0, None);
+    assert_eq!(size.y, title + strip + 150.0);
+    assert_eq!(float(0.0, None).1.y, 120.0, "an empty panel floats at the least fitted height");
+    assert_eq!(float(600.0, None).1.y, 320.0, "a tall docked panel keeps the docked cap");
+    // The host's floating size gives the width and the most height.
+    assert_eq!(float(150.0, Some(vec2(300.0, 360.0))).1, vec2(300.0, title + strip + 150.0));
+    assert_eq!(float(150.0, Some(vec2(300.0, 160.0))).1, vec2(300.0, 160.0));
+
+    // A group takes its active panel's content height.
+    let content = TestContent { body_height: Some(150.0), ..Default::default() };
+    let mut d = Driver::with(docked(), content, Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 600.0)));
+    let target = pos2(400.0, 300.0);
+    d.hold(d.rect("drag-bar", 2).center(), target);
+    d.modifiers = Modifiers::COMMAND;
+    let out = d.step(vec![button(target, false)]);
+    let Some(Target::Float { rect: Some([_, _, _, height]) }) = moved_group(&out.actions) else { panic!("{:?}", out.actions) };
+    assert_eq!(*height, title + strip + 150.0);
 }

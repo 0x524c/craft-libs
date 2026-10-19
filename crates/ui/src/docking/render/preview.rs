@@ -5,7 +5,9 @@ use egui::{Context, Key, Pos2, Rect, Ui, Vec2, pos2, vec2};
 use super::{Renderer, clamp_float, dock::group_action};
 use crate::docking::chrome::drop_preview;
 use crate::docking::{
-    Action, Drag, DropProposal, DropRequest, GroupDrag, GroupGesture, Placement, Target, Zone, cancel_drag, dock_model::Place, resolve_drop,
+    Action, Drag, DropProposal, DropRequest, GroupDrag, GroupGesture, Node, Placement, Target, Zone, cancel_drag,
+    dock_model::{Place, node_at},
+    resolve_drop,
     surface::TAB_PADDING,
 };
 
@@ -16,6 +18,9 @@ fn float_only(ctx: &Context) -> bool {
 
 /// Height of a panel floated out of a dock column when the host gives no floating size.
 const DOCKED_FLOAT_HEIGHT: f32 = 320.0;
+
+/// Least height of a floating window or flyout fitted to a short panel's content.
+pub(super) const MIN_FITTED_HEIGHT: f32 = 120.0;
 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     pub(in crate::docking) fn finish_group_drag(&mut self, ui: &Ui) {
@@ -274,19 +279,28 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     /// Size of a panel floated by a drag or the Float menu: the host's floating size, else the
-    /// source size within the panel limits. A panel leaving a dock column does not take the
-    /// column's height.
+    /// source size within the panel limits. Out of a dock column, or with a floating size, the
+    /// height fits the content the panel last drew, up to that height (320 in a dock).
     pub(super) fn float_size(&self, panel: &P, source: Vec2) -> Vec2 {
+        let chrome = self.style.title_height + self.style.tab_height;
         if let Some(size) = self.content.floating_size(panel).filter(|s| s.is_finite() && s.x > 0.0 && s.y > 0.0) {
-            return size;
+            return vec2(size.x, self.fitted_height(panel, chrome, size.y).unwrap_or(size.y));
         }
         let mut size = self.iconic.float_width(panel).map_or(source, |width| vec2(width, DOCKED_FLOAT_HEIGHT));
         if matches!(self.layout.place(panel), Some(Place::Dock { .. })) {
-            size.y = size.y.min(DOCKED_FLOAT_HEIGHT);
+            size.y = self.fitted_height(panel, chrome, DOCKED_FLOAT_HEIGHT).unwrap_or(size.y.min(DOCKED_FLOAT_HEIGHT));
         }
         let limits = self.limits(panel);
         let header = vec2(0.0, self.style.tab_height);
         size.max(limits.min + header).min(limits.max + header)
+    }
+
+    /// Height of a window around `panel`'s group: `chrome` (title bar and tab strip) and the
+    /// content height the panel last drew, at least [`MIN_FITTED_HEIGHT`] and at most `max`.
+    /// `None` for a panel the area has not drawn.
+    pub(super) fn fitted_height(&self, panel: &P, chrome: f32, max: f32) -> Option<f32> {
+        let content = self.float_space.content(panel)?;
+        Some((chrome + content).max(MIN_FITTED_HEIGHT).min(max))
     }
 
     /// Record what a drag floats from `panels`, one group drawn at `group` whose panels drag
@@ -307,17 +321,33 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     /// Size of a group or column floated by a drag or Float Tab Group: the source width, and the
-    /// tallest member's floating size, else the source height capped like a panel leaving a
-    /// dock column. A group that already floats keeps its size.
+    /// tallest member's floating height, else the source height capped like a panel leaving a
+    /// dock column. A group fits that height to its active panel's content. A group that already
+    /// floats keeps its size.
     pub(super) fn group_float_size(&self, members: &[P], source: Vec2) -> Vec2 {
-        let place = members.first().and_then(|panel| self.layout.place(panel));
-        if matches!(place, Some(Place::Floating { .. }) | None) {
+        let Some(place) = members.first().and_then(|panel| self.layout.place(panel)) else { return source };
+        if matches!(place, Place::Floating { .. }) {
             return source;
         }
         let valid = |s: &Vec2| s.is_finite() && s.x > 0.0 && s.y > 0.0;
         let host = members.iter().filter_map(|panel| self.content.floating_size(panel).filter(valid)).map(|s| s.y).reduce(f32::max);
-        let docked = matches!(place, Some(Place::Dock { .. }));
-        vec2(source.x, host.unwrap_or(if docked { source.y.min(DOCKED_FLOAT_HEIGHT) } else { source.y }))
+        let docked = matches!(place, Place::Dock { .. });
+        let chrome = self.style.title_height + self.style.tab_height;
+        let max = host.or(docked.then_some(DOCKED_FLOAT_HEIGHT));
+        let fitted = max.and_then(|max| self.group_active(members, &place).and_then(|active| self.fitted_height(active, chrome, max)));
+        vec2(source.x, fitted.or(host).unwrap_or(if docked { source.y.min(DOCKED_FLOAT_HEIGHT) } else { source.y }))
+    }
+
+    /// The active panel of the group at `place` when `members` are that whole group.
+    fn group_active<'a>(&'a self, members: &[P], place: &Place) -> Option<&'a P> {
+        let (panels, active) = match place {
+            Place::Node(path) => match self.layout.root.as_ref().and_then(|root| node_at(root, path)) {
+                Some(Node::Tabs { panels, active }) => (panels, *active),
+                _ => return None,
+            },
+            _ => self.layout.group(place).map(|group| (&group.panels, group.active))?,
+        };
+        (panels.len() == members.len() && members.iter().all(|m| panels.contains(m))).then(|| panels.get(active)).flatten()
     }
 
     /// Where a group or column drag floats with the pointer at `pointer`, keeping the grab
