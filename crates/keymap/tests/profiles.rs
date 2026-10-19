@@ -67,6 +67,17 @@ fn profiles_copy_built_ins_on_edit_and_round_trip_as_json() {
 }
 
 #[test]
+fn rename_keeps_a_set_whose_name_differs_only_in_case() {
+    let builtins = [("Craft", Overrides::new())];
+    let mut p: Profiles = serde_json::from_str(r#"{"sets": {"Mine": {"a": "A"}, "mine": {"b": "B"}}}"#).unwrap();
+    assert_eq!(p.rename("Mine", "mine", &builtins), Err(ProfileError::NameTaken));
+    assert_eq!(p.sets["mine"].get("b"), Some(&["B".to_string()][..]));
+    assert_eq!(p.rename("Mine", "MINE", &builtins), Err(ProfileError::NameTaken));
+    p.delete("mine", &builtins).unwrap();
+    assert_eq!(p.rename("Mine", "MINE", &builtins), Ok("MINE".into()));
+}
+
+#[test]
 fn sets_that_are_not_a_list_or_map_load_as_none() {
     for text in [r#"{"active": "Mine", "sets": 5}"#, r#"{"active": "Mine", "sets": null}"#, r#"{"active": "Mine", "sets": "x"}"#] {
         let p: Profiles = serde_json::from_str(text).unwrap_or_else(|e| panic!("{text}: {e}"));

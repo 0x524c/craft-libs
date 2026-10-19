@@ -209,7 +209,11 @@ impl Profiles {
         if !self.sets.contains_key(from) {
             return Err(ProfileError::NotFound);
         }
-        if to != from && (self.taken(&to, builtins) && to.to_lowercase() != from.to_lowercase()) {
+        // A settings file can hold names that differ only in case, so a case-only rename still
+        // checks the other sets.
+        let lower = to.to_lowercase();
+        let clash = self.sets.keys().any(|k| k != from && k.to_lowercase() == lower);
+        if to != from && (clash || (self.builtin_like(&to, builtins) && lower != from.to_lowercase())) {
             return Err(ProfileError::NameTaken);
         }
         if let Some(set) = self.sets.remove(from) {
