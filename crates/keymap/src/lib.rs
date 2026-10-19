@@ -6,8 +6,10 @@
 //! protocols store, display text per platform, and a reader for other applications' key text.
 //! [`command`] names what a binding runs, [`scope`] where it works, and [`keymap`] holds an app's
 //! catalogue with default bindings, the user's [`Overrides`], dispatch ([`Keymap::lookup`]),
-//! editing and conflicts. [`reserved`] lists the chords each operating system takes. [`import`]
-//! brings in other applications' shortcut sets. With the `egui` feature, the `egui` module
+//! editing and conflicts. [`reserved`] lists the chords each operating system takes; a keymap
+//! reserves no chord unless the app opts in with [`Keymap::with_reserved`], e.g.
+//! `with_reserved(reserved::system(platform))`. [`import`] brings in other applications' shortcut
+//! sets. With the `egui` feature, the `egui` module
 //! converts to and from egui keys, matches key presses against bindings and dispatches a frame's
 //! key events.
 //!

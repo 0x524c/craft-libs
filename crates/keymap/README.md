@@ -13,6 +13,9 @@ its file-format readers and its UI.
   kept or reported (`Keymap::problems`, the import report).
 - Hostile input is capped: commands, bindings per command, text lengths, import entries, keys,
   path segments and fuzzy suggestions (the `MAX_*` constants). What is cut is counted.
+- Reserved chords are opt-in. A keymap reserves no chord unless the app passes a list to
+  `Keymap::with_reserved`, e.g. `reserved::system(platform)` for the operating system's window
+  switching and closing chords. A reserved chord cannot be assigned or bound.
 - Dependencies: `serde` and `serde_json`; `egui` with the `egui` feature.
 
 ## A catalogue and dispatch
