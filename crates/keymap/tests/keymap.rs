@@ -575,3 +575,26 @@ fn hostile_overrides_load_without_panic_and_report_problems() {
         assert_eq!(o.load_notes(), [Problem::Dropped { key: String::new(), reason: DropReason::NotAList }], "{text}");
     }
 }
+
+#[test]
+fn reset_removes_hand_written_variants_of_a_key() {
+    let layers = CommandRef::with_params("window.panel", json!({"panel": "layers"}));
+    let catalogue = vec![Bindable::new(layers.clone(), "Layers", Scope::app()).with_default(b("F7"))];
+    let load = || {
+        let mut o = Overrides::new();
+        o.insert(r#"window.panel {"panel":"layers"}"#, vec!["Cmd+L".into()]);
+        o.insert(r#"window.panel { "panel": "layers" }"#, vec!["Cmd+K".into()]);
+        Keymap::new(catalogue.clone(), Scopes::new(), Platform::Mac).with_overrides(o)
+    };
+    let mut km = load();
+    assert_eq!(km.bindings(&layers), vec![b("Cmd+L")], "the canonical entry wins");
+    km.reset(&layers);
+    assert!(km.overrides().is_empty(), "{:?}", km.overrides());
+
+    // Setting the defaults drops the entries too.
+    let mut km = load();
+    km.set_bindings(&layers, vec![b("F7")], Policy::Steal).unwrap();
+    assert!(km.overrides().is_empty(), "{:?}", km.overrides());
+    let again = Keymap::new(catalogue.clone(), Scopes::new(), Platform::Mac).with_overrides(km.overrides().clone());
+    assert_eq!(again.bindings(&layers), vec![b("F7")]);
+}

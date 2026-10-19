@@ -367,6 +367,9 @@ pub struct Keymap {
     by_trigger: HashMap<Trigger, BTreeSet<(usize, usize)>>,
     /// The overrides entry each command reads, when it has one.
     stored: Vec<Option<String>>,
+    /// Whether the overrides hold a hand-written variant of a command's key
+    /// (`window.panel { "panel": "layers" }`); only loading adds them.
+    variants: bool,
     /// Home and default scopes of the catalogue.
     catalogue_scopes: HashSet<Scope>,
     scopes: Scopes,
@@ -388,6 +391,7 @@ impl Keymap {
             current: Vec::new(),
             by_trigger: HashMap::new(),
             stored: Vec::new(),
+            variants: false,
             catalogue_scopes: HashSet::new(),
             scopes,
             platform,
@@ -560,9 +564,7 @@ impl Keymap {
     pub fn reset(&mut self, command: &CommandRef) -> bool {
         let Some(i) = self.find(command) else { return false };
         // The whole entry goes, texts this build cannot use included.
-        if let Some(old) = self.stored[i].take() {
-            self.overrides.remove(&old);
-        }
+        self.remove_entries(i);
         self.set_current(i, self.defaults[i].clone());
         true
     }
@@ -874,9 +876,7 @@ impl Keymap {
     fn store(&mut self, i: usize, list: Vec<Bound>) {
         let mut kept = if list.is_empty() { Vec::new() } else { self.unusable_texts(i) };
         kept.truncate(MAX_BINDINGS.saturating_sub(list.len()));
-        if let Some(old) = self.stored[i].take() {
-            self.overrides.remove(&old);
-        }
+        self.remove_entries(i);
         if !kept.is_empty() || !self.is_default(i, &list) {
             let home = &self.catalogue[i].scope;
             let mut texts: Vec<String> = list.iter().map(|b| self.public(i, b).text(home)).collect();
@@ -886,6 +886,21 @@ impl Keymap {
             }
         }
         self.set_current(i, list);
+    }
+
+    /// Removes a command's overrides entries: the one it reads and hand-written variants of its
+    /// key, which would take effect on the next load.
+    fn remove_entries(&mut self, i: usize) {
+        if let Some(old) = self.stored[i].take() {
+            self.overrides.remove(&old);
+        }
+        if !self.variants {
+            return;
+        }
+        let keys: Vec<String> = self.overrides.iter().map(|(k, _)| k).filter(|k| self.resolve_key(k) == Some(i)).map(str::to_string).collect();
+        for key in keys {
+            self.overrides.remove(&key);
+        }
     }
 
     /// Whether `list` is the command's defaults, comparing effective triggers.
@@ -951,8 +966,10 @@ impl Keymap {
         entries.sort_by_key(|(k, _)| !self.index.contains_key(*k));
         let mut found: Vec<(usize, String, Vec<Bound>)> = Vec::new();
         let mut taken: HashSet<usize> = HashSet::new();
+        self.variants = false;
         for (key, texts) in entries {
             let Some(i) = self.resolve_key(key) else { continue };
+            self.variants |= !self.index.contains_key(key);
             if !taken.insert(i) {
                 continue;
             }
