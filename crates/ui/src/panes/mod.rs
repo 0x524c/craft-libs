@@ -11,10 +11,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::ops::RangeInclusive;
 
-use egui::{
-    Color32, Context, Frame, Id, Key, LayerId, Margin, Modifiers, Order, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2, pos2,
-    vec2,
-};
+use egui::{Context, Frame, Id, Key, LayerId, Margin, Modifiers, Order, Pos2, Rect, Response, Sense, Ui, UiBuilder, Vec2, pos2, vec2};
 
 use crate::docking::PanelLimits;
 use crate::docking::chrome::{self, ChromeStyle, FloatingFrame, MoveStep, TitleBar};
@@ -599,7 +596,7 @@ impl PaneHost {
             Some(_) => Rect::from_x_y_ranges(bounds.right() - rect.width()..=bounds.right(), bounds.y_range()),
             None => float,
         };
-        paint_preview(preview, shape, style.accent);
+        chrome::drop_preview(preview, shape.shrink(1.0), style.accent, true);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -712,10 +709,6 @@ impl PaneHost {
         }
         title.bar
     }
-}
-
-fn paint_preview(painter: &egui::Painter, rect: Rect, accent: Color32) {
-    painter.rect(rect.shrink(1.0), 0.0, accent.gamma_multiply(0.15), Stroke::new(2.0, accent), StrokeKind::Inside);
 }
 
 fn rect_array(rect: Rect) -> [f32; 4] {

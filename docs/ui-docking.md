@@ -131,7 +131,8 @@ by the app's own Close items and commands.
 
 `DockArea::chrome_has_focus` tells whether keyboard focus is on docking chrome rather than on a
 panel body. `begin_drag` hands a drag that started in the app's own chrome to the area.
-`docking::chrome` has the floating frame and title bar for apps that draw their own windows.
+`docking::chrome` has the floating frame, the title bar and `drop_preview` (the drop preview
+docking and `craft_ui::panes` both draw) for apps that draw their own windows.
 
 ## Gestures
 

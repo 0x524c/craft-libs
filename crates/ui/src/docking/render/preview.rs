@@ -1,8 +1,9 @@
 use std::{fmt::Debug, hash::Hash};
 
-use egui::{Color32, Context, Key, Pos2, Rect, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
+use egui::{Context, Key, Pos2, Rect, Ui, Vec2, pos2, vec2};
 
 use super::{Renderer, clamp_float, dock::group_action};
+use crate::docking::chrome::drop_preview;
 use crate::docking::{
     Action, Drag, DropProposal, DropRequest, GroupDrag, GroupGesture, Placement, Target, Zone, cancel_drag, dock_model::Place, resolve_drop,
     surface::TAB_PADDING,
@@ -137,7 +138,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let painter = self.preview_painter(ctx);
         if drag.gesture != GroupGesture::Window {
             let ghost = self.group_ghost(ctx, drag, pointer);
-            painter.rect(ghost, 0.0, self.style.accent.gamma_multiply(0.15), Stroke::new(2.0, self.style.accent), StrokeKind::Inside);
+            drop_preview(&painter, ghost, self.style.accent, true);
             let strip = Rect::from_min_size(ghost.min, vec2(ghost.width(), self.style.tab_height.min(ghost.height())));
             let labels = painter.with_clip_rect(strip.shrink(2.0));
             let mut x = strip.left() + TAB_PADDING * 0.5;
@@ -164,9 +165,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         if let Some(proposal) = self.group_proposal(drag, pointer).filter(|p| !p.noop) {
             let split = matches!(proposal.placement, Placement::Split(zone) | Placement::Edge(zone) if zone != Zone::Center);
-            let fill = if split { self.style.accent.gamma_multiply(0.15) } else { Color32::TRANSPARENT };
             if crate::docking::targets::usable(proposal.preview) {
-                painter.rect(proposal.preview.shrink(1.0), 0.0, fill, Stroke::new(2.0, self.style.accent), StrokeKind::Inside);
+                drop_preview(&painter, proposal.preview.shrink(1.0), self.style.accent, split);
             }
             if let Some(marker) = proposal.insertion {
                 painter.rect_filled(marker, 0.0, self.style.accent);
@@ -256,19 +256,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let same_group = proposal.insertion.is_some()
                 && self.targets.iter().any(|target| target.rect == proposal.preview && target.tabs.iter().any(|(panel, _)| panel == &drag.panel));
             if !same_group && !proposal.noop && crate::docking::targets::usable(proposal.preview) {
-                painter.rect(
-                    proposal.preview.shrink(1.0),
-                    0.0,
-                    self.style.accent.gamma_multiply(0.15),
-                    Stroke::new(2.0, self.style.accent),
-                    StrokeKind::Inside,
-                );
+                drop_preview(&painter, proposal.preview.shrink(1.0), self.style.accent, true);
             }
             if let Some(marker) = proposal.insertion {
                 painter.rect_filled(marker, 0.0, self.style.accent);
             }
         } else if let Some(rect) = floating_rect {
-            painter.rect_stroke(rect, 0.0, Stroke::new(2.0, self.style.accent), StrokeKind::Inside);
+            drop_preview(&painter, rect, self.style.accent, false);
         }
     }
 
@@ -348,7 +342,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if !released {
             let painter = self.preview_painter(ctx);
             if let Some(rect) = feedback.preview.filter(|rect| crate::docking::targets::usable(*rect)) {
-                painter.rect(rect, 0.0, self.style.accent.gamma_multiply(0.15), Stroke::new(2.0, self.style.accent), StrokeKind::Inside);
+                drop_preview(&painter, rect, self.style.accent, true);
             }
             if let Some(rect) = feedback.insertion.filter(|rect| crate::docking::targets::usable(*rect)) {
                 painter.rect_filled(rect, 0.0, self.style.accent);

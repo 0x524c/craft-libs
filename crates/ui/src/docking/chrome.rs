@@ -245,6 +245,13 @@ impl<'a> FloatingFrame<'a> {
     }
 }
 
+/// A drop preview: a 2 pt accent outline inside `rect`, filled with 15% accent when `filled`.
+/// Docking and the pane host draw every destination and drag ghost with it.
+pub fn drop_preview(painter: &egui::Painter, rect: Rect, accent: Color32, filled: bool) {
+    let fill = if filled { accent.gamma_multiply(0.15) } else { Color32::TRANSPARENT };
+    painter.rect(rect, 0.0, fill, Stroke::new(2.0, accent), StrokeKind::Inside);
+}
+
 /// Keep `rect` inside `bounds`, shrinking it when it is larger.
 pub fn clamp(rect: Rect, bounds: Rect) -> Rect {
     if !super::targets::usable(bounds) {
