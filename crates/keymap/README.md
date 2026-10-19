@@ -113,9 +113,22 @@ let mut keymap = Keymap::new(catalogue, Scopes::new(), Platform::current()).with
 let _problems = keymap.problems();
 
 // After each change in the shortcut editor:
-keymap.assign(&"file.save".into(), Binding::parse("Cmd+Alt+S").unwrap(), Policy::Steal).ok();
+keymap.set_bindings(&"file.save".into(), vec![Binding::parse("Cmd+Alt+S").unwrap()], Policy::Steal).ok();
 store.update(|p| p.shortcuts = keymap.overrides().clone());
 ```
+
+## Editing
+
+- `set_bindings(&command, bindings, policy)` replaces a command's bindings. An editor with one
+  shortcut per command calls it with the one binding (`vec![binding]`); `assign` adds a binding
+  to those the command has.
+- `remove` takes one binding away, `clear` leaves the command without shortcuts, `reset` gives it
+  its defaults back and `reset_all` does so for every command.
+- `Policy` says what happens to other commands holding the chord: `Steal` takes it from them,
+  `Keep` lets both keep it and reports the clash, `Refuse` changes nothing and returns
+  `AssignError::Taken`.
+- `conflicts()` lists every pair of commands on one chord; `conflicts_with(&command)` lists the
+  commands that share one command's chords, with that command as `a`.
 
 ## Importing a shortcut set
 

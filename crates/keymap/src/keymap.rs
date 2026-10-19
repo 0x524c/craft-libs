@@ -594,6 +594,32 @@ impl Keymap {
         out
     }
 
+    /// The conflicts [`Keymap::conflicts`] reports for one command's bindings, with that command
+    /// as `a`, in the order of its bindings, then catalogue order. Empty for an unknown command.
+    pub fn conflicts_with(&self, command: &CommandRef) -> Vec<Conflict> {
+        let Some(i) = self.find(command) else { return Vec::new() };
+        let mut out = Vec::new();
+        for a in &self.current[i] {
+            let chord = a.0.effective(self.platform);
+            let Some(holders) = self.by_trigger.get(&chord) else { continue };
+            for &(j, k) in holders {
+                if j == i || self.same_group(i, j) {
+                    continue;
+                }
+                let Some(b) = self.at(j, k) else { continue };
+                let Some(clash) = self.conflict_relation(&a.1, &b.1) else { continue };
+                out.push(Conflict {
+                    chord,
+                    a: (self.catalogue[i].command.clone(), self.public(i, a)),
+                    b: (self.catalogue[j].command.clone(), self.public(j, b)),
+                    kind: if clash { ConflictKind::Clash } else { ConflictKind::Shadow },
+                    in_defaults: self.defaults[i].contains(a) && self.defaults[j].contains(b),
+                });
+            }
+        }
+        out
+    }
+
     /// What is wrong with the stored overrides: load notes, unknown commands, texts that do not
     /// parse, reserved chords, unknown scopes, duplicate entries.
     pub fn problems(&self) -> Vec<Problem> {

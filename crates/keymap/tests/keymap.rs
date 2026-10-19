@@ -246,6 +246,28 @@ fn conflicts_tell_clashes_from_shadows() {
     assert!(c("edit.copy", "color.copy") < c("edit.copy", "timeline.copy"), "{order:?}");
     assert!(c("edit.copy", "timeline.copy") < c("color.copy", "timeline.copy"), "{order:?}");
 
+    // One command's conflicts, with that command as `a`.
+    let with = |id: &str| -> Vec<(String, String, ConflictKind)> {
+        km.conflicts_with(&cmd(id)).into_iter().map(|c| (c.chord.to_string(), c.b.0.id, c.kind)).collect()
+    };
+    let w = |chord: &str, other: &str, kind| (chord.to_string(), other.to_string(), kind);
+    assert_eq!(with("edit.copy"), [w("Cmd+C", "color.copy", ConflictKind::Clash), w("Cmd+C", "timeline.copy", ConflictKind::Shadow)]);
+    assert_eq!(with("edit.cut"), [w("Cmd+X", "text.cut", ConflictKind::Shadow), w("Cmd+D", "edit.find", ConflictKind::Clash)]);
+    assert!(with("nope").is_empty());
+    for entry in km.catalogue() {
+        let id = entry.command.id.as_str();
+        let mut direct: Vec<_> = km.conflicts_with(&entry.command).into_iter().map(|c| (c.chord, c.a.0.id, c.b.0.id, c.kind, c.in_defaults)).collect();
+        let mut filtered: Vec<_> = km
+            .conflicts()
+            .into_iter()
+            .filter(|c| c.a.0.id == id || c.b.0.id == id)
+            .map(|c| if c.a.0.id == id { (c.chord, c.a.0.id, c.b.0.id, c.kind, c.in_defaults) } else { (c.chord, c.b.0.id, c.a.0.id, c.kind, c.in_defaults) })
+            .collect();
+        direct.sort();
+        filtered.sort();
+        assert_eq!(direct, filtered, "{id}");
+    }
+
     let strict = Keymap::new(km.catalogue().to_vec(), scopes().with_panel_fallthrough(false), Platform::Mac);
     assert!(!strict.conflicts().iter().any(|c| c.chord.to_string() == "Cmd+R"));
 }
