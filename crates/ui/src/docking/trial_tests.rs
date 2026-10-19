@@ -1,7 +1,7 @@
 //! Fixes from the DesignCraft trial: group float size, tab label elision, the drag ghost and
 //! grip, double-clicks on minimized groups, pointer focus, label keys and borrowed lookups; then
 //! split permissions, body focus, right-to-left strips, close controls, menu and button names,
-//! zone mapping, closed panels from `apply` and group heights.
+//! zone mapping, closed panels from `apply`, group heights and flyout events.
 
 use super::*;
 
@@ -389,4 +389,51 @@ fn a_group_placement_gives_the_inserted_group_its_height() {
     let heights: Vec<_> = columns[0].groups.iter().map(|g| (g.panels.clone(), g.height)).collect();
     assert_eq!(heights, vec![(vec![4], None), (vec![8], None), (vec![7], Some(180.0)), (vec![2, 3], Some(90.0))]);
     assert_eq!(layout.apply(Action::OpenAt { panel: 9, anchor: 4, placement: below(Some(f32::NAN)) }), Err(DockError::InvalidGeometry));
+}
+
+struct Icons;
+
+impl DockContent<u32> for Icons {
+    fn body(&mut self, _: &mut egui::Ui, _: &u32) {}
+}
+
+#[test]
+fn every_flyout_change_reports_one_event_whatever_caused_it() {
+    use crate::docking::testing::DockDriver;
+    let mut column = Column::new(vec![Group::new(vec![1, 2], 0), Group::new(vec![3], 0)], 240.0);
+    column.iconic = true;
+    let dock = Node::Dock { side: Side::Start, columns: vec![column] };
+    let canvas = Node::Tabs { panels: vec![0], active: 0 };
+    let layout = Layout {
+        root: Some(Node::Split { axis: SplitAxis::Horizontal, size: SplitSize::FixedFirst(240.0), first: Box::new(dock), second: Box::new(canvas) }),
+        floating: Vec::new(),
+    };
+    let mut d = DockDriver::new(layout, Icons);
+    let flyouts = |outputs: Vec<DockOutput<u32>>| -> Vec<Option<u32>> {
+        outputs
+            .into_iter()
+            .flat_map(|out| out.events)
+            .filter_map(|event| match event {
+                DockEvent::FlyoutChanged { panel } => Some(panel),
+                _ => None,
+            })
+            .collect()
+    };
+    let icon = |d: &DockDriver<u32, Icons>, panel| d.hit(&Hit::Icon(panel)).unwrap().center();
+    let quiet = |d: &mut DockDriver<u32, Icons>| (0..3).map(|_| d.step(Vec::new())).collect::<Vec<_>>();
+
+    let (one, two) = (icon(&d, 1), icon(&d, 2));
+    assert_eq!(flyouts(vec![d.press(one), d.release(one)]), [Some(1)], "an icon opens it");
+    assert_eq!(flyouts(quiet(&mut d)), [], "an open flyout reports nothing more");
+    assert_eq!(flyouts(vec![d.press(two), d.release(two)]), [Some(2)], "another icon switches it");
+    assert_eq!(flyouts(vec![d.key(egui::Key::Escape)]), [None], "Escape closes it");
+    open_flyout(&d.ctx, d.id, 3u32);
+    assert_eq!(flyouts(vec![d.step(Vec::new())]), [Some(3)], "open_flyout");
+    close_flyout::<u32>(&d.ctx, d.id);
+    assert_eq!(flyouts(vec![d.step(Vec::new())]), [None], "close_flyout");
+    d.raise = Some(1);
+    assert_eq!(flyouts(vec![d.step(Vec::new())]), [Some(1)], "raising an iconic panel opens it");
+    let outside = pos2(600.0, 400.0);
+    assert_eq!(flyouts(vec![d.press(outside), d.release(outside)]), [None], "a press outside closes it");
+    assert_eq!(flyouts(quiet(&mut d)), []);
 }

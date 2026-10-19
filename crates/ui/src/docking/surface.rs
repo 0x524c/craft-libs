@@ -290,6 +290,11 @@ pub enum DockEvent<P> {
     /// [D] Auto-Collapse Iconic Panels was chosen in a column menu. The host flips its
     /// preference and passes it to [`DockArea::auto_collapse_iconic`].
     ToggleAutoCollapse,
+    /// [D] The area's flyout opened, switched to another panel or closed (`None`), whatever
+    /// changed it: an icon, Escape, a press outside, a raised panel, a group that is no longer
+    /// iconic, or [`super::open_flyout`] and [`super::close_flyout`]. It comes once per change,
+    /// in the frame that draws the change.
+    FlyoutChanged { panel: Option<P> },
 }
 
 /// Which panels [`DockArea::hide_panels`] hides. Protected panels always stay.
@@ -752,6 +757,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
         renderer.floating(ui.ctx(), &view.floating);
         renderer.finish_group_drag(ui);
         renderer.finish_drag(ui.ctx());
+        renderer.report_flyout(ui.ctx());
         super::hits::record(ui.ctx(), self.id, &view, &renderer.owned_interactions);
         ui.ctx().data_mut(|d| d.insert_temp(float_space_key(self.id), renderer.float_space));
         ui.ctx().data_mut(|d| d.insert_temp(self.id.with("owned-interactions"), renderer.owned_interactions));

@@ -113,7 +113,9 @@ survives.
 - `focused`: the panel the user focused this frame: a clicked tab, a drop, a raised window, or a
   press of any pointer button in a panel body, bare and protected panels included.
 - `events`: requests outside the layout, such as `DockEvent::ToggleMaximize` (Frame) and
-  `DockEvent::ToggleAutoCollapse` (Dock).
+  `DockEvent::ToggleAutoCollapse` (Dock), and `DockEvent::FlyoutChanged { panel }` (Dock): the
+  flyout opened, switched or closed (`None`). It comes once per change, whatever made it: an
+  icon, Escape, a press outside, a raised panel, `open_flyout` or `close_flyout`.
 - `error`: a rejected gesture.
 
 Builder options on `DockArea`:

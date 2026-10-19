@@ -47,6 +47,10 @@ pub fn flyout<P: Clone + Send + Sync + 'static>(ctx: &Context, area_id: Id) -> O
     ctx.data(|d| d.get_temp::<Open<P>>(key(area_id))).map(|open| open.0)
 }
 
+/// The flyout last reported by [`crate::docking::DockEvent::FlyoutChanged`].
+#[derive(Clone)]
+struct Reported<P>(Option<P>);
+
 /// The flyout an iconic column asks for this frame.
 struct Request<P> {
     group: Group<P>,
@@ -316,6 +320,17 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             self.group(ui, &group.panels, group.active, false, rect, GroupKind::Dock);
         });
         self.iconic.rect = Some(response.rect);
+    }
+
+    /// Report a flyout that differs from the last one reported.
+    pub(in crate::docking) fn report_flyout(&mut self, ctx: &Context) {
+        let shown = flyout::<P>(ctx, self.id);
+        let key = self.id.with("flyout-reported");
+        let reported = ctx.data(|d| d.get_temp::<Reported<P>>(key)).and_then(|r| r.0);
+        if shown != reported {
+            ctx.data_mut(|d| d.insert_temp(key, Reported(shown.clone())));
+            self.output.events.push(crate::docking::DockEvent::FlyoutChanged { panel: shown });
+        }
     }
 
     /// Escape (outside a drag) or a primary press outside the flyout, its column and any menu.
