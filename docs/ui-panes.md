@@ -51,7 +51,8 @@ egui::CentralPanel::default().show(ui, |ui| document(ui));
 | `SidePolicy::Columns` | Every docked pane shows; panes on one edge sit side by side in `open` order, the first outermost. |
 | `SidePolicy::OneSlot` | One closable pane per edge: the last one in `open`. Non-closable context panes (PivotTable Fields) show beside the slot. |
 | `.max_fraction(f)` | One docked pane takes at most `f` of the host's width (height for bottom panes). |
-| Chrome | Title, ▾ menu (app items, Move to Start, Move to End, Move to Bottom for bottom panes, Float, Close), ×, a resize edge with pointer and arrow keys. |
+| Chrome | Title, ▾ menu (app items, Move to Start, Move to End, Move to Bottom for bottom panes, Float, Close), ×, a resize edge with pointer and arrow keys. The title bar mirrors with `.rtl(true)`. Its accessible name is `PaneLabels::move_pane` with `{title}` replaced by the pane's title ("Move Styles pane"). |
+| Size | A docked pane reserves exactly its size and clips its body, so a body wider than the pane never pushes into the document. |
 | Drag out | A docked pane's title dragged more than `DOCK_SNAP` (32 pt) out of the pane floats it under the pointer when dropped; dropped within 32 pt of the host's left or right edge it docks there. |
 | Floating | `FloatingFrame` with its resize handles; the title bar moves it. Escape or window focus loss during a move puts it back. A drop within 32 pt of the left or right edge docks it. Rects are clamped to the host area. |
 | Focus | `out.focused` is the pane holding keyboard focus or last clicked; a click or focus in the document clears it. F6 and Shift+F6 cycle through the shown panes and then report `out.to_document`: give focus to the document. `.f6(false)` leaves F6 to the app, which calls `panes::focus_next(ctx, id, reverse)` instead. |

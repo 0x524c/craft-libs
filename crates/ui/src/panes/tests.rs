@@ -306,3 +306,37 @@ fn pane_state_round_trips_through_json() {
     let json = serde_json::to_string(&state).unwrap();
     assert_eq!(serde_json::from_str::<PaneState>(&json).unwrap(), state);
 }
+
+#[test]
+fn a_body_wider_than_its_pane_is_clipped_and_the_document_starts_at_the_pane_edge() {
+    struct Wide;
+    impl PaneContent<Pane> for Wide {
+        fn title(&self, pane: &Pane) -> String {
+            format!("{pane:?}")
+        }
+        fn body(&mut self, ui: &mut Ui, _: &Pane) {
+            ui.allocate_exact_size(vec2(400.0, 40.0), Sense::hover());
+        }
+        fn default_state(&self, pane: &Pane) -> PaneState {
+            PaneState::docked(if *pane == Pane::Comments { Edge::End } else { Edge::Start }, 250.0)
+        }
+    }
+    let mut h = Harness::builder().with_size(vec2(800.0, 600.0)).build_ui_state(
+        |ui, document: &mut Rect| {
+            PaneHost::new("panes").show(ui, &[Pane::Nav, Pane::Comments], |_| None, &mut Wide);
+            *document = ui.available_rect_before_wrap();
+        },
+        Rect::NOTHING,
+    );
+    h.run_steps(2);
+    let document = *h.state();
+    assert_eq!(document.left(), L + 250.0, "{document:?}");
+    assert_eq!(document.right(), R - 250.0, "{document:?}");
+}
+
+#[test]
+fn each_title_bar_is_named_after_its_pane() {
+    let h = harness(App::new(&[Pane::Nav, Pane::Comments]));
+    assert_eq!(h.query_all_by_label("Move Nav pane").count(), 1);
+    assert_eq!(h.query_all_by_label("Move Comments pane").count(), 1);
+}

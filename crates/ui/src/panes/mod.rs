@@ -152,7 +152,8 @@ pub struct PaneLabels {
     pub move_bottom: String,
     pub float: String,
     pub close: String,
-    /// Accessibility label of the title bar.
+    /// Accessibility label of the title bar. `{title}` is replaced with the pane's title, so
+    /// each title bar has its own name.
     pub move_pane: String,
     /// Accessibility label of the resize edges.
     pub resize: String,
@@ -167,7 +168,7 @@ impl Default for PaneLabels {
             move_bottom: "Move to Bottom".into(),
             float: "Float".into(),
             close: "Close".into(),
-            move_pane: "Move pane".into(),
+            move_pane: "Move {title} pane".into(),
             resize: "Resize pane".into(),
         }
     }
@@ -325,7 +326,7 @@ impl PaneHost {
     ) -> PaneOutput<P> {
         let ctx = ui.ctx().clone();
         let bounds = ui.available_rect_before_wrap();
-        let style = ChromeStyle::from_ui(ui);
+        let style = ChromeStyle { right_to_left: self.rtl, ..ChromeStyle::from_ui(ui) };
         let key = memory_id(self.id);
         let mut memory = ctx.data(|data| data.get_temp::<Memory>(key)).unwrap_or_default();
         let mut requests = Vec::new();
@@ -494,10 +495,17 @@ impl PaneHost {
             let title = Rect::from_min_size(top.min, vec2(top.width(), TITLE_BAR_HEIGHT));
             ui.allocate_rect(title, Sense::hover());
             let bar = self.chrome(ui, title, s, content, style, focus, bounds, requests);
-            Frame::NONE.inner_margin(self.margin).show(ui, |ui| {
+            // The pane reserves exactly its size and clips its body. egui cuts a panel wider
+            // than its exact size at its outer edge, so a wide body would shift a right or
+            // bottom pane's reserved rect inwards and the document would draw over the pane.
+            let body = Rect::from_min_max(pos2(top.left(), title.bottom()), top.max);
+            let mut child = ui.new_child(UiBuilder::new().max_rect(body).layout(*ui.layout()));
+            child.set_clip_rect(body.intersect(ui.clip_rect()));
+            Frame::NONE.inner_margin(self.margin).show(&mut child, |ui| {
                 ui.set_min_width(ui.available_width());
                 content.body(ui, &s.pane);
             });
+            ui.allocate_rect(body, Sense::hover());
             bar
         });
         let rect = shown.response.rect;
@@ -661,8 +669,9 @@ impl PaneHost {
     ) -> Response {
         let movable = content.movable(&s.pane);
         let closable = content.closable(&s.pane);
-        let mut bar =
-            TitleBar::new(s.id.with("title"), &self.labels.move_pane).title(content.title(&s.pane)).menu(&self.labels.menu).movable(movable);
+        let title = content.title(&s.pane);
+        let move_label = self.labels.move_pane.replace("{title}", &title);
+        let mut bar = TitleBar::new(s.id.with("title"), &move_label).title(title).menu(&self.labels.menu).movable(movable);
         if closable {
             bar = bar.close(&self.labels.close);
         }
