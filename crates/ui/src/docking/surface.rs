@@ -221,8 +221,12 @@ impl<P> Default for DockOutput<P> {
 /// Room between the dock area's top-left corner and a unit a command floats.
 const FLOAT_INSET: f32 = 24.0;
 
+/// Size a command floats a panel at when its [`FloatSpace`] never drew it.
+#[cfg_attr(not(feature = "serde"), allow(dead_code))]
+pub(super) const DEFAULT_FLOAT: Vec2 = Vec2::new(260.0, 320.0);
+
 /// Where a docking command floats a panel, group or column when it gives no rect (see
-/// `DockCommand::to_actions_in`, feature `serde`). [`DockArea`] records one each frame; read it
+/// `DockCommand::to_actions`, feature `serde`). [`DockArea`] records one each frame; read it
 /// with [`float_space`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct FloatSpace<P> {
@@ -236,7 +240,8 @@ pub struct FloatSpace<P> {
 }
 
 impl<P: PartialEq> FloatSpace<P> {
-    /// An area with no recorded sizes: commands float units at the layout's sizes.
+    /// An area with no recorded sizes: commands float a panel at 260x320, and a group or
+    /// column at its dock column's width (else 260) by 320.
     pub fn new(area: Rect) -> Self {
         Self { area, panels: Vec::new(), groups: Vec::new(), columns: Vec::new() }
     }

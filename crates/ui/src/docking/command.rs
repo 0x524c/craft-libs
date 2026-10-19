@@ -8,18 +8,17 @@
 //! params["command"] = json!(id);
 //! let command: DockCommand<PanelId> = serde_json::from_value(params)?;
 //! let space = float_space(ctx, DOCK_ID).unwrap_or_else(|| FloatSpace::new(ctx.content_rect()));
-//! command.apply_in(&mut app.workspace, style.right_to_left, &space, |p| app.permissions(p))?;
+//! command.apply(&mut app.workspace, style.right_to_left, &space, |p| app.permissions(p))?;
 //! ```
 
 use std::hash::Hash;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use super::{Action, DockError, FloatSpace, Layout, Permissions, Placement, Side, Target, Workspace, Zone, dock_model::Place};
+use super::{
+    Action, DockError, FloatSpace, Layout, Permissions, Placement, Side, Target, Workspace, Zone, dock_model::Place, surface::DEFAULT_FLOAT,
+};
 use crate::layout::SplitSize;
-
-/// Where a panel floats when a command gives no position or size and no [`FloatSpace`].
-const DEFAULT_FLOAT: [f32; 4] = [48.0, 48.0, 260.0, 320.0];
 
 /// A docking command, tagged by its control id under `"command"`.
 ///
@@ -334,22 +333,12 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
     /// anchor they make a new column or group, and `right_to_left` is the
     /// [`super::DockStyle::right_to_left`] the layout is drawn with.
     ///
-    /// A `window.panel.float` without a rect floats at 48, 48 in window coordinates; use
-    /// [`Self::to_actions_in`] to float inside the dock area instead.
-    pub fn to_actions(&self, workspace: &Workspace<P>, right_to_left: bool) -> Result<Vec<Action<P>>, DockError> {
-        self.actions(workspace, right_to_left, None)
-    }
-
-    /// Like [`Self::to_actions`], with `window.panel.float` floating into `space`: what it moves
-    /// takes the size a drag would float it at, inside the dock area and clear of the app's
-    /// menu bar. Pass [`super::float_space`] of the area that draws `workspace`. Given `x`, `y`,
-    /// `width` and `height` replace the matching values, and a group or column that is already
-    /// a whole floating window keeps its rect.
-    pub fn to_actions_in(&self, workspace: &Workspace<P>, right_to_left: bool, space: &FloatSpace<P>) -> Result<Vec<Action<P>>, DockError> {
-        self.actions(workspace, right_to_left, Some(space))
-    }
-
-    fn actions(&self, workspace: &Workspace<P>, right_to_left: bool, space: Option<&FloatSpace<P>>) -> Result<Vec<Action<P>>, DockError> {
+    /// `space` is where `window.panel.float` floats what it moves when it gives no rect: at the
+    /// size a drag would float it at, inside the dock area and clear of the app's menu bar. Pass
+    /// [`super::float_space`] of the area that draws `workspace`. Given `x`, `y`, `width` and
+    /// `height` replace the matching values, and a group or column that is already a whole
+    /// floating window keeps its rect.
+    pub fn to_actions(&self, workspace: &Workspace<P>, right_to_left: bool, space: &FloatSpace<P>) -> Result<Vec<Action<P>>, DockError> {
         let layout = &workspace.layout;
         let zoned = Zoned { layout, right_to_left };
         let shown = |panel: &P| if layout.contains(panel) { Ok(()) } else { Err(DockError::MissingPanel) };
@@ -377,31 +366,26 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
                 };
                 let any = given.iter().any(Option::is_some);
                 let unit = Unit::of(*group, *column);
-                let whole_window = layout.floating.iter().any(|w| w.contains(panel) && w.groups.len() == 1);
+                let lone = layout.floating.iter().any(|w| w.contains(panel) && w.panels().count() == 1);
+                let whole = layout.floating.iter().any(|w| w.contains(panel) && w.groups.len() == 1);
                 // The rect a drag would float the unit at, inside the area.
-                let placed = space.map(|space| {
+                let placed = || {
                     let docked = layout.location(panel).ok().and_then(|l| l.group).and_then(|g| g.column).map(|c| c.width);
-                    let fallback = egui::vec2(docked.filter(|_| !matches!(unit, Unit::Panel)).unwrap_or(DEFAULT_FLOAT[2]), DEFAULT_FLOAT[3]);
+                    let fallback = egui::vec2(docked.filter(|_| !matches!(unit, Unit::Panel)).unwrap_or(DEFAULT_FLOAT.x), DEFAULT_FLOAT.y);
                     let size = match unit {
                         Unit::Panel => space.panel(panel),
                         Unit::Group => space.group(panel),
                         Unit::Column => space.column(panel),
                     };
-                    space.place(size.unwrap_or(fallback))
-                });
+                    rect(space.place(size.unwrap_or(fallback)))
+                };
                 match (unit, window) {
-                    (Unit::Panel, Some(base)) if layout.floating.iter().any(|w| w.contains(panel) && w.panels().count() == 1) => {
-                        one(Action::MoveFloating { panel: panel.clone(), rect: rect(base) })
-                    }
-                    (Unit::Panel, _) => one(Action::Float { panel: panel.clone(), rect: rect(placed.unwrap_or(DEFAULT_FLOAT)) }),
+                    (Unit::Panel, Some(base)) if lone => one(Action::MoveFloating { panel: panel.clone(), rect: rect(base) }),
                     (Unit::Column, Some(base)) => one(Action::MoveFloating { panel: panel.clone(), rect: rect(base) }),
-                    (Unit::Group, Some(_)) if whole_window => {
-                        one(unit.to(layout, panel, Target::Float { rect: any.then(|| rect(DEFAULT_FLOAT)) })?)
-                    }
-                    (unit, _) => {
-                        let float = placed.map(rect).or_else(|| any.then(|| rect(DEFAULT_FLOAT)));
-                        one(unit.to(layout, panel, Target::Float { rect: float })?)
-                    }
+                    // Without given values the window keeps its rect and native state.
+                    (Unit::Group, Some(base)) if whole => one(unit.to(layout, panel, Target::Float { rect: any.then(|| rect(base)) })?),
+                    (Unit::Panel, _) => one(Action::Float { panel: panel.clone(), rect: placed() }),
+                    (unit, _) => one(unit.to(layout, panel, Target::Float { rect: Some(placed()) })?),
                 }
             }
             Self::Dock { panel, anchor, zone, before, group, column, side } => {
@@ -492,26 +476,12 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
     /// the application can release their state. Showing a hidden panel restores its last
     /// location; Lock sets [`Workspace::locked`]. Application-owned commands
     /// ([`Self::is_app_owned`]) return [`DockError::NotAllowed`] and change nothing.
-    pub fn apply(&self, workspace: &mut Workspace<P>, right_to_left: bool, permissions: impl Fn(&P) -> Permissions) -> Result<Vec<P>, DockError> {
-        self.apply_with(workspace, right_to_left, None, permissions)
-    }
-
-    /// Like [`Self::apply`], floating into `space` as [`Self::to_actions_in`] does.
-    pub fn apply_in(
+    /// `space` is where `window.panel.float` floats, as for [`Self::to_actions`].
+    pub fn apply(
         &self,
         workspace: &mut Workspace<P>,
         right_to_left: bool,
         space: &FloatSpace<P>,
-        permissions: impl Fn(&P) -> Permissions,
-    ) -> Result<Vec<P>, DockError> {
-        self.apply_with(workspace, right_to_left, Some(space), permissions)
-    }
-
-    fn apply_with(
-        &self,
-        workspace: &mut Workspace<P>,
-        right_to_left: bool,
-        space: Option<&FloatSpace<P>>,
         permissions: impl Fn(&P) -> Permissions,
     ) -> Result<Vec<P>, DockError> {
         let show = match self {
@@ -528,7 +498,7 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
             workspace.locked = locked.unwrap_or(!workspace.locked);
             return Ok(Vec::new());
         }
-        let actions = self.actions(workspace, right_to_left, space)?;
+        let actions = self.to_actions(workspace, right_to_left, space)?;
         workspace.apply_all(actions, permissions)
     }
 }

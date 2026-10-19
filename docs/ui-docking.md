@@ -162,7 +162,7 @@ if command.is_app_owned() {
     return app.workspace_command(command);
 }
 let space = float_space(ctx, DOCK_ID).unwrap_or_else(|| FloatSpace::new(ctx.content_rect()));
-let closed = command.apply_in(&mut app.workspace, style.right_to_left, &space, |panel| app.permissions(panel))?;
+let closed = command.apply(&mut app.workspace, style.right_to_left, &space, |panel| app.permissions(panel))?;
 ```
 
 | Id | Params (`?` is optional) |
@@ -190,9 +190,10 @@ let closed = command.apply_in(&mut app.workspace, style.right_to_left, &space, |
   panel's `floating_size`, else its docked group or column size, capped like a drag. It goes
   inside the dock area, 24 points from its top-left corner, so it stays clear of the menu bar.
   The area records that geometry in a `FloatSpace` each frame; `float_space(ctx, id)` reads it
-  and `apply_in` and `to_actions_in` take it. `x`, `y`, `width` and `height` replace the matching
-  values, and a group or column that is already a whole floating window keeps its rect.
-  `apply` and `to_actions` have no area and float at 48, 48 in window coordinates.
+  and `apply` and `to_actions` take it. Before the area has drawn, `FloatSpace::new(area)` floats
+  a panel at 260x320 and a group or column at its column width by 320. `x`, `y`, `width` and
+  `height` replace the matching values, and a group or column that is already a whole floating
+  window keeps its rect.
 - Without a value, `minimized`, `iconic` and `locked` toggle.
 - `ui.dock` operations are those of LightCraft, PDFCraft, CADCraft and SoundCraft: `open`,
   `close`, `activate`, `float {rect}`, `moveFloating {rect}`, `move {target, zone?, before?}`,

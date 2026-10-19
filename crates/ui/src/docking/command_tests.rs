@@ -33,6 +33,11 @@ fn workspace() -> Workspace<P> {
     workspace
 }
 
+/// An 800x600 dock area that has drawn nothing.
+fn space() -> FloatSpace<P> {
+    FloatSpace::new(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)))
+}
+
 fn parse(params: Value) -> Result<DockCommand<P>, serde_json::Error> {
     serde_json::from_value(params)
 }
@@ -40,14 +45,14 @@ fn parse(params: Value) -> Result<DockCommand<P>, serde_json::Error> {
 /// The actions `params` makes on a fresh workspace.
 fn actions(params: Value) -> Vec<Action<P>> {
     let command = parse(params.clone()).unwrap_or_else(|e| panic!("{params}: {e}"));
-    command.to_actions(&workspace(), false).unwrap_or_else(|e| panic!("{params}: {e}"))
+    command.to_actions(&workspace(), false, &space()).unwrap_or_else(|e| panic!("{params}: {e}"))
 }
 
 /// Apply `params` to a fresh workspace; return it and the panels closed.
 fn applied(params: Value) -> (Workspace<P>, Vec<P>) {
     let mut workspace = workspace();
     let command = parse(params.clone()).unwrap_or_else(|e| panic!("{params}: {e}"));
-    let closed = command.apply(&mut workspace, false, permissions).unwrap_or_else(|e| panic!("{params}: {e}"));
+    let closed = command.apply(&mut workspace, false, &space(), permissions).unwrap_or_else(|e| panic!("{params}: {e}"));
     (workspace, closed)
 }
 
@@ -56,7 +61,7 @@ fn rejected(params: Value, error: DockError) {
     let mut workspace = workspace();
     let before = workspace.clone();
     let command = parse(params.clone()).unwrap_or_else(|e| panic!("{params}: {e}"));
-    assert_eq!(command.apply(&mut workspace, false, permissions), Err(error), "{params}");
+    assert_eq!(command.apply(&mut workspace, false, &space(), permissions), Err(error), "{params}");
     assert_eq!(workspace, before, "{params}");
 }
 
@@ -112,11 +117,11 @@ fn dock_commands_parse_every_documented_shape_and_map_to_atomic_actions() {
     );
     assert_eq!(
         actions(json!({"command": "window.panel.float", "panel": "layers", "group": true})),
-        vec![Action::MoveGroup { panel: s("layers"), to: Target::Float { rect: None } }]
+        vec![Action::MoveGroup { panel: s("layers"), to: Target::Float { rect: Some([24.0, 24.0, 240.0, 320.0]) } }]
     );
     assert_eq!(
         actions(json!({"command": "window.panel.float", "panel": "history", "column": true})),
-        vec![Action::MoveColumn { panel: s("history"), to: Target::Float { rect: None } }]
+        vec![Action::MoveColumn { panel: s("history"), to: Target::Float { rect: Some([24.0, 24.0, 240.0, 320.0]) } }]
     );
 
     // dock: to an anchor, to a side, back into the dock, and a hidden panel to its last place.
@@ -281,7 +286,7 @@ fn dock_commands_parse_every_documented_shape_and_map_to_atomic_actions() {
     let mut locked = workspace();
     locked.locked = true;
     let before = locked.clone();
-    assert!(parse(json!({"command": "window.panel.window", "panel": "layers"})).unwrap().apply(&mut locked, false, permissions).is_err());
+    assert!(parse(json!({"command": "window.panel.window", "panel": "layers"})).unwrap().apply(&mut locked, false, &space(), permissions).is_err());
     assert_eq!(locked, before);
 }
 
@@ -289,7 +294,7 @@ fn dock_commands_parse_every_documented_shape_and_map_to_atomic_actions() {
 fn side_zones_map_to_the_placement_the_anchor_container_takes_in_either_direction() {
     let command =
         |zone: &str, anchor: &str| parse(json!({"command": "window.panel.move", "panel": "history", "anchor": anchor, "zone": zone})).unwrap();
-    let placed = |zone: &str, anchor: &str, rtl: bool| match command(zone, anchor).to_actions(&workspace(), rtl) {
+    let placed = |zone: &str, anchor: &str, rtl: bool| match command(zone, anchor).to_actions(&workspace(), rtl, &space()) {
         Ok(actions) => match actions.as_slice() {
             [Action::Move { placement, .. }] => Ok(placement.clone()),
             other => panic!("{other:?}"),
@@ -332,7 +337,7 @@ fn float_without_a_rect_takes_the_drag_size_inside_the_dock_area() {
     let d = testing::DockDriver::new(workspace().layout, Sized).with_area(area);
     let space = float_space::<P>(&d.ctx, d.id).expect("the area records its float space");
     assert_eq!(space.area, area);
-    let float = |params: Value| parse(params).unwrap().to_actions_in(&workspace(), false, &space).unwrap();
+    let float = |params: Value| parse(params).unwrap().to_actions(&workspace(), false, &space).unwrap();
 
     let panel = float(json!({"command": "window.panel.float", "panel": "layers"}));
     assert_eq!(panel, vec![Action::Float { panel: s("layers"), rect: [24.0, 54.0, 200.0, 150.0] }], "floating_size, inset in the area");
@@ -352,7 +357,6 @@ fn float_without_a_rect_takes_the_drag_size_inside_the_dock_area() {
 
     // Without recorded sizes a unit floats at the layout's size, shrunk into a small area.
     let small = FloatSpace::new(egui::Rect::from_min_size(egui::pos2(0.0, 30.0), egui::vec2(200.0, 200.0)));
-    let applied =
-        parse(json!({"command": "window.panel.float", "panel": "layers", "group": true})).unwrap().to_actions_in(&workspace(), false, &small);
+    let applied = parse(json!({"command": "window.panel.float", "panel": "layers", "group": true})).unwrap().to_actions(&workspace(), false, &small);
     assert_eq!(applied, Ok(vec![Action::MoveGroup { panel: s("layers"), to: Target::Float { rect: Some([0.0, 30.0, 200.0, 200.0]) } }]));
 }
