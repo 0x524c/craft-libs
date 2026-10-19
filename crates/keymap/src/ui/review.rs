@@ -3,7 +3,7 @@
 //! and after the import the report of what was skipped, taken or failed.
 
 use egui::text::{LayoutJob, TextFormat};
-use egui::{Color32, ComboBox, Label, Rect, RichText, ScrollArea, TextEdit, TextStyle, Ui};
+use egui::{ComboBox, Label, Rect, RichText, ScrollArea, TextEdit, TextStyle, Ui};
 
 use super::{Draw, FIELD_W, fill};
 use crate::chord::foreign::{ForeignError, ReadNote};
@@ -18,6 +18,8 @@ struct Entry {
     note: String,
     /// The note is what the item becomes (Will change), drawn in the text colour, not dimmed.
     to: bool,
+    /// Chord text inside the note, kept out of bidi reordering.
+    note_chord: String,
 }
 
 enum Act {
@@ -58,19 +60,21 @@ impl Draw<'_, '_> {
         let font = TextStyle::Body.resolve(ui.style());
         let strong = ui.visuals().strong_text_color();
         let dim = self.style.dim;
-        let mut job = LayoutJob::default();
-        let mut add = |s: &str, color: Color32| job.append(s, 0.0, TextFormat::simple(font.clone(), color));
-        add(&self.vis(&e.item), strong);
+        let text = ui.visuals().text_color();
+        let mut parts = vec![(self.vis(&e.item), strong)];
         if let Some(line) = self.line_text(e.line) {
-            add(&format!(" · {}", self.vis(&line)), dim);
+            parts.extend([(" · ".to_string(), dim), (self.vis(&line), dim)]);
         }
         if !e.keys.is_empty() {
-            add(&format!(" · {}", e.keys), ui.visuals().text_color());
+            parts.extend([(" · ".to_string(), dim), (e.keys.clone(), text)]);
         }
-        if e.to {
-            add(&format!(" — {}", self.vis(&e.note)), ui.visuals().text_color());
-        } else if !e.note.is_empty() {
-            add(&format!(" — {}", self.vis(&e.note)), dim);
+        if !e.note.is_empty() {
+            let color = if e.to { text } else { dim };
+            parts.extend([(" — ".to_string(), color), (self.vis_chord(&e.note, &e.note_chord), color)]);
+        }
+        let mut job = LayoutJob::default();
+        for (s, color) in self.ordered(parts) {
+            job.append(&s, 0.0, TextFormat::simple(font.clone(), color));
         }
         ui.add(Label::new(job).wrap());
     }
@@ -161,12 +165,16 @@ impl Draw<'_, '_> {
             let changes: Vec<Entry> = plan
                 .commands
                 .iter()
-                .map(|c| Entry {
-                    item: c.item.clone(),
-                    line: c.line,
-                    keys: String::new(),
-                    note: fill(self.ui("{label}: {chord}"), &[("label", &self.label_of(&c.command)), ("chord", &chord_list(self, c))]),
-                    to: true,
+                .map(|c| {
+                    let chords = chord_list(self, c);
+                    Entry {
+                        item: c.item.clone(),
+                        line: c.line,
+                        keys: String::new(),
+                        note: fill(self.ui("{label}: {chord}"), &[("label", &self.label_of(&c.command)), ("chord", &chords)]),
+                        to: true,
+                        note_chord: chords,
+                    }
                 })
                 .collect();
             self.section(ui, &self.ui("Will change"), &changes);
@@ -176,7 +184,17 @@ impl Draw<'_, '_> {
                 ui.label(RichText::new(self.vis(&format!("{} ({})", self.ui("Suggestions"), report.suggestions.len()))).strong());
                 for (si, s) in report.suggestions.iter().enumerate() {
                     ui.horizontal_wrapped(|ui| {
-                        self.entry(ui, &Entry { item: s.item.clone(), line: s.line, keys: String::new(), note: String::new(), to: false });
+                        self.entry(
+                            ui,
+                            &Entry {
+                                item: s.item.clone(),
+                                line: s.line,
+                                keys: String::new(),
+                                note: String::new(),
+                                to: false,
+                                note_chord: String::new(),
+                            },
+                        );
                         let label = fill(self.ui("Command for {item}"), &[("item", &s.item)]);
                         let choose = self.ui("Choose a command…");
                         let combo = ComboBox::from_id_salt(self.base.with(("suggestion", si))).selected_text(self.vis(&choose)).show_ui(ui, |ui| {
@@ -196,19 +214,40 @@ impl Draw<'_, '_> {
             let unmatched: Vec<Entry> = report
                 .unmatched
                 .iter()
-                .map(|u| Entry { item: u.item.clone(), line: u.line, keys: u.keys.clone(), note: self.unmatched_reason(u.reason), to: false })
+                .map(|u| Entry {
+                    item: u.item.clone(),
+                    line: u.line,
+                    keys: u.keys.clone(),
+                    note: self.unmatched_reason(u.reason),
+                    to: false,
+                    note_chord: String::new(),
+                })
                 .collect();
             self.section(ui, &self.ui("Not matched"), &unmatched);
             let unreadable: Vec<Entry> = report
                 .unreadable
                 .iter()
-                .map(|u| Entry { item: u.item.clone(), line: u.line, keys: u.keys.clone(), note: self.foreign_error(&u.reason), to: false })
+                .map(|u| Entry {
+                    item: u.item.clone(),
+                    line: u.line,
+                    keys: u.keys.clone(),
+                    note: self.foreign_error(&u.reason),
+                    to: false,
+                    note_chord: String::new(),
+                })
                 .collect();
             self.section(ui, &self.ui("Unreadable"), &unreadable);
             let approximated: Vec<Entry> = report
                 .approximated
                 .iter()
-                .map(|a| Entry { item: a.item.clone(), line: a.line, keys: a.keys.clone(), note: self.read_note(a.note), to: false })
+                .map(|a| Entry {
+                    item: a.item.clone(),
+                    line: a.line,
+                    keys: a.keys.clone(),
+                    note: self.read_note(a.note),
+                    to: false,
+                    note_chord: String::new(),
+                })
                 .collect();
             self.section(ui, &self.ui("Approximated"), &approximated);
             let kept: Vec<Entry> = report
@@ -224,6 +263,7 @@ impl Draw<'_, '_> {
                         }
                     },
                     to: false,
+                    note_chord: String::new(),
                 })
                 .collect();
             self.section(ui, &self.ui("Matched without change"), &kept);
@@ -259,17 +299,32 @@ impl Draw<'_, '_> {
                 keys: s.shortcut.clone(),
                 note: self.skip_note(s.reason, s.kept_by.as_ref()),
                 to: false,
+                note_chord: String::new(),
             })
             .collect();
         let cleared = report
             .conflicts_cleared
             .iter()
-            .map(|c| Entry { item: self.label_of(&c.command), line: None, keys: c.shortcut.clone(), note: String::new(), to: false })
+            .map(|c| Entry {
+                item: self.label_of(&c.command),
+                line: None,
+                keys: c.shortcut.clone(),
+                note: String::new(),
+                to: false,
+                note_chord: String::new(),
+            })
             .collect();
         let failed = report
             .failed
             .iter()
-            .map(|f| Entry { item: self.label_of(&f.command), line: None, keys: f.shortcuts.join(", "), note: self.failed_note(f.change), to: false })
+            .map(|f| Entry {
+                item: self.label_of(&f.command),
+                line: None,
+                keys: f.shortcuts.join(", "),
+                note: self.failed_note(f.change),
+                to: false,
+                note_chord: String::new(),
+            })
             .collect();
         [(self.ui("Skipped"), skipped), (self.ui("Taken from other commands"), cleared), (self.ui("Not changed"), failed)]
     }

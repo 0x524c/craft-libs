@@ -7,13 +7,15 @@ supplies its command catalogue, its file-format readers and its UI.
 
 ## Boundaries
 
-- Data and logic only. The apps keep the command catalogue (ids, labels, menu paths, defaults),
-  the readers for other applications' files, the shortcut editor UI and running the commands.
+- Data and logic, plus a shared Keyboard Shortcuts dialog behind the `ui` feature. The apps keep
+  the command catalogue (ids, labels, menu paths, defaults), the readers for other applications'
+  files, file dialogs and running the commands.
 - Never crashes: no panics, no `unsafe`. Loading settings never fails; what cannot be used is
   kept or reported (`Keymap::problems`, the import report).
 - Hostile input is capped: commands, bindings per command, text lengths, import entries, keys,
   path segments and fuzzy suggestions (the `MAX_*` constants). What is cut is counted.
-- Dependencies: `serde` and `serde_json`; `egui` with the `egui` feature.
+- Dependencies: `serde` and `serde_json`; `egui` with the `egui` feature; `craft-ui` and
+  `craft-i18n` with the `ui` feature.
 
 ## A catalogue and dispatch
 
@@ -274,6 +276,77 @@ if let Recorded::Single(trigger) = recorder.press(Chord::parse("Cmd+C").unwrap()
 session.cancel(&mut keymap);
 ```
 
+## Shortcuts dialog
+
+With the `ui` feature, `ui::ShortcutsDialog` draws the Keyboard Shortcuts dialog over a `Keymap`
+and, optionally, `Profiles`: a table of the catalogue grouped by menu, recording, conflicts, undo,
+named sets, import review and a summary. It edits the keymap in place, so menus show new keys at
+once, and Cancel puts everything back as it was when the dialog opened.
+
+Adopt it in three steps:
+
+1. Build the `Keymap` from the catalogue and keep the built-in sets (`Builtins`), as above.
+2. While the dialog is open, keep a `DialogState` and call `show` (a window) or `ui` (the body,
+   for the app's own modal or preferences page) every frame.
+3. Act on the `Outcome` it returns, and drop the state when `is_open()` turns false.
+
+```rust,ignore
+use craft_keymap::ui::{DialogState, I18nText, Options, Outcome, ShortcutsDialog};
+
+// "Keyboard Shortcuts…" opens it; "Edit Shortcut…" also calls `state.select(&command)`.
+self.shortcuts = Some(DialogState::new());
+
+// Every frame, before the app's own dispatch:
+if let Some(state) = &mut self.shortcuts {
+    let text = I18nText { i18n: &self.i18n, lang: self.lang };
+    let dialog = ShortcutsDialog::new(&mut self.keymap, &text).options(&self.shortcut_options);
+    let dialog = dialog.sets(&mut self.settings.shortcut_sets, &BUILTINS);
+    match dialog.show(ctx, state) {
+        Some(Outcome::Ok) => self.save_settings(),
+        Some(Outcome::Changed) => self.rebuild_menus(),
+        Some(Outcome::Import { formats }) => self.pick_import_file(formats),
+        Some(Outcome::Export { name, json }) => self.save_file(&name, json),
+        Some(Outcome::Summary { name, html, .. }) => self.show_summary(&name, html),
+        Some(Outcome::Remembered(answers)) => self.settings.import_answers.extend(answers),
+        _ => {}
+    }
+    if !state.is_open() {
+        self.shortcuts = None;
+    }
+}
+```
+
+Outcomes:
+
+| Outcome | The app |
+|---|---|
+| `Ok` | Saves `Profiles` (with sets) or `keymap.overrides()`. |
+| `Cancel` | Nothing to do: the keymap and the sets are as they were at open. |
+| `Changed` | Updates its menus, or saves at once if it saves live. |
+| `Import { formats }` | Opens a file of one of the formats, then calls `import_json` (craft-keymap JSON, `ui::JSON_FORMAT`) or reads it into a `ForeignSet` and calls `review_import`. |
+| `Export { name, json }`, `ExportAs { format, name, keymap }` | Writes the set where the user chooses (a download on the web). |
+| `Summary { name, html, text }` | Shows, saves or prints the summary. |
+| `Remembered(answers)` | Keeps the user's import answers for the next import (`ImportOptions::remembered`). |
+
+The crate never opens a file dialog or touches the file system.
+
+Key dispatch while the dialog is open:
+
+- Skip `Dispatcher::dispatch` while `DialogState::is_open()` is true. The dialog takes the
+  frame's key, text and clipboard events itself while it records, so the chord the user presses
+  reaches the recorder and runs nothing.
+- A native macOS menu handles its key equivalents before egui sees them, so Cmd+Q, Cmd+, and
+  the other menu chords never reach the recorder. While `is_recording()` is true, pause them:
+  feed them to egui as key presses, or rebuild the menu without accelerators.
+
+Words come from `ui::Text`. Apps on craft-i18n pass `I18nText`; others implement `ui` and
+`plural` over their own lookup, and `rtl` and `visual` (the app's bidi reordering) for
+right-to-left languages, which mirror the layout. Chord text is never reordered. `ui::STRINGS`
+and `ui::PLURALS` list every string the dialog looks up, for the translation catalogue.
+`Options` sets the conflict mode, double-press recording, area tabs, the on-screen keyboard,
+read-only rows for keys outside the catalogue, the app's import and export formats, and an
+`accept` rule for which keys a command may get.
+
 ## Features
 
 - `egui`: conversions to and from egui keys and modifiers; `egui::matches`, which accepts the
@@ -303,3 +376,9 @@ session.cancel(&mut keymap);
   chords outside text fields, and a Paste event's text moves to `Hit::pasted`. An app whose
   paste command asks egui for a paste gets a Paste event back, which runs that command again;
   such an app keeps the default.
+
+- `ui`: the Shortcuts dialog (see above). Implies `egui`.
+- `snapshot` (development): `tests/ui_snapshot.rs` writes PNGs of the dialog to
+  `CRAFT_KEYMAP_SNAPSHOT_DIR` for review. egui's default fonts lack ⇧ ⌥ ⌃ and the arrows; the
+  test adds the font in `CRAFT_KEYMAP_SNAPSHOT_FONT`, DejaVu Sans when it is installed, and BIZ
+  UDPGothic from a craft-fonts checkout in `CRAFT_FONTS_DIR` (⇧ ⌘ and arrows only).

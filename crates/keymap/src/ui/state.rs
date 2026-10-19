@@ -103,6 +103,8 @@ pub(crate) struct Message {
     pub goto: Option<CommandRef>,
     /// Offers Undo.
     pub undo: bool,
+    /// The chord text inside `text`, which is never put through `Text::visual`.
+    pub chord: Option<String>,
 }
 
 /// What to do after the Save changes prompt.
@@ -507,7 +509,7 @@ impl DialogState {
         self.message = None;
         let chord = env.chord_text(&binding.trigger);
         if env.keymap.is_reserved(&binding.trigger.chord) {
-            self.refuse(env.ui("{chord} is reserved by the system", &[("chord", &chord)]));
+            self.refuse_chord(env.ui("{chord} is reserved by the system", &[("chord", &chord)]), chord);
             return;
         }
         if let (Some(accept), Some(b)) = (&env.options.accept, env.keymap.bindable(command))
@@ -532,10 +534,15 @@ impl DialogState {
     }
 
     fn refuse(&mut self, text: String) {
-        self.message = Some(Message { text, refused: true, goto: None, undo: false });
+        self.message = Some(Message { text, refused: true, goto: None, undo: false, chord: None });
+    }
+
+    fn refuse_chord(&mut self, text: String, chord: String) {
+        self.message = Some(Message { text, refused: true, goto: None, undo: false, chord: Some(chord) });
     }
 
     fn apply(&mut self, env: &mut Env, command: &CommandRef, old: Option<Binding>, binding: Binding, policy: Policy) -> Option<Assigned> {
+        let chord = env.chord_text(&binding.trigger);
         let km = &mut *env.keymap;
         let session = self.session.get_or_insert_with(|| EditSession::begin(km));
         let result = match &old {
@@ -549,7 +556,7 @@ impl DialogState {
             }
             Err(e) => {
                 let text = assign_error(env, &e);
-                self.refuse(text);
+                self.refuse_chord(text, chord);
                 None
             }
         }
@@ -566,7 +573,7 @@ impl DialogState {
         }
         let text = env.ui(text, &[("chord", &chord), ("label", &env.holder_labels(holders))]);
         let goto = holders.first().map(|h| h.command.clone());
-        self.message = Some(Message { text, refused: false, goto, undo: policy == Policy::Steal });
+        self.message = Some(Message { text, refused: false, goto, undo: policy == Policy::Steal, chord: Some(chord) });
     }
 
     /// Take It.

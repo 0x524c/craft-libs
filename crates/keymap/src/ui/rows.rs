@@ -61,7 +61,7 @@ impl Filter {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Chip {
     pub binding: Binding,
-    /// Trigger text, plus ` (Scope)` for a scope other than the command's home scope.
+    /// Trigger text, plus ` (Scope)` for a scope other than the command's home scope (display order).
     pub text: String,
     /// Not one of the command's defaults.
     pub changed: bool,
@@ -375,7 +375,9 @@ fn build(keymap: &Keymap, options: &Options, text: &dyn Text, view: &View) -> Bu
             .map(|x| {
                 let mut t = trigger_text(text, &x.trigger, platform);
                 if x.scope_or(&b.scope) != &b.scope {
-                    t = format!("{t} ({})", text.segment(x.scope_or(&b.scope).as_str()));
+                    let scope = format!("({})", text.segment(x.scope_or(&b.scope).as_str()));
+                    // Display order; the chord itself is never reordered.
+                    t = if text.rtl() { format!("{} {t}", text.visual(&scope)) } else { format!("{t} {scope}") };
                 }
                 Chip { binding: x.clone(), text: t, changed: !defaults.contains(x) }
             })

@@ -599,7 +599,9 @@ impl Draw<'_, '_> {
             let r = ui.add_enabled(selected.is_some(), Button::new(self.vis(&label)));
             self.tag(|| "shortcuts.assignKey".into(), r.rect, &label);
             let r = match &selected {
-                Some(c) => r.on_hover_text(self.vis(&fill(self.ui("Assign {chord} to {label}"), &[("chord", &chord), ("label", &self.label_of(c))]))),
+                Some(c) => r.on_hover_text(
+                    self.vis_chord(&fill(self.ui("Assign {chord} to {label}"), &[("chord", &chord), ("label", &self.label_of(c))]), &chord),
+                ),
                 None => r.on_disabled_hover_text(self.vis(&self.ui("Select a command first"))),
             };
             if r.clicked() {
@@ -616,6 +618,7 @@ impl Draw<'_, '_> {
         }
         let current = Chord { mods, key }.effective(platform);
         let chord_w = 72.0;
+        let chord_layout = if self.env.text.rtl() { Layout::right_to_left(Align::Center) } else { Layout::left_to_right(Align::Center) };
         ScrollArea::vertical().id_salt(self.base.with("keylist")).auto_shrink([false, false]).show(ui, |ui| {
             for (c, h) in &entries {
                 ui.horizontal(|ui| {
@@ -623,9 +626,7 @@ impl Draw<'_, '_> {
                     if *c == current {
                         text = text.strong();
                     }
-                    ui.allocate_ui_with_layout(vec2(chord_w, ui.spacing().interact_size.y), Layout::left_to_right(Align::Center), |ui| {
-                        ui.label(text)
-                    });
+                    ui.allocate_ui_with_layout(vec2(chord_w, ui.spacing().interact_size.y), chord_layout, |ui| ui.label(text));
                     if ui.link(self.vis(&self.holder_text(h))).clicked() {
                         clicks.go = Some(h.holder.command.clone());
                     }

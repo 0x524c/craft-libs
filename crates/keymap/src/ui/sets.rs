@@ -48,15 +48,13 @@ impl Draw<'_, '_> {
                 let set_label = self.ui("Set:");
                 let l = ui.label(self.vis(&set_label));
                 let mut pick = None;
-                let combo = ComboBox::from_id_salt(self.base.with("set")).selected_text(self.vis(&active)).show_ui(ui, |ui| {
+                self.combo(ui, "set", &l, &set_label, &active, |ui| {
                     for n in &names {
                         if ui.selectable_label(*n == active, self.vis(n)).clicked() {
                             pick = Some(n.clone());
                         }
                     }
                 });
-                let combo = combo.response.labelled_by(l.id);
-                self.tag(|| "shortcuts.set".into(), combo.rect, &set_label);
                 if modified {
                     ui.label(RichText::new(self.vis(&self.ui("(modified)"))).color(self.style.dim));
                 }

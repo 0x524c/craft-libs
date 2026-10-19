@@ -6,14 +6,16 @@
 //! frame's height and asks egui to discard a frame whose height changed.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use craft_ui::buttons::{IconButton, IconButtonStyle};
 use craft_ui::layout::{ResizeHandle, SplitAxis, SplitSize, split_rect};
 use craft_ui::tabs::{self, Tab};
+use egui::Galley;
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{
-    Align, Button, Color32, ComboBox, EventFilter, FontId, Id, Key as EguiKey, Label, Layout, Modifiers, Painter, Rect, Response, RichText,
-    ScrollArea, Sense, Stroke, StrokeKind, TextEdit, TextStyle, Ui, UiBuilder, Vec2, WidgetInfo, WidgetText, WidgetType, pos2, vec2,
+    Align, Button, Color32, ComboBox, EventFilter, Id, Key as EguiKey, Label, Layout, Modifiers, Painter, Rect, Response, RichText, ScrollArea,
+    Sense, Stroke, StrokeKind, TextEdit, TextStyle, Ui, UiBuilder, Vec2, WidgetInfo, WidgetText, WidgetType, pos2, vec2,
 };
 
 use crate::chord::Trigger;
@@ -44,6 +46,11 @@ const CHIP_PAD: f32 = 5.0;
 const CHIP_GAP: f32 = 4.0;
 /// The detail pane's New Shortcut field.
 const FIELD_W: f32 = 160.0;
+/// The widest Show, Filter or Set combo box; longer names are cut with "…".
+const COMBO_MAX: f32 = 200.0;
+/// Search field width.
+const SEARCH_MIN: f32 = 120.0;
+const SEARCH_MAX: f32 = 240.0;
 
 /// One frame of the dialog body inside `ui`'s available rectangle.
 pub(crate) fn body(ui: &mut Ui, env: &mut Env, state: &mut DialogState) {
@@ -90,12 +97,108 @@ impl Draw<'_, '_> {
         self.env.text.visual(s)
     }
 
+    fn rtl(&self) -> bool {
+        self.env.text.rtl()
+    }
+
+    /// Parts in logical order, each already in display order, put into display order: reversed in
+    /// a right-to-left interface, where the path separator ` › ` becomes ` ‹ `.
+    fn ordered<T>(&self, mut parts: Vec<(String, T)>) -> Vec<(String, T)> {
+        if self.rtl() {
+            parts.reverse();
+            for (s, _) in &mut parts {
+                if s == PATH_SEP {
+                    *s = " ‹ ".into();
+                }
+            }
+        }
+        parts
+    }
+
+    /// [`ordered`](Self::ordered) parts as one string.
+    fn joined(&self, parts: Vec<String>) -> String {
+        self.ordered(parts.into_iter().map(|s| (s, ())).collect()).into_iter().map(|(s, ())| s).collect()
+    }
+
+    /// Display-order `parts` on one line within `width`, cut with "…" when they do not fit: at
+    /// the end, or at the start in a right-to-left interface, where the logical end of the text is
+    /// on the left. Returns the galley and whether it was cut.
+    fn one_line(&self, painter: &Painter, parts: &[(String, TextFormat)], width: f32) -> (Arc<Galley>, bool) {
+        let width = width.max(0.0);
+        let job = |skip: usize| {
+            let mut job = LayoutJob::default();
+            if let (true, Some((_, f))) = (skip > 0, parts.first()) {
+                job.append("…", 0.0, f.clone());
+            }
+            let mut left = skip;
+            for (s, f) in parts {
+                let n = s.chars().count();
+                if left >= n {
+                    left -= n;
+                    continue;
+                }
+                let start = s.char_indices().nth(left).map_or(s.len(), |(i, _)| i);
+                left = 0;
+                job.append(&s[start..], 0.0, f.clone());
+            }
+            job
+        };
+        let full = painter.layout_job(job(0));
+        if full.size().x <= width + 0.5 {
+            return (full, false);
+        }
+        if !self.rtl() {
+            let mut cut = job(0);
+            cut.wrap = TextWrapping::truncate_at_width(width);
+            return (painter.layout_job(cut), true);
+        }
+        // The fewest characters to drop from the start so that "…" and the rest fit.
+        let total: usize = parts.iter().map(|(s, _)| s.chars().count()).sum();
+        let (mut lo, mut hi) = (1, total);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if painter.layout_job(job(mid)).size().x <= width + 0.5 { hi = mid } else { lo = mid + 1 }
+        }
+        (painter.layout_job(job(lo)), true)
+    }
+
+    /// `s` in display order with `chord`, text inside it, left as it is: chord text never goes
+    /// through [`Text::visual`](crate::ui::Text::visual).
+    fn vis_chord(&self, s: &str, chord: &str) -> String {
+        match s.find(chord).filter(|_| !chord.is_empty()) {
+            None => self.vis(s),
+            Some(i) => {
+                let (before, rest) = s.split_at(i);
+                self.joined(vec![self.vis(before), chord.to_string(), self.vis(&rest[chord.len()..])])
+            }
+        }
+    }
+
+    /// `text` after a ⚠, in display order.
+    fn warned(&self, text: String) -> String {
+        self.joined(vec!["⚠".into(), " ".into(), text])
+    }
+
+    /// Horizontal placement inside `rect`, mirrored in a right-to-left interface.
+    fn mirror(&self, rect: Rect) -> Mirror {
+        Mirror { on: self.rtl(), sum: rect.min.x + rect.max.x }
+    }
+
     fn chord(&self, t: &Trigger) -> String {
         trigger_text(self.env.text, t, self.env.keymap.platform())
     }
 
     fn scope_name(&self, s: &Scope) -> String {
         if s.is_app() { self.ui("Application") } else { self.env.text.segment(s.as_str()).into_owned() }
+    }
+
+    /// [`binding_text`](Self::binding_text) in display order.
+    fn binding_shown(&self, b: &Binding, home: Option<&Scope>) -> String {
+        let chord = self.chord(&b.trigger);
+        match &b.scope {
+            Some(s) if Some(s) != home => self.joined(vec![chord, " ".into(), self.vis(&format!("({})", self.scope_name(s)))]),
+            _ => chord,
+        }
     }
 
     /// A binding as text, with ` (Scope)` when its scope is not the command's home scope.
@@ -107,6 +210,18 @@ impl Draw<'_, '_> {
         }
     }
 
+    /// A menu path in display order: "File › Export", "Export ‹ File" right to left.
+    fn path_text(&self, path: &[String]) -> String {
+        let mut parts = Vec::new();
+        for (i, s) in path.iter().enumerate() {
+            if i > 0 {
+                parts.push(PATH_SEP.to_string());
+            }
+            parts.push(self.vis(&self.env.text.segment(s)));
+        }
+        self.joined(parts)
+    }
+
     fn label_of(&self, command: &CommandRef) -> String {
         self.env.keymap.bindable(command).map_or_else(|| command.id.clone(), |b| self.env.text.command(b).into_owned())
     }
@@ -114,7 +229,10 @@ impl Draw<'_, '_> {
     /// "press keys", or the chord waiting for a second press.
     fn recording_text(&self) -> String {
         match self.state.recording.as_ref().and_then(|r| r.waiting.as_ref()) {
-            Some((t, _)) => fill(self.ui("{chord} (press again for a double press)"), &[("chord", &self.chord(t))]),
+            Some((t, _)) => {
+                let chord = self.chord(t);
+                self.vis_chord(&fill(self.ui("{chord} (press again for a double press)"), &[("chord", &chord)]), &chord)
+            }
             None => self.ui("press keys"),
         }
     }
@@ -223,7 +341,8 @@ impl Draw<'_, '_> {
         let full = Rect::from_min_size(avail.min, vec2(size(avail.width(), 800.0), size(avail.height(), 600.0)));
         self.state.text_focus = false;
         let gap = ui.spacing().item_spacing.y;
-        ui.scope_builder(UiBuilder::new().max_rect(full).layout(Layout::top_down(Align::Min)), |ui| {
+        let column = self.column();
+        ui.scope_builder(UiBuilder::new().max_rect(full).layout(column), |ui| {
             self.sets_row(ui);
             // Show, Filter and Search act on the table, which the import review replaces.
             ui.add_enabled_ui(self.state.review.is_none(), |ui| self.header(ui));
@@ -236,8 +355,7 @@ impl Draw<'_, '_> {
             }
             let top = (mid.max.y + gap).min(rest.max.y);
             let bottom = Rect::from_min_max(pos2(rest.min.x, top), rest.max);
-            let used =
-                ui.scope_builder(UiBuilder::new().max_rect(bottom).layout(Layout::top_down(Align::Min)), |ui| self.bottom(ui)).response.rect.height();
+            let used = ui.scope_builder(UiBuilder::new().max_rect(bottom).layout(column), |ui| self.bottom(ui)).response.rect.height();
             if (used - self.state.bottom_h).abs() > 0.5 {
                 self.state.bottom_h = used;
                 ui.ctx().request_discard("shortcuts dialog: height of the bars under the table");
@@ -246,8 +364,15 @@ impl Draw<'_, '_> {
         ui.advance_cursor_after_rect(full);
     }
 
+    /// Top to bottom, aligned to the reading side. In a right-to-left interface egui's
+    /// `horizontal` rows inside such a column also run right to left.
+    fn column(&self) -> Layout {
+        Layout::top_down(if self.env.text.rtl() { Align::Max } else { Align::Min })
+    }
+
     fn child(&mut self, ui: &mut Ui, rect: Rect, f: impl FnOnce(&mut Self, &mut Ui)) {
-        ui.scope_builder(UiBuilder::new().max_rect(rect).layout(Layout::top_down(Align::Min)), |ui| {
+        let column = self.column();
+        ui.scope_builder(UiBuilder::new().max_rect(rect).layout(column), |ui| {
             ui.set_clip_rect(rect.intersect(ui.clip_rect()));
             f(self, ui);
         });
@@ -271,60 +396,98 @@ impl Draw<'_, '_> {
         if self.env.options.area_tabs {
             self.area_tabs(ui);
         }
+        // Show and Filter, then Search, ⌨ and Keyboard; Search goes to a row of its own when the
+        // two do not fit side by side.
+        let gap = ui.spacing().item_spacing.x;
+        let text_w = |d: &Self, ui: &Ui, s: &str| d.button_width(ui, s) - ui.spacing().button_padding.x * 2.0;
+        let mut first = text_w(self, ui, &self.ui("Filter:")) + COMBO_MAX + 2.0 * gap;
+        if !self.env.options.area_tabs {
+            first += text_w(self, ui, &self.ui("Show:")) + COMBO_MAX + 2.0 * gap;
+        }
+        let toggle = if self.env.options.keyboard { self.button_width(ui, &self.ui("Keyboard")) + gap } else { 0.0 };
+        let second = text_w(self, ui, &self.ui("Search:")) + SEARCH_MIN + ICON + toggle + 3.0 * gap;
+        let one_row = first + second <= ui.available_width();
         ui.horizontal(|ui| {
             if !self.env.options.area_tabs {
                 self.area_combo(ui);
             }
-            let filter_label = self.ui("Filter:");
-            let l = ui.label(self.vis(&filter_label));
-            let current = self.state.filter.label(self.env.text);
-            let mut pick = None;
-            let combo = ComboBox::from_id_salt(self.base.with("filter")).selected_text(self.vis(&current)).show_ui(ui, |ui| {
-                for f in Filter::ALL {
-                    let label = f.label(self.env.text);
-                    if ui.selectable_label(self.state.filter == f, self.vis(&label)).clicked() {
-                        pick = Some(f);
-                    }
-                }
-            });
-            let combo = combo.response.labelled_by(l.id);
-            self.tag(|| "shortcuts.filter".into(), combo.rect, &filter_label);
-            if let Some(f) = pick {
-                self.state.set_filter(f);
+            self.filter_combo(ui);
+            if one_row {
+                self.search(ui, toggle);
             }
-
-            let search_label = self.ui("Search:");
-            let l = ui.label(self.vis(&search_label));
-            let mut q = self.state.query.clone();
-            let width = (ui.available_width() - ICON - ui.spacing().item_spacing.x).clamp(60.0, 240.0);
-            let edit = ui.add(TextEdit::singleline(&mut q).id(self.base.with("search")).desired_width(width)).labelled_by(l.id);
-            self.text_field(&edit);
-            self.tag(|| "shortcuts.search".into(), edit.rect, &search_label);
-            if edit.changed() {
-                self.state.set_query(q);
-            }
-
-            let key_label = self.ui("Search by key");
-            let searching = self.recording_target() == Some(&Target::Search);
-            let r = self.icon_button(ui, &key_label, searching, paint_keyboard).on_hover_text(self.vis(&key_label));
-            self.tag(|| "shortcuts.searchKey".into(), r.rect, &key_label);
-            if r.clicked() {
-                if searching {
-                    self.state.stop_recording();
-                } else {
-                    self.state.record(self.env, Target::Search);
-                    r.request_focus();
-                }
-            }
-            if self.recording_target() == Some(&Target::Search) {
-                if r.lost_focus() {
-                    self.state.stop_recording();
-                } else if r.has_focus() || r.clicked() {
-                    capture::lock_focus(ui, r.id);
-                }
-            }
-            self.keyboard_toggle(ui);
         });
+        if !one_row {
+            ui.horizontal(|ui| self.search(ui, toggle));
+        }
+    }
+
+    /// A combo box at most [`COMBO_MAX`] wide, its text cut with "…" and shown in full on hover.
+    fn combo(&self, ui: &mut Ui, salt: &str, label: &Response, title: &str, current: &str, items: impl FnOnce(&mut Ui)) -> Response {
+        let full = self.vis(current);
+        let natural = self.button_width(ui, &full) + ui.spacing().icon_width + ui.spacing().icon_spacing;
+        let width = natural.clamp(ui.spacing().combo_width, COMBO_MAX);
+        let r = ui
+            .allocate_ui(vec2(width, ui.spacing().interact_size.y), |ui| {
+                ComboBox::from_id_salt(self.base.with(salt)).width(width).truncate().selected_text(full.clone()).show_ui(ui, items).response
+            })
+            .inner
+            .labelled_by(label.id);
+        self.tag(|| format!("shortcuts.{salt}"), r.rect, title);
+        if natural > width { r.on_hover_text(full) } else { r }
+    }
+
+    fn filter_combo(&mut self, ui: &mut Ui) {
+        let filter_label = self.ui("Filter:");
+        let l = ui.label(self.vis(&filter_label));
+        let current = self.state.filter.label(self.env.text);
+        let mut pick = None;
+        self.combo(ui, "filter", &l, &filter_label, &current, |ui| {
+            for f in Filter::ALL {
+                let label = f.label(self.env.text);
+                if ui.selectable_label(self.state.filter == f, self.vis(&label)).clicked() {
+                    pick = Some(f);
+                }
+            }
+        });
+        if let Some(f) = pick {
+            self.state.set_filter(f);
+        }
+    }
+
+    /// Search, search by key and the keyboard pane's toggle (`toggle` wide, 0 without it).
+    fn search(&mut self, ui: &mut Ui, toggle: f32) {
+        let search_label = self.ui("Search:");
+        let l = ui.label(self.vis(&search_label));
+        let mut q = self.state.query.clone();
+        let gap = ui.spacing().item_spacing.x;
+        let width = (ui.available_width() - ICON - toggle - 2.0 * gap).clamp(SEARCH_MIN.min(ui.available_width()), SEARCH_MAX);
+        let edit = ui.add(TextEdit::singleline(&mut q).id(self.base.with("search")).desired_width(width)).labelled_by(l.id);
+        self.text_field(&edit);
+        self.tag(|| "shortcuts.search".into(), edit.rect, &search_label);
+        if edit.changed() {
+            self.state.set_query(q);
+        }
+
+        let key_label = self.ui("Search by key");
+        let searching = self.recording_target() == Some(&Target::Search);
+        let r = self.icon_button(ui, &key_label, searching, paint_keyboard).on_hover_text(self.vis(&key_label));
+        self.tag(|| "shortcuts.searchKey".into(), r.rect, &key_label);
+        if r.clicked() {
+            if searching {
+                self.state.stop_recording();
+            } else {
+                self.state.record(self.env, Target::Search);
+                r.request_focus();
+            }
+        }
+        if self.recording_target() == Some(&Target::Search) {
+            if r.lost_focus() {
+                self.state.stop_recording();
+            } else if r.has_focus() || r.clicked() {
+                capture::lock_focus(ui, r.id);
+            }
+        }
+        self.keyboard_toggle(ui);
     }
 
     fn area_combo(&mut self, ui: &mut Ui) {
@@ -333,7 +496,7 @@ impl Draw<'_, '_> {
         let current = self.state.areas.iter().find(|a| a.id == self.state.area).map_or_else(String::new, |a| a.label.clone());
         let mut pick = None;
         let areas = self.state.areas.clone();
-        let combo = ComboBox::from_id_salt(self.base.with("area")).selected_text(self.vis(&current)).show_ui(ui, |ui| {
+        self.combo(ui, "area", &l, &show, &current, |ui| {
             for a in &areas {
                 let r = ui.selectable_label(a.id == self.state.area, self.vis(&a.label));
                 self.tag(|| format!("shortcuts.area.{}", Self::area_key(&a.id)), r.rect, &a.label);
@@ -342,8 +505,6 @@ impl Draw<'_, '_> {
                 }
             }
         });
-        let combo = combo.response.labelled_by(l.id);
-        self.tag(|| "shortcuts.area".into(), combo.rect, &show);
         if let Some(a) = pick {
             self.state.set_area(a);
         }
@@ -359,11 +520,12 @@ impl Draw<'_, '_> {
         let selected = areas.iter().position(|a| a.id == self.state.area).unwrap_or(0);
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ui.spacing().interact_size.y + 4.0), Sense::hover());
         let fit = tabs::fit(&natural, selected, rect.width(), 48.0, ICON + 8.0);
+        let m = self.mirror(rect);
         let mut x = rect.min.x;
         let mut pick = None;
         for &(i, w) in &fit.shown {
             let Some(a) = areas.get(i) else { continue };
-            let r = Rect::from_min_size(pos2(x, rect.min.y), vec2(w, rect.height()));
+            let r = m.rect(Rect::from_min_size(pos2(x, rect.min.y), vec2(w, rect.height())));
             x += w;
             let on = i == selected;
             let id = self.base.with(("area", i));
@@ -378,7 +540,7 @@ impl Draw<'_, '_> {
                 if on {
                     ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(2.0, accent));
                 }
-                let g = ui.painter().layout(text, font.clone(), color, r.width() - 4.0);
+                let (g, _) = self.one_line(ui.painter(), &[(text, TextFormat::simple(font.clone(), color))], r.width() - 4.0);
                 ui.painter().galley(r.center() - g.size() / 2.0, g, color);
             });
             self.tag(|| format!("shortcuts.area.{}", Self::area_key(&a.id)), resp.rect, &a.label);
@@ -387,7 +549,7 @@ impl Draw<'_, '_> {
             }
         }
         if !fit.overflow.is_empty() {
-            let r = Rect::from_min_size(pos2(rect.max.x - fit.overflow_width, rect.min.y), vec2(fit.overflow_width, rect.height()));
+            let r = m.rect(Rect::from_min_size(pos2(rect.max.x - fit.overflow_width, rect.min.y), vec2(fit.overflow_width, rect.height())));
             let more = self.ui("More");
             ui.scope_builder(UiBuilder::new().max_rect(r), |ui| {
                 ui.menu_button(self.vis(&more), |ui| {
@@ -453,19 +615,14 @@ impl Draw<'_, '_> {
 
     /// Width of the shortcut column: the widest row of chips plus "+", within 40 % of the table.
     fn shortcut_width(&self, ui: &Ui, width: f32) -> f32 {
-        let widest = self
+        let font = TextStyle::Body.resolve(ui.style());
+        let chip_w = |text: &str| ui.painter().layout_no_wrap(text.to_string(), font.clone(), Color32::WHITE).size().x + 2.0 * CHIP_PAD + CHIP_GAP;
+        let chips = self
             .state
             .lines_cached()
             .iter()
-            .filter_map(|l| if let Line::Row(r) = l { Some(r) } else { None })
-            .max_by_key(|r| r.chips.iter().map(|c| c.text.chars().count() + 2).sum::<usize>());
-        let font = TextStyle::Body.resolve(ui.style());
-        let chips: f32 = widest.map_or(0.0, |r| {
-            r.chips
-                .iter()
-                .map(|c| ui.painter().layout_no_wrap(c.text.clone(), font.clone(), Color32::WHITE).size().x + 2.0 * CHIP_PAD + CHIP_GAP)
-                .sum()
-        });
+            .filter_map(|l| if let Line::Row(r) = l { Some(r.chips.iter().map(|c| chip_w(&c.text)).sum::<f32>()) } else { None })
+            .fold(0.0, f32::max);
         (chips + ICON + CHIP_GAP).max(110.0).min(width * 0.4)
     }
 
@@ -503,10 +660,13 @@ impl Draw<'_, '_> {
         let (head, _) = ui.allocate_exact_size(vec2(rect.width(), row_h), Sense::hover());
         let font = TextStyle::Body.resolve(ui.style());
         let dim = self.style.dim;
-        let cmd_title = self.vis(&self.ui("Command"));
-        let key_title = self.vis(&self.ui("Shortcut"));
-        ui.painter().text(pos2(head.min.x + 6.0, head.center().y), egui::Align2::LEFT_CENTER, cmd_title, font.clone(), dim);
-        ui.painter().text(pos2(head.max.x - shortcut_w - ICON - 4.0, head.center().y), egui::Align2::LEFT_CENTER, key_title, font, dim);
+        let m = self.mirror(head);
+        let key_x = head.max.x - shortcut_w - ICON - 4.0;
+        let titles = [(self.ui("Command"), head.min.x + 6.0, key_x - head.min.x - 12.0), (self.ui("Shortcut"), key_x, shortcut_w)];
+        for (title, x, w) in titles {
+            let (g, _) = self.one_line(ui.painter(), &[(self.vis(&title), TextFormat::simple(font.clone(), dim))], w);
+            ui.painter().galley(pos2(m.x(x, g.size().x), head.center().y - g.size().y / 2.0), g, dim);
+        }
         ui.painter().line_segment([head.left_bottom(), head.right_bottom()], ui.visuals().widgets.noninteractive.bg_stroke);
 
         if matches == 0 {
@@ -640,17 +800,22 @@ impl Draw<'_, '_> {
         resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, name));
         let v = ui.visuals();
         let color = v.strong_text_color();
-        let tri = Rect::from_center_size(pos2(rect.min.x + 10.0, rect.center().y), Vec2::splat(8.0));
-        let points = if collapsed {
-            vec![tri.left_top(), tri.right_center(), tri.left_bottom()]
-        } else {
-            vec![tri.left_top(), tri.right_top(), tri.center_bottom()]
+        let m = self.mirror(rect);
+        let tri = m.rect(Rect::from_center_size(pos2(rect.min.x + 10.0, rect.center().y), Vec2::splat(8.0)));
+        let points = match (collapsed, m.on) {
+            (true, false) => vec![tri.left_top(), tri.right_center(), tri.left_bottom()],
+            (true, true) => vec![tri.right_top(), tri.right_bottom(), tri.left_center()],
+            (false, _) => vec![tri.left_top(), tri.right_top(), tri.center_bottom()],
         };
         ui.painter().add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
         let font = TextStyle::Body.resolve(ui.style());
-        let g = ui.painter().layout_job(truncated(&self.vis(name), font, color, rect.width() - 24.0));
-        ui.painter().galley(pos2(rect.min.x + 20.0, rect.center().y - g.size().y / 2.0), g, color);
-        resp.clicked().then(|| RowAction::Toggle(name.to_string()))
+        let (g, cut) = self.one_line(ui.painter(), &[(self.vis(name), TextFormat::simple(font, color))], rect.width() - 24.0);
+        ui.painter().galley(pos2(m.x(rect.min.x + 20.0, g.size().x), rect.center().y - g.size().y / 2.0), g, color);
+        let clicked = resp.clicked();
+        if cut {
+            resp.on_hover_text(self.vis(name));
+        }
+        clicked.then(|| RowAction::Toggle(name.to_string()))
     }
 
     fn row(&self, ui: &mut Ui, rect: Rect, r: &Row, shortcut_w: f32, focused: bool) -> Option<RowAction> {
@@ -674,8 +839,9 @@ impl Draw<'_, '_> {
         } else if resp.hovered() {
             ui.painter().rect_filled(rect, 0.0, v.widgets.hovered.weak_bg_fill);
         }
+        let m = self.mirror(rect);
         if r.changed {
-            ui.painter().rect_filled(Rect::from_min_size(rect.min + vec2(1.0, 3.0), vec2(3.0, rect.height() - 6.0)), 1.0, self.style.changed);
+            ui.painter().rect_filled(m.rect(Rect::from_min_size(rect.min + vec2(1.0, 3.0), vec2(3.0, rect.height() - 6.0))), 1.0, self.style.changed);
         }
         let text_color = if selected { v.strong_text_color() } else { v.text_color() };
         let strong = v.strong_text_color();
@@ -684,25 +850,25 @@ impl Draw<'_, '_> {
 
         // Label column.
         let label_w = (rect.width() - shortcut_w - ICON - 12.0).max(0.0);
-        let mut job = LayoutJob::default();
+        let fmt = |c: Color32| TextFormat::simple(font.clone(), c);
+        let mut parts = Vec::new();
         if r.conflict {
-            job.append("⚠ ", 0.0, TextFormat::simple(font.clone(), self.style.warning));
+            parts.extend([("⚠".to_string(), fmt(self.style.warning)), (" ".into(), fmt(dim))]);
         }
         for p in &r.prefix {
-            job.append(&format!("{} › ", self.vis(p)), 0.0, TextFormat::simple(font.clone(), dim));
+            parts.extend([(self.vis(p), fmt(dim)), (PATH_SEP.into(), fmt(dim))]);
         }
-        job.append(&self.vis(&r.label), 0.0, TextFormat::simple(font.clone(), if r.changed { strong } else { text_color }));
+        parts.push((self.vis(&r.label), fmt(if r.changed { strong } else { text_color })));
         if r.cycles {
-            job.append(&format!(" {}", self.vis(&self.ui("(cycles)"))), 0.0, TextFormat::simple(font.clone(), dim));
+            parts.extend([(" ".into(), fmt(dim)), (self.vis(&self.ui("(cycles)")), fmt(dim))]);
         }
-        job.wrap = TextWrapping::truncate_at_width(label_w);
-        let g = ui.painter().layout_job(job);
-        ui.painter().galley(pos2(rect.min.x + 8.0, rect.center().y - g.size().y / 2.0), g, text_color);
+        let (g, _) = self.one_line(ui.painter(), &self.ordered(parts), label_w);
+        ui.painter().galley(pos2(m.x(rect.min.x + 8.0, g.size().x), rect.center().y - g.size().y / 2.0), g, text_color);
 
         // Shortcut column: chips, then "+".
         let mut action = None;
         let col = Rect::from_min_max(pos2(rect.max.x - shortcut_w - ICON - 4.0, rect.min.y), pos2(rect.max.x - ICON - 4.0, rect.max.y));
-        let painter = ui.painter_at(col);
+        let painter = ui.painter_at(m.rect(col));
         let mut x = col.min.x;
         let rec = match self.recording_target() {
             Some(Target::Cell { command, old }) if *command == r.command => Some(old.clone()),
@@ -718,7 +884,7 @@ impl Draw<'_, '_> {
             let shown = if *recording { self.recording_text() } else { text.clone() };
             let g = painter.layout_no_wrap(shown.clone(), font.clone(), text_color);
             let w = g.size().x + 2.0 * CHIP_PAD;
-            let chip = Rect::from_min_size(pos2(x, rect.min.y + 2.0), vec2(w, chip_h));
+            let chip = m.rect(Rect::from_min_size(pos2(x, rect.min.y + 2.0), vec2(w, chip_h)));
             x += w + CHIP_GAP;
             let changed = r.chips.get(n).is_some_and(|c| c.changed);
             let stroke = if *recording {
@@ -739,7 +905,8 @@ impl Draw<'_, '_> {
             } else {
                 fill(self.ui("{label}: {chord}"), &[("label", &r.label), ("chord", text)])
             };
-            let resp = ui.interact(chip.intersect(col), self.base.with(("cell", &r.key, n)), if editable { Sense::CLICK } else { Sense::hover() });
+            let resp =
+                ui.interact(chip.intersect(m.rect(col)), self.base.with(("cell", &r.key, n)), if editable { Sense::CLICK } else { Sense::hover() });
             resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, editable, &label));
             self.tag(|| format!("shortcuts.cell.{}.{n}", r.key), chip, &label);
             if resp.clicked() {
@@ -748,7 +915,7 @@ impl Draw<'_, '_> {
         }
         if cells.is_empty() {
             // An empty cell to click for the first shortcut.
-            let cell = Rect::from_min_max(pos2(col.min.x, rect.min.y), pos2(col.max.x - ICON - CHIP_GAP, rect.max.y));
+            let cell = m.rect(Rect::from_min_max(pos2(col.min.x, rect.min.y), pos2(col.max.x - ICON - CHIP_GAP, rect.max.y)));
             let label = fill(self.ui("{label}: {chord}"), &[("label", &r.label), ("chord", &self.ui("None"))]);
             let resp = ui.interact(cell, self.base.with(("cell", &r.key, 0)), if editable { Sense::CLICK } else { Sense::hover() });
             resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, editable, &label));
@@ -759,7 +926,7 @@ impl Draw<'_, '_> {
             x = col.min.x;
         }
         if editable && r.chips.len() < MAX_BINDINGS && rec != Some(None) {
-            let plus = Rect::from_min_size(pos2(x.min(col.max.x - ICON), rect.center().y - ICON / 2.0), Vec2::splat(ICON));
+            let plus = m.rect(Rect::from_min_size(pos2(x.min(col.max.x - ICON), rect.center().y - ICON / 2.0), Vec2::splat(ICON)));
             let label = fill(self.ui("Add a shortcut to {label}"), &[("label", &r.label)]);
             let resp = self.row_button(ui, plus, self.base.with(("add", &r.key)), &label, true, paint_plus);
             self.tag(|| format!("shortcuts.add.{}", r.key), plus, &label);
@@ -768,7 +935,7 @@ impl Draw<'_, '_> {
             }
         }
         if editable {
-            let reset = Rect::from_min_size(pos2(rect.max.x - ICON - 2.0, rect.center().y - ICON / 2.0), Vec2::splat(ICON));
+            let reset = m.rect(Rect::from_min_size(pos2(rect.max.x - ICON - 2.0, rect.center().y - ICON / 2.0), Vec2::splat(ICON)));
             let label = fill(self.ui("Restore the default for {label}"), &[("label", &r.label)]);
             let resp = self.row_button(ui, reset, self.base.with(("reset", &r.key)), &label, r.changed, paint_reset);
             self.tag(|| format!("shortcuts.reset.{}", r.key), reset, &label);
@@ -781,7 +948,7 @@ impl Draw<'_, '_> {
         let mut tip = vec![self.vis(&r.label)];
         if let Some(b) = self.env.keymap.bindable(&r.command) {
             if let Some(path) = b.paths.first().filter(|p| !p.is_empty()) {
-                tip.push(path.iter().map(|s| self.vis(&self.env.text.segment(s))).collect::<Vec<_>>().join(" › "));
+                tip.push(self.path_text(path));
             }
             tip.push(r.command.id.clone());
             if let Some(h) = self.env.text.hint(b) {
@@ -801,21 +968,28 @@ impl Draw<'_, '_> {
         if f.now_used_by.is_some() {
             fmt.strikethrough = Stroke::new(1.0, color);
         }
-        let mut job = LayoutJob::single_section(self.vis(&f.label), fmt.clone());
-        job.wrap = TextWrapping::truncate_at_width((rect.width() - shortcut_w - ICON - 12.0).max(0.0));
-        let g = ui.painter().layout_job(job);
-        ui.painter().galley(pos2(rect.min.x + 8.0, rect.center().y - g.size().y / 2.0), g, color);
-        let keys = ui.painter().layout_job(LayoutJob::single_section(f.keys.clone(), fmt));
-        ui.painter().galley(pos2(rect.max.x - shortcut_w - ICON - 4.0, rect.center().y - keys.size().y / 2.0), keys, color);
+        let m = self.mirror(rect);
+        let label_w = rect.width() - shortcut_w - ICON - 12.0;
+        let (g, cut) = self.one_line(ui.painter(), &[(self.vis(&f.label), fmt.clone())], label_w);
+        ui.painter().galley(pos2(m.x(rect.min.x + 8.0, g.size().x), rect.center().y - g.size().y / 2.0), g, color);
+        let (keys, _) = self.one_line(ui.painter(), &[(f.keys.clone(), fmt)], shortcut_w);
+        ui.painter().galley(pos2(m.x(rect.max.x - shortcut_w - ICON - 4.0, keys.size().x), rect.center().y - keys.size().y / 2.0), keys, color);
         let resp = ui.interact(rect, self.base.with(("fixed", &f.label, &f.keys)), Sense::hover());
         let label = fill(self.ui("{label}: {chord}"), &[("label", &f.label), ("chord", &f.keys)]);
+        let mut tip = Vec::new();
+        if cut {
+            tip.push(self.vis(&f.label));
+        }
         match &f.now_used_by {
             Some(by) => {
-                let tip = fill(self.ui("Now used by {label}"), &[("label", by)]);
-                resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, format!("{label} ({tip})")));
-                resp.on_hover_text(self.vis(&tip));
+                let used = fill(self.ui("Now used by {label}"), &[("label", by)]);
+                resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, format!("{label} ({used})")));
+                tip.push(self.vis(&used));
             }
             None => resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &label)),
+        }
+        if !tip.is_empty() {
+            resp.on_hover_text(tip.join("\n"));
         }
     }
 
@@ -837,9 +1011,9 @@ impl Draw<'_, '_> {
         let home = Some(&b.scope);
         let dim = self.style.dim;
         ui.add(Label::new(RichText::new(self.vis(&label)).strong().size(ui.text_style_height(&TextStyle::Body) * 1.15)).wrap());
-        let mut place: Vec<String> = b.paths.first().map(|p| p.iter().map(|s| self.vis(&self.env.text.segment(s))).collect()).unwrap_or_default();
-        place.retain(|s| !s.is_empty());
-        let place = if place.is_empty() { b.command.id.clone() } else { format!("{} · {}", place.join(" › "), b.command.id) };
+        let path: Vec<String> = b.paths.first().map(|p| p.iter().filter(|s| !s.is_empty()).cloned().collect()).unwrap_or_default();
+        let place =
+            if path.is_empty() { b.command.id.clone() } else { self.joined(vec![self.path_text(&path), " · ".into(), b.command.id.clone()]) };
         ui.add(Label::new(RichText::new(place).color(dim)).wrap());
         if let Some(h) = self.env.text.hint(&b) {
             ui.add(Label::new(RichText::new(self.vis(&h)).color(dim)).wrap());
@@ -858,7 +1032,11 @@ impl Draw<'_, '_> {
             let text = self.binding_text(binding, home);
             ui.horizontal(|ui| {
                 ui.add_space(8.0);
-                let shown = if defaults.contains(binding) { format!("{text} ({})", self.vis(&self.ui("Default"))) } else { text.clone() };
+                let shown = if defaults.contains(binding) {
+                    self.joined(vec![self.binding_shown(binding, home), " ".into(), self.vis(&format!("({})", self.ui("Default")))])
+                } else {
+                    self.binding_shown(binding, home)
+                };
                 ui.label(shown);
                 if editable {
                     let a11y = fill(self.ui("Remove {chord} from {label}"), &[("chord", &text), ("label", &label)]);
@@ -899,7 +1077,8 @@ impl Draw<'_, '_> {
     fn defaults_line(&self, ui: &mut Ui, defaults: &[Binding], home: Option<&Scope>) {
         let chords =
             if defaults.is_empty() { self.ui("None") } else { defaults.iter().map(|d| self.binding_text(d, home)).collect::<Vec<_>>().join(", ") };
-        ui.add(Label::new(RichText::new(self.vis(&fill(self.ui("Default: {chord}"), &[("chord", &chords)]))).color(self.style.dim)).wrap());
+        let text = self.vis_chord(&fill(self.ui("Default: {chord}"), &[("chord", &chords)]), &chords);
+        ui.add(Label::new(RichText::new(text).color(self.style.dim)).wrap());
     }
 
     /// New Shortcut: a field that records when focused or clicked, or typed entry.
@@ -1017,7 +1196,7 @@ impl Draw<'_, '_> {
             };
             ui.horizontal(|ui| {
                 ui.add_space(8.0);
-                if ui.link(format!("⚠ {}", self.vis(&text))).clicked() {
+                if ui.link(self.warned(self.vis(&text))).clicked() {
                     go = Some(h.command.clone());
                 }
             });
@@ -1080,7 +1259,8 @@ impl Draw<'_, '_> {
 
     fn conflict_bar(&mut self, ui: &mut Ui) {
         let Some(c) = self.state.conflict.clone() else { return };
-        ui.add(Label::new(RichText::new(self.vis(&c.text)).color(self.style.warning)).wrap());
+        let text = self.vis_chord(&c.text, &self.chord(&c.binding.trigger));
+        ui.add(Label::new(RichText::new(text).color(self.style.warning)).wrap());
         let mut act = 0;
         ui.horizontal_wrapped(|ui| {
             if self.button(ui, true, &self.ui("Take It"), "shortcuts.conflict.take") {
@@ -1112,7 +1292,8 @@ impl Draw<'_, '_> {
         let Some(m) = self.state.message.clone() else { return };
         let mut act = 0;
         ui.horizontal_wrapped(|ui| {
-            let text = if m.refused { format!("⚠ {}", self.vis(&m.text)) } else { self.vis(&m.text) };
+            let text = self.vis_chord(&m.text, m.chord.as_deref().unwrap_or_default());
+            let text = if m.refused { self.warned(text) } else { text };
             let color = if m.refused { self.style.warning } else { ui.visuals().text_color() };
             ui.add(Label::new(RichText::new(text).color(color)).wrap());
             if m.goto.is_some() && self.button(ui, true, &self.ui("Go to Conflict"), "shortcuts.message.goto") {
@@ -1142,7 +1323,7 @@ impl Draw<'_, '_> {
             if clashes > 0 {
                 let n = clashes as u64;
                 let text = self.env.text.plural(n, "{n} shortcut is assigned more than once", "{n} shortcuts are assigned more than once");
-                conflicts = ui.link(format!("⚠ {}", self.vis(&text))).clicked();
+                conflicts = ui.link(self.warned(self.vis(&text))).clicked();
             }
             if shadows > 0 {
                 let n = shadows as u64;
@@ -1224,10 +1405,26 @@ impl Draw<'_, '_> {
     }
 }
 
-fn truncated(text: &str, font: FontId, color: Color32, width: f32) -> LayoutJob {
-    let mut job = LayoutJob::single_section(text.to_string(), TextFormat::simple(font, color));
-    job.wrap = TextWrapping::truncate_at_width(width.max(0.0));
-    job
+/// Separator between menu path parts, mirrored by [`Draw::ordered`].
+const PATH_SEP: &str = " › ";
+
+/// Places rectangles laid out left to right inside a span, mirrored in a right-to-left interface.
+#[derive(Clone, Copy)]
+struct Mirror {
+    on: bool,
+    /// The span's left plus right edge.
+    sum: f32,
+}
+
+impl Mirror {
+    fn rect(self, r: Rect) -> Rect {
+        if self.on { Rect::from_x_y_ranges((self.sum - r.max.x)..=(self.sum - r.min.x), r.y_range()) } else { r }
+    }
+
+    /// The left edge of something `width` wide whose left-to-right left edge is `x`.
+    fn x(self, x: f32, width: f32) -> f32 {
+        if self.on { self.sum - x - width } else { x }
+    }
 }
 
 // ---- Icons, drawn so they do not depend on the app's fonts ----

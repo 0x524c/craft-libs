@@ -13,7 +13,7 @@ use egui::accesskit::Role;
 use egui::{Event, Key as EguiKey, Modifiers, Vec2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
-use ui_fixture::fixture;
+use ui_fixture::{Pseudo, fixture, with_long_label};
 
 mod ui_fixture;
 
@@ -538,7 +538,8 @@ fn rtl_puts_the_detail_pane_left_and_keeps_chords() {
     let h = open(fx);
     let table = h.get_by_label("Commands").rect();
     assert!(table.min.x > 300.0, "table on the right: {table:?}");
-    assert!(has(&h, "Save As…: ⇧⌘S"));
+    let chip = h.get_by_label("Save As…: ⇧⌘S").rect();
+    assert!(chip.center().x < table.center().x, "shortcut column on the table's left: {chip:?} in {table:?}");
 }
 
 // ---- Sets ----
@@ -831,4 +832,69 @@ fn read_only_has_no_edit_controls() {
     assert!(h.state().outcomes.iter().any(|o| matches!(o, Outcome::Summary { .. })));
     click(&mut h, "Close");
     assert!(h.state().cancelled());
+}
+
+// ---- Pseudo locale ----
+
+/// Text a test put there or read from a foreign file, which no lookup translates.
+const RAW: &[&str] = &["Theirs", "Frobnicate", "Sve Az", "Blorp", "Num", "Name 2"];
+
+/// Every control inside the `width` px dialog, and every label with words marked by `Pseudo`.
+fn check_pseudo(h: &Harness<'_, Fx>, width: f32, step: &str) {
+    let mut seen = 0;
+    for node in h.root().children_recursive() {
+        let n = node.accesskit_node();
+        let Some(label) = n.label() else { continue };
+        seen += 1;
+        let r = node.rect();
+        assert!(r.min.x >= -1.0 && r.max.x <= width + 1.0, "{step}: {:?} {label:?} at {r:?} leaves the {width} px dialog", n.role());
+        let mut rest = String::new();
+        let mut depth = 0usize;
+        for c in label.chars() {
+            match c {
+                '⟦' => depth += 1,
+                '⟧' => depth = depth.saturating_sub(1),
+                _ if depth == 0 => rest.push(c),
+                _ => {}
+            }
+        }
+        for raw in RAW {
+            rest = rest.replace(raw, "");
+        }
+        let words = rest.split(|c: char| !c.is_ascii_lowercase()).any(|w| w.len() > 1);
+        assert!(!words, "{step}: {label:?} has text that did not go through Text");
+    }
+    assert!(seen > 15, "{step}: {seen} labelled nodes");
+}
+
+#[test]
+fn pseudo_locale_marks_every_string_and_fits() {
+    let p = Pseudo::mark;
+    for rtl in [false, true] {
+        for width in [560.0, 1100.0] {
+            let unlisted = std::rc::Rc::default();
+            let mut fx = Fx::new(with_long_label(fixture(Platform::Mac)));
+            fx.text = Box::new(Pseudo { unlisted: std::rc::Rc::clone(&unlisted), rtl });
+            fx.options.keyboard = true;
+            fx.sets = Some((Profiles::default(), vec![("Fixture Defaults", Overrides::new())]));
+            let mut h = harness(fx, vec2(width, 720.0));
+            let step = |s: &str| format!("{} {width}: {s}", if rtl { "rtl" } else { "ltr" });
+            check_pseudo(&h, width, &step("opened"));
+            h.state_mut().state.select(&CommandRef::from("object.distribute"));
+            h.run();
+            check_pseudo(&h, width, &step("long label selected"));
+            let export = craft_i18n::fmt(&p("{label}: {chord}"), &[("label", &p("Export…")), ("chord", "⌘E")]);
+            click(&mut h, &export);
+            press(&mut h, Modifiers::COMMAND, EguiKey::S);
+            assert!(has(&h, &p("Take It")), "{}", step("conflict bar"));
+            check_pseudo(&h, width, &step("conflict"));
+            click(&mut h, &p("Keep Both"));
+            check_pseudo(&h, width, &step("kept both"));
+            click(&mut h, &p("Keyboard"));
+            check_pseudo(&h, width, &step("keyboard hidden"));
+            review(&mut h);
+            check_pseudo(&h, width, &step("review"));
+            assert!(unlisted.borrow().is_empty(), "looked up but not in STRINGS or PLURALS: {:?}", unlisted.borrow());
+        }
+    }
 }
