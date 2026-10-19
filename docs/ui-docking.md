@@ -191,7 +191,9 @@ let closed = command.apply(&mut app.workspace, style.right_to_left, &space, |pan
   inside the dock area, 24 points from its top-left corner, so it stays clear of the menu bar.
   The area records that geometry in a `FloatSpace` each frame; `float_space(ctx, id)` reads it
   and `apply` and `to_actions` take it. Before the area has drawn, `FloatSpace::new(area)` floats
-  a panel at 260x320 and a group or column at its column width by 320. `x`, `y`, `width` and
+  a panel at 260x320 and a group or column at its column width by 320.
+  `FloatSpace::with_panel_size(panel, size)` gives a panel the area has not drawn (a hidden
+  panel, a headless run) the host's own size; a size the area recorded wins. `x`, `y`, `width` and
   `height` replace the matching values, and a group or column that is already a whole floating
   window keeps its rect.
 - Without a value, `minimized`, `iconic` and `locked` toggle.

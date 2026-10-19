@@ -245,6 +245,13 @@ impl<P: PartialEq> FloatSpace<P> {
     pub fn new(area: Rect) -> Self {
         Self { area, panels: Vec::new(), groups: Vec::new(), columns: Vec::new() }
     }
+
+    /// Adds the size a command floats `panel` at alone when the area has not drawn it, such as
+    /// a hidden panel or a headless run. A size the area recorded for the panel takes precedence.
+    pub fn with_panel_size(mut self, panel: P, size: Vec2) -> Self {
+        self.panels.push((panel, size));
+        self
+    }
 }
 
 /// Lookups for `DockCommand`, which needs feature `serde`.

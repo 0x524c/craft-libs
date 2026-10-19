@@ -359,4 +359,15 @@ fn float_without_a_rect_takes_the_drag_size_inside_the_dock_area() {
     let small = FloatSpace::new(egui::Rect::from_min_size(egui::pos2(0.0, 30.0), egui::vec2(200.0, 200.0)));
     let applied = parse(json!({"command": "window.panel.float", "panel": "layers", "group": true})).unwrap().to_actions(&workspace(), false, &small);
     assert_eq!(applied, Ok(vec![Action::MoveGroup { panel: s("layers"), to: Target::Float { rect: Some([0.0, 30.0, 200.0, 200.0]) } }]));
+
+    // A host seeds the size of a panel the area never drew; a recorded size still wins.
+    let seeded = FloatSpace::new(area).with_panel_size(s("layers"), egui::vec2(180.0, 240.0));
+    let applied = parse(json!({"command": "window.panel.float", "panel": "layers"})).unwrap().to_actions(&workspace(), false, &seeded);
+    assert_eq!(applied, Ok(vec![Action::Float { panel: s("layers"), rect: [24.0, 54.0, 180.0, 240.0] }]));
+    let recorded = space.clone().with_panel_size(s("layers"), egui::vec2(180.0, 240.0));
+    assert_eq!(float_with(&recorded, "layers"), vec![Action::Float { panel: s("layers"), rect: [24.0, 54.0, 200.0, 150.0] }]);
+}
+
+fn float_with(space: &FloatSpace<P>, panel: &str) -> Vec<Action<P>> {
+    parse(json!({"command": "window.panel.float", "panel": panel})).unwrap().to_actions(&workspace(), false, space).unwrap()
 }
