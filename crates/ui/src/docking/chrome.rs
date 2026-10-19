@@ -3,7 +3,7 @@
 //! these; other hosts (task panes) use them with their own ids and actions. Nothing here changes
 //! a layout: the caller turns the responses into its own commands.
 
-use egui::{Color32, Context, FontId, Id, Key, LayerId, Order, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2, WidgetText, pos2, vec2};
+use egui::{Color32, Context, FontId, Id, Key, LayerId, Order, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2, WidgetText, pos2, vec2};
 
 use super::{DockStyle, PanelLimits, resize::AnchoredResize};
 
@@ -344,4 +344,46 @@ impl<'a> TitleBar<'a> {
         });
         TitleResponse { bar, menu, close }
     }
+}
+
+/// One step of a title-bar move, from [`live_move`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MoveStep {
+    /// The rect follows the pointer, inside the bounds.
+    Moving(Rect),
+    /// Escape or window focus loss ended the move: the rect it started from.
+    Cancelled(Rect),
+    /// Released over `pointer`, with the rect where it was dropped.
+    Dropped { rect: Rect, pointer: Pos2 },
+}
+
+/// Move `rect` with a drag on `bar` (usually [`TitleResponse::bar`]). The rect and the press
+/// position at drag start are kept in egui memory under the bar's id, so the window follows the
+/// pointer without drift. Escape or window focus loss ends the move and returns the start rect;
+/// the rest of that drag is ignored. `None` when the bar is not being moved.
+pub fn live_move(ctx: &Context, bar: &Response, rect: Rect, bounds: Rect) -> Option<MoveStep> {
+    let key = bar.id.with("live-move");
+    if bar.drag_started()
+        && let Some(origin) = ctx.input(|input| input.pointer.press_origin())
+    {
+        ctx.data_mut(|data| data.insert_temp(key, (rect, origin)));
+    }
+    let (start, origin) = ctx.data(|data| data.get_temp::<(Rect, Pos2)>(key))?;
+    let forget = || ctx.data_mut(|data| data.remove::<(Rect, Pos2)>(key));
+    if ctx.input(|input| input.key_pressed(Key::Escape) || !input.focused) {
+        forget();
+        return Some(MoveStep::Cancelled(start));
+    }
+    let pointer = ctx.pointer_latest_pos().unwrap_or(origin);
+    let moved = clamp(start.translate(pointer - origin), bounds);
+    if bar.drag_stopped() {
+        forget();
+        return Some(MoveStep::Dropped { rect: moved, pointer });
+    }
+    if bar.dragged() {
+        return Some(MoveStep::Moving(moved));
+    }
+    // The drag ended without a release on this bar (the bar was not shown).
+    forget();
+    None
 }
