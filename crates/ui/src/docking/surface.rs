@@ -45,6 +45,19 @@ pub struct DockStyle {
     /// Painted under every floating window, so it stays opaque when the panel colours are not.
     pub floating_background: Color32,
     pub floating_stroke: Stroke,
+    /// [D] Height of the bar above each dock column. It drags the column and holds its »/« button.
+    pub column_bar_height: f32,
+    /// [D] Height of the band around the seam between two stacked groups.
+    pub seam_band: f32,
+    /// [D] Width of the band along the window's left and right edges that makes a new dock.
+    pub edge_band: f32,
+    /// [D] Lay docks out right to left: `Side::Start` is the right edge. egui has no app-wide
+    /// layout direction, so the host sets this from its locale. Frame splits keep their sides.
+    pub right_to_left: bool,
+    /// [D] Accessibility label of a column bar.
+    pub move_column_label: String,
+    pub collapse_to_icons_label: String,
+    pub expand_panels_label: String,
 }
 
 impl DockStyle {
@@ -77,12 +90,20 @@ impl DockStyle {
             drag_bar_width: 40.0,
             floating_background: visuals.window_fill,
             floating_stroke: visuals.window_stroke,
+            column_bar_height: 14.0,
+            seam_band: 8.0,
+            edge_band: 12.0,
+            right_to_left: false,
+            move_column_label: "Move panel column".into(),
+            collapse_to_icons_label: "Collapse to Icons".into(),
+            expand_panels_label: "Expand Panels".into(),
         }
     }
 
     pub(super) fn valid(&self) -> bool {
         [self.tab_height, self.gap, self.min_pane, self.border.width, self.font.size, self.drag_bar_width, self.floating_stroke.width]
             .iter()
+            .chain(&[self.column_bar_height, self.seam_band, self.edge_band])
             .all(|v| v.is_finite() && (0.0..=4096.0).contains(v))
             && self.tab_height > 0.0
             && self.font.size > 0.0
@@ -148,6 +169,8 @@ pub(super) enum GroupGesture {
     Window,
     /// A drag bar or top border: a ghost follows the pointer, the release picks the target.
     Group,
+    /// [D] A column bar: like `Group`, for the whole dock column.
+    Column,
 }
 
 #[derive(Clone)]
@@ -378,7 +401,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
         while let Some((node, path)) = nodes.pop() {
             match node {
                 Node::Tabs { panels, .. } if group(panels) => return true,
-                Node::Dock { columns, .. } if columns.iter().flat_map(|c| c.groups.iter()).any(|g| group(&g.panels)) => return true,
+                Node::Dock { columns, .. }
+                    if columns.iter().flat_map(|c| c.groups.iter()).any(|g| {
+                        group(&g.panels)
+                            || ["column-bar", "column-collapse", "column-resize", "group-resize"]
+                                .iter()
+                                .any(|name| matches(self.id.with((*name, g.panels.first()))))
+                    }) =>
+                {
+                    return true;
+                }
                 Node::Stack { entries } => {
                     if entries.iter().any(|entry| {
                         matches(self.id.with(("tab", &entry.panel)))
@@ -485,6 +517,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
             layout,
             workspace: rect,
             targets: Vec::new(),
+            dock_targets: Vec::new(),
             owned_interactions: Vec::new(),
             output: DockOutput::default(),
         };

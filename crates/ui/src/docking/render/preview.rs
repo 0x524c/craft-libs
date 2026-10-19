@@ -2,7 +2,7 @@ use std::{fmt::Debug, hash::Hash};
 
 use egui::{Color32, Context, Key, Pos2, Rect, Stroke, StrokeKind, Vec2, vec2};
 
-use super::{Renderer, clamp_float};
+use super::{Renderer, clamp_float, dock::group_action};
 use crate::docking::{
     Action, Drag, DropProposal, DropRequest, GroupDrag, GroupGesture, Placement, Target, Zone, cancel_drag, dock_model::Place, resolve_drop,
 };
@@ -32,7 +32,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             && (down || released)
             && let Some(pointer) = pointer
             && !self.blockers.iter().any(|r| r.contains(pointer))
-            && self.host_drop(ctx, &drag.panel, pointer, true, released, ghost.filter(|_| drag.gesture == GroupGesture::Group))
+            && self.host_drop(ctx, &drag.panel, pointer, true, released, ghost.filter(|_| drag.gesture != GroupGesture::Window))
         {
             if released {
                 ctx.data_mut(|d| d.remove::<GroupDrag<P>>(key));
@@ -59,11 +59,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let Some(pointer) = pointer.filter(|p| !self.blockers.iter().any(|r| r.contains(*p))) else { return };
             match drag.gesture {
                 GroupGesture::Window => self.output.group_drop = Some((drag.panel, pointer)),
-                GroupGesture::Group => self.drop_group(ctx, &drag, pointer, float_only),
+                GroupGesture::Group | GroupGesture::Column => self.drop_group(ctx, &drag, pointer, float_only),
             }
         } else if let Some(pointer) = pointer.filter(|p| !self.blockers.iter().any(|r| r.contains(*p))) {
             self.output.group_drag = Some(drag.panel.clone());
-            if drag.gesture == GroupGesture::Group {
+            if drag.gesture != GroupGesture::Window {
                 self.paint_group_drag(ctx, &drag, pointer, float_only);
             }
         }
@@ -83,10 +83,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             });
         }
         let proposal = resolve_drop(&drag.panel, pointer, std::slice::from_ref(target))?;
-        let action = Action::MoveGroup {
-            panel: drag.panel.clone(),
-            to: Target::At { anchor: proposal.anchor.clone(), placement: proposal.placement.clone() },
-        };
+        let action = group_action(drag, Target::At { anchor: proposal.anchor.clone(), placement: proposal.placement.clone() });
         self.layout.clone().apply_with_permissions(action, |p| self.permissions(p)).is_ok().then_some(proposal)
     }
 
@@ -97,11 +94,15 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if pointer.distance(drag.origin) < 2.0 {
             return;
         }
+        if !float_only && let Some((action, _)) = self.dock_group_proposal(ctx, drag, pointer) {
+            self.output.actions.extend(action);
+            return;
+        }
         let floating = matches!(self.layout.place(&drag.panel), Some(Place::Floating { .. }));
         let proposal = if float_only { None } else { self.group_proposal(drag, pointer) };
         if let Some(proposal) = proposal.as_ref().filter(|p| !p.noop) {
             let to = Target::At { anchor: proposal.anchor.clone(), placement: proposal.placement.clone() };
-            self.output.actions.push(Action::MoveGroup { panel: drag.panel.clone(), to });
+            self.output.actions.push(group_action(drag, to));
             return;
         }
         if proposal.is_some() && !floating {
@@ -110,8 +111,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         // No target: hosts that still apply their own policy for a whole-group release get it.
         self.output.group_drop = Some((drag.panel.clone(), pointer));
         let rect = clamp_float(drag.source.translate(pointer - drag.origin), ctx.content_rect());
-        let action =
-            Action::MoveGroup { panel: drag.panel.clone(), to: Target::Float { rect: Some([rect.left(), rect.top(), rect.width(), rect.height()]) } };
+        let action = group_action(drag, Target::Float { rect: Some([rect.left(), rect.top(), rect.width(), rect.height()]) });
         if self.layout.clone().apply_with_permissions(action.clone(), |p| self.permissions(p)).is_ok() {
             self.output.actions.push(action);
         }
@@ -123,6 +123,12 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let ghost = clamp_float(drag.source.translate(pointer - drag.origin), ctx.content_rect());
         painter.rect_stroke(ghost, 0.0, Stroke::new(1.0, self.style.accent.gamma_multiply(0.6)), StrokeKind::Inside);
         if float_only {
+            return;
+        }
+        if let Some((action, line)) = self.dock_group_proposal(ctx, drag, pointer) {
+            if action.is_some() {
+                self.paint_dock_line(ctx, line);
+            }
             return;
         }
         if let Some(proposal) = self.group_proposal(drag, pointer).filter(|p| !p.noop) {
@@ -167,6 +173,19 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if self.host_drop(ctx, &drag.panel, pointer, false, released, floating_rect) {
             if released {
                 cancel_drag::<P>(ctx, self.id);
+            }
+            return;
+        }
+        let dock = if float_only || gone { None } else { self.dock_tab_proposal(ctx, &drag.panel, pointer) };
+        if let Some((action, line)) = dock {
+            if released {
+                cancel_drag::<P>(ctx, self.id);
+                if let Some(action) = action.filter(|_| pointer.distance(drag.origin) >= 2.0) {
+                    self.output.actions.push(action);
+                    self.output.focused = Some(drag.panel);
+                }
+            } else if action.is_some() {
+                self.paint_dock_line(ctx, line);
             }
             return;
         }

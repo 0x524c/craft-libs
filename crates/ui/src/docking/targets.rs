@@ -1,6 +1,6 @@
-use egui::{Pos2, Rect, pos2};
+use egui::{Pos2, Rangef, Rect, pos2};
 
-use super::{Placement, Zone};
+use super::{Placement, Side, Target, Zone};
 
 /// One visible group, supplied in back-to-front order to [`resolve_drop`]. An empty tab strip
 /// or a group that rejects tabs may still accept side splits, e.g. a protected document canvas.
@@ -148,4 +148,76 @@ pub fn resolve_drop<P: Clone + Eq>(panel: &P, pointer: Pos2, targets: &[DropTarg
         insertion: None,
         noop: false,
     })
+}
+
+/// [D] A dock drop target, built once per frame next to the [`DropTarget`]s. The pointer selects
+/// it inside `band`; the preview is the line `line`.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct DockDrop<P> {
+    pub(super) target: DockTarget<P>,
+    pub(super) band: Rect,
+    pub(super) line: Rect,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum DockTarget<P> {
+    /// Column edge: a new column beside the column of `anchor`, further from the window edge
+    /// when `after` (P5).
+    ColumnEdge { anchor: P, after: bool },
+    /// The seam between two stacked groups: a new group below the group of `anchor` (P4).
+    Seam { anchor: P },
+    /// The top or bottom quarter of a group body, or the free room under a column's last group (P3).
+    GroupBand { anchor: P, below: bool },
+    /// A window edge without a dock, or an empty dock (P5, P6).
+    NewDock { side: Side },
+}
+
+impl<P: Clone> DockTarget<P> {
+    pub(super) fn to(&self) -> Target<P> {
+        match self {
+            Self::ColumnEdge { anchor, after } => Target::At { anchor: anchor.clone(), placement: Placement::Column { after: *after } },
+            Self::Seam { anchor } => Target::At { anchor: anchor.clone(), placement: Placement::Group { below: true } },
+            Self::GroupBand { anchor, below } => Target::At { anchor: anchor.clone(), placement: Placement::Group { below: *below } },
+            Self::NewDock { side } => Target::NewDock { side: *side },
+        }
+    }
+
+    /// Rank in resolution order: column edges reach past their columns, so they come first.
+    fn rank(&self) -> u8 {
+        match self {
+            Self::ColumnEdge { .. } => 0,
+            Self::Seam { .. } => 1,
+            Self::GroupBand { .. } => 2,
+            Self::NewDock { .. } => 3,
+        }
+    }
+}
+
+/// The dock target under the pointer: column edges, then seams, then group bands, then new docks.
+pub(super) fn resolve_dock<P: Clone>(pointer: Pos2, targets: &[DockDrop<P>]) -> Option<&DockDrop<P>> {
+    if !pointer.is_finite() {
+        return None;
+    }
+    targets.iter().filter(|t| usable(t.band) && t.band.contains(pointer)).min_by_key(|t| t.target.rank())
+}
+
+/// Width of the insertion lines dock targets preview with.
+const LINE: f32 = 4.0;
+/// How far a column edge band reaches into the column, and past the edge out of it.
+const EDGE_IN: f32 = 6.0;
+const EDGE_OUT: f32 = 10.0;
+
+/// Band and line of a column edge at `x`. `inward` is +1 when the column lies right of the edge,
+/// -1 when it lies left of it. The band reaches further out of the column than into it.
+pub(super) fn column_edge(x: f32, inward: f32, ys: Rangef) -> (Rect, Rect) {
+    let (a, b) = (x + inward * EDGE_IN, x - inward * EDGE_OUT);
+    (Rect::from_x_y_ranges(a.min(b)..=a.max(b), ys), vertical_line(x, ys))
+}
+
+pub(super) fn vertical_line(x: f32, ys: Rangef) -> Rect {
+    Rect::from_x_y_ranges((x - LINE * 0.5)..=(x + LINE * 0.5), ys)
+}
+
+pub(super) fn horizontal_line(y: f32, xs: Rangef) -> Rect {
+    Rect::from_x_y_ranges(xs, (y - LINE * 0.5)..=(y + LINE * 0.5))
 }

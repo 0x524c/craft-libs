@@ -251,6 +251,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 self.output.actions.push(Action::SetMinimized { panel: panel.clone(), minimized: !owner.minimized });
             }
         }
+        if owner.kind == GroupKind::Dock && self.menu_action(ui, &self.style.collapse_to_icons_label.clone()) {
+            self.output.actions.push(Action::SetIconic { panel: panel.clone(), iconic: true });
+        }
         if floatable && !matches!(owner.kind, GroupKind::Floating { .. }) && self.menu_action(ui, &self.style.float_group_label.clone()) {
             let rect = clamp_float(owner.rect.translate(vec2(24.0, 24.0)), ui.ctx().content_rect());
             self.output.actions.push(Action::MoveGroup {
@@ -281,7 +284,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 
     /// A stock menu button with shaped text and its logical accessibility label; true when
     /// clicked, after closing the menu.
-    fn menu_action(&mut self, ui: &mut Ui, logical: &str) -> bool {
+    pub(super) fn menu_action(&mut self, ui: &mut Ui, logical: &str) -> bool {
         let text = self.content.action_label(ui, logical, &self.style.font, self.style.text);
         let response = ui.button(text);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), logical));

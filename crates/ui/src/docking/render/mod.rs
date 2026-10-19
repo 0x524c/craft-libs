@@ -6,6 +6,7 @@ use crate::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis, SplitSize, split
 
 use super::{Action, DockContent, DockOutput, DockStyle, DropTarget, Layout, Node, PanelLimits, Permissions};
 
+mod dock;
 mod floating;
 
 pub(in crate::docking) use group::GroupKind;
@@ -24,6 +25,8 @@ pub(super) struct Renderer<'a, P> {
     /// The docked area, for host drop requests.
     pub(super) workspace: Rect,
     pub(super) targets: Vec<DropTarget<P>>,
+    /// [D] Seams, group bands, column edges and new-dock bands, see [`crate::docking::targets::DockDrop`].
+    pub(super) dock_targets: Vec<crate::docking::targets::DockDrop<P>>,
     pub(super) owned_interactions: Vec<Id>,
     pub(super) output: DockOutput<P>,
 }
@@ -63,6 +66,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             return;
         }
         match node {
+            Node::Split { axis: SplitAxis::Horizontal, first, second, .. } if self.dock_split(ui, first, second, rect, path) => {}
             Node::Split { axis, size, first, second } => {
                 let Some(wanted) = split_rect(rect, *axis, *size, self.style.gap, 0.0) else { return };
                 let (lo, hi) = split_bounds(wanted.available(), *axis, self.node_limits(first), self.node_limits(second));
@@ -93,17 +97,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 }
             }
             Node::Tabs { panels, active } => self.group(ui, panels, *active, false, rect, GroupKind::Frame),
-            Node::Dock { columns, .. } => {
-                // Interim rendering: columns side by side, groups stacked evenly.
-                let total: f32 = columns.iter().map(|c| c.width).sum();
-                let mut left = rect.left();
-                for column in columns {
-                    let width = if total > 0.0 { rect.width() * column.width / total } else { 0.0 };
-                    let column_rect = Rect::from_min_max(pos2(left, rect.top()), pos2(left + width, rect.bottom()));
-                    left += width;
-                    self.stacked_groups(ui, &column.groups, column_rect, GroupKind::Dock);
-                }
-            }
+            Node::Dock { side, columns } => self.dock(ui, *side, columns, rect, rect.width()),
             Node::Stack { entries } => {
                 let total_header = (entries.len() as f32 * self.style.tab_height).min(rect.height());
                 let remaining = (rect.height() - total_header).max(0.0);
@@ -220,7 +214,10 @@ pub(in crate::docking) fn stripless<P>(panels: &[P], content: &dyn DockContent<P
 /// Size policy of a subtree, shared by the renderer and its measurements.
 pub(in crate::docking) fn node_limits<P>(node: &Node<P>, style: &DockStyle, content: &dyn DockContent<P>) -> PanelLimits {
     match node {
-        Node::Dock { .. } => PanelLimits { min: Vec2::splat(style.min_pane), ..PanelLimits::default() },
+        Node::Dock { columns, .. } => {
+            let width: f32 = columns.iter().map(dock::column_width).sum();
+            PanelLimits { min: vec2(width.clamp(style.min_pane, 1_000_000.0), style.min_pane), ..PanelLimits::default() }
+        }
         Node::Tabs { panels, .. } => {
             let mut limits = PanelLimits::default();
             for panel in panels {
