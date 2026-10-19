@@ -2,7 +2,11 @@ use std::{fmt::Debug, hash::Hash};
 
 use egui::{Color32, Context, FontId, Id, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-use super::{Action, DockError, DropTarget, Layout, Node, Permissions, render::Renderer};
+use super::{
+    Action, DockError, DropTarget, Layout, Node, Permissions,
+    render::{RESIZE_HANDLES, Renderer},
+    resize::AnchoredResize,
+};
 
 /// Horizontal room around a tab's label, both when measuring its natural width and when cutting it.
 pub(super) const TAB_PADDING: f32 = 24.0;
@@ -131,6 +135,11 @@ pub fn begin_drag<P: Clone + Send + Sync + 'static>(ctx: &Context, area_id: Id, 
     true
 }
 
+/// Whether this area's tab or group gesture is active.
+pub fn is_dragging<P: Clone + Send + Sync + 'static>(ctx: &Context, area_id: Id) -> bool {
+    ctx.data(|data| data.get_temp::<Drag<P>>(area_id.with("drag")).is_some() || data.get_temp::<GroupDrag<P>>(area_id.with("group-drag")).is_some())
+}
+
 /// Discard pending tab/group gestures and an actively dragged renderer-owned control before
 /// replacing a workspace. Body/custom-header/menu gestures and other areas are untouched.
 /// Ownership is recorded as controls render; before an initial render or drag threshold there
@@ -142,7 +151,12 @@ pub fn cancel_drag<P: Clone + Send + Sync + 'static>(ctx: &Context, area_id: Id)
         d.remove::<Drag<P>>(area_id.with("drag"));
         d.remove::<GroupDrag<P>>(area_id.with("group-drag"));
         let ids = d.remove_temp::<Vec<Id>>(area_id.with("owned-interactions"));
-        dragged.is_some_and(|id| ids.is_some_and(|ids| ids.contains(&id)))
+        let resize = d.get_temp::<Id>(area_id.with("pointer-resize"));
+        d.remove::<Id>(area_id.with("pointer-resize"));
+        for id in resize.iter().chain(ids.iter().flatten()) {
+            d.remove::<AnchoredResize>(id.with("pointer-anchor"));
+        }
+        dragged.is_some_and(|id| resize == Some(id) || ids.is_some_and(|ids| ids.contains(&id)))
     });
     if owned {
         ctx.stop_dragging();
@@ -312,7 +326,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
         };
         for floating in &layout.floating {
             if floating.groups.iter().any(|g| group(&g.panels))
-                || floating.panels().next().is_some_and(|first| matches(self.id.with(("floating", first)).with("resize")))
+                || floating
+                    .panels()
+                    .next()
+                    .is_some_and(|first| RESIZE_HANDLES.iter().any(|name| matches(self.id.with(("floating", first)).with(*name))))
             {
                 return true;
             }

@@ -177,7 +177,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 let response = ui.button(text);
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.float_label));
                 if response.clicked() {
-                    let rect = clamp_float(group.translate(vec2(24.0, 24.0)), ui.ctx().content_rect());
+                    let size = self.float_size(panel, group.size());
+                    let rect = clamp_float(Rect::from_min_size(group.min + vec2(24.0, 24.0), size), ui.ctx().content_rect());
                     self.output.actions.push(Action::Float { panel: panel.clone(), rect: [rect.left(), rect.top(), rect.width(), rect.height()] });
                     ui.close();
                 }

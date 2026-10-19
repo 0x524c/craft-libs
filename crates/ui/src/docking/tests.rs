@@ -1,6 +1,6 @@
 use super::*;
 use crate::layout::{SplitAxis, SplitSize};
-use egui::{Context, Event, Id, Modifiers, PointerButton, RawInput, Rect, pos2, vec2};
+use egui::{Context, Event, Id, Modifiers, PointerButton, Pos2, RawInput, Rect, pos2, vec2};
 
 fn tabs(panels: &[u32], active: usize) -> Node<u32> {
     Node::Tabs { panels: panels.to_vec(), active }
@@ -241,7 +241,7 @@ fn pointer_targets_distinguish_reorder_center_split_and_occlusion() {
     assert!(placement.insertion.unwrap().is_finite());
     assert_eq!(resolve_drop(&5, rect.center(), std::slice::from_ref(&group)).unwrap().placement, Placement::Split(Zone::Center));
     assert_eq!(resolve_drop(&5, pos2(11.0, 90.0), std::slice::from_ref(&group)).unwrap().placement, Placement::Split(Zone::Left));
-    assert!(resolve_drop(&3, rect.center(), std::slice::from_ref(&group)).is_none());
+    assert!(resolve_drop(&3, rect.center(), std::slice::from_ref(&group)).unwrap().noop);
     assert!(resolve_drop(&3, pos2(11.0, 90.0), std::slice::from_ref(&group)).is_some());
     let mut overlay = target(5, &[5], rect);
     overlay.accepts_tabs = false;
@@ -355,6 +355,8 @@ fn frame(ctx: &Context, layout: &Layout<u32>, events: Vec<Event>, focused: bool)
                 ui.label("Actual panel content");
             },
         );
+        let cursor = ctx.output(|o| o.cursor_icon);
+        ctx.data_mut(|d| d.insert_temp(Id::new("test-cursor"), cursor));
     })
     .textures_delta
     .clear();
@@ -699,8 +701,10 @@ fn floating_group_grip_moves_every_member_while_tab_drag_detaches_one() {
     let tab = ctx.read_response(Id::new("test-area").with(("tab", &5u32))).unwrap().rect.center();
     step(&ctx, &mut layout, vec![Event::PointerMoved(tab), pointer_button(tab, true)]);
     step(&ctx, &mut layout, vec![Event::PointerMoved(tab + vec2(8.0, 0.0))]);
-    step(&ctx, &mut layout, vec![Event::PointerMoved(tab + vec2(100.0, 100.0))]);
-    let detached = step(&ctx, &mut layout, vec![pointer_button(tab + vec2(100.0, 100.0), false)]);
+    // Inside the source window the release is a no-op; outside it floats.
+    let outside = pos2(780.0, 650.0);
+    step(&ctx, &mut layout, vec![Event::PointerMoved(outside)]);
+    let detached = step(&ctx, &mut layout, vec![pointer_button(outside, false)]);
     assert!(detached.iter().any(|a| matches!(a, Action::Float { panel: 5, .. })));
     assert_eq!(layout.floating.len(), 2);
     assert_eq!(layout.floating[0].groups[0].panels, vec![6]);
@@ -1303,4 +1307,285 @@ fn tab_labels_that_do_not_fit_are_truncated_inside_their_tab_and_named_in_a_tool
         shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == full && !text.galley.elided)),
         "a truncated tab names its panel in full on hover"
     );
+}
+
+// Ported from storytold/craft-libs#110 by @Zenodeon.
+
+#[test]
+fn resize_cancellation_retains_ownership_across_other_host_rendering() {
+    let ctx = Context::default();
+    let area = Id::new("test-area");
+    let mut layout = sample();
+    for _ in 0..3 {
+        step(&ctx, &mut layout, vec![]);
+    }
+    let id = area.with(("floating", &5u32)).with("resize-right");
+    let start = ctx.read_response(id).unwrap().rect.center();
+    step(&ctx, &mut layout, vec![Event::PointerMoved(start), pointer_button(start, true)]);
+    step(&ctx, &mut layout, vec![Event::PointerMoved(start + vec2(20.0, 0.0))]);
+    assert_eq!(ctx.dragged_id(), Some(id));
+    ctx.data_mut(|data| data.insert_temp(area.with("owned-interactions"), vec![Id::new("another-host-control")]));
+    cancel_drag::<u32>(&ctx, area);
+    assert!(ctx.dragged_id().is_none());
+    let before = layout.clone();
+    assert!(step(&ctx, &mut layout, vec![Event::PointerMoved(start + vec2(100.0, 0.0))]).is_empty());
+    assert_eq!(layout, before);
+}
+
+#[test]
+fn collapsed_floating_height_cap_does_not_disable_keyboard_width_resizing() {
+    let ctx = Context::default();
+    let mut layout = Layout { root: None, floating: vec![Floating::single(vec![1u32], 0, [80.0, 70.0, 300.0, 26.0])] };
+    let id = Id::new("collapsed-resize").with(("floating", &1u32)).with("resize-right");
+    let mut frame = |events| {
+        let mut actions = Vec::new();
+        ctx.run_ui(
+            RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), focused: true, events, ..Default::default() },
+            |ui| {
+                let mut style = DockStyle::from_ui(ui);
+                style.min_pane = 0.0;
+                actions = DockArea::new(Id::new("collapsed-resize"))
+                    .show_with_limits(
+                        ui,
+                        &layout,
+                        &style,
+                        |p| p.to_string(),
+                        |_| Permissions::default(),
+                        |_| PanelLimits { min: vec2(220.0, 0.0), max: vec2(1000.0, 0.0) },
+                        |_, _| {},
+                    )
+                    .actions;
+            },
+        )
+        .textures_delta
+        .clear();
+        for action in actions {
+            layout.apply(action).unwrap();
+        }
+    };
+    for _ in 0..3 {
+        frame(vec![]);
+    }
+    ctx.memory_mut(|memory| memory.request_focus(id));
+    frame(vec![Event::Key { key: egui::Key::ArrowRight, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
+    assert_eq!(layout.floating[0].rect, [80.0, 70.0, 308.0, 26.0]);
+}
+
+#[test]
+fn returning_to_a_singleton_or_floating_source_body_is_an_explicit_noop() {
+    for panels in [vec![1u32], vec![1, 2, 3]] {
+        for allow_splits in [false, true] {
+            let rect = Rect::from_min_size(Pos2::ZERO, vec2(300.0, 300.0));
+            let target = DropTarget {
+                anchor: 1,
+                rect,
+                tab_strip: Some(Rect::from_min_size(Pos2::ZERO, vec2(300.0, 26.0))),
+                tabs: panels.iter().map(|id| (*id, Rect::NOTHING)).collect(),
+                allow_splits,
+                accepts_tabs: true,
+            };
+            let proposal = resolve_drop(&1, rect.center(), &[target]).unwrap();
+            assert!(proposal.noop);
+            assert!(proposal.insertion.is_none());
+        }
+    }
+}
+
+#[test]
+fn pointer_floating_resize_stops_at_edges_and_waits_for_cursor_to_return() {
+    for name in ["resize-right", "resize-left", "resize-bottom", "resize", "resize-bottom-left"] {
+        let ctx = Context::default();
+        let mut layout = sample();
+        for _ in 0..3 {
+            step(&ctx, &mut layout, vec![]);
+        }
+        let id = Id::new("test-area").with(("floating", &5u32)).with(name);
+        let start = ctx.read_response(id).unwrap().rect.center();
+        let original = layout.floating[0].rect;
+        let horizontal = name != "resize-bottom";
+        let left = name.contains("left");
+        step(&ctx, &mut layout, vec![Event::PointerMoved(start), pointer_button(start, true)]);
+        let outside = if horizontal { pos2(if left { -200.0 } else { 1100.0 }, start.y) } else { pos2(start.x, 1000.0) };
+        step(&ctx, &mut layout, vec![Event::PointerMoved(outside)]);
+        let stopped = layout.floating[0].rect;
+        if horizontal {
+            if left {
+                assert_eq!(stopped[0] + stopped[2], original[0] + original[2]);
+            } else {
+                assert_eq!(stopped[0], original[0]);
+                assert_eq!(stopped[0] + stopped[2], 800.0);
+            }
+        } else {
+            assert_eq!(stopped[1], original[1]);
+            assert_eq!(stopped[1] + stopped[3], 600.0);
+        }
+        let still_outside = if horizontal { outside + vec2(if left { 100.0 } else { -100.0 }, 0.0) } else { outside - vec2(0.0, 100.0) };
+        step(&ctx, &mut layout, vec![Event::PointerMoved(still_outside)]);
+        assert_eq!(layout.floating[0].rect, stopped, "{name}: reversal outside the edge must not resize");
+        step(&ctx, &mut layout, vec![Event::PointerMoved(start)]);
+        assert_eq!(layout.floating[0].rect, original, "{name}: returning to the original handle restores its geometry");
+        step(&ctx, &mut layout, vec![pointer_button(start, false)]);
+        assert!(!ctx.memory(|memory| memory.has_focus(id)));
+    }
+}
+
+#[test]
+fn unchanged_tab_slots_are_explicit_noops_with_bounded_insertion_markers() {
+    let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(300.0, 200.0));
+    let target = DropTarget {
+        anchor: 1,
+        rect,
+        tab_strip: Some(Rect::from_min_size(rect.min, vec2(300.0, 30.0))),
+        tabs: vec![
+            (1, Rect::from_min_size(pos2(0.0, 0.0), vec2(60.0, 30.0))),
+            (2, Rect::from_min_size(pos2(60.0, 0.0), vec2(60.0, 30.0))),
+            (3, Rect::from_min_size(pos2(120.0, 0.0), vec2(60.0, 30.0))),
+        ],
+        allow_splits: true,
+        accepts_tabs: true,
+    };
+    for (panel, positions) in [(1, [10.0, 50.0]), (2, [70.0, 110.0]), (3, [130.0, 210.0])] {
+        for x in positions {
+            let proposal = resolve_drop(&panel, pos2(x, 12.0), std::slice::from_ref(&target)).unwrap();
+            assert!(proposal.noop, "{panel}/{x}");
+            assert!(target.tab_strip.unwrap().contains_rect(proposal.insertion.unwrap()));
+        }
+    }
+    for (panel, x) in [(1, 140.0), (3, 10.0), (2, 210.0)] {
+        let proposal = resolve_drop(&panel, pos2(x, 12.0), std::slice::from_ref(&target)).unwrap();
+        assert!(!proposal.noop);
+        assert!(proposal.insertion.is_some());
+    }
+}
+
+#[test]
+fn host_owned_noop_consumes_release_without_a_fallback_float() {
+    struct Content(usize);
+    impl DockContent<u32> for Content {
+        fn body(&mut self, _ui: &mut egui::Ui, _panel: &u32) {}
+        fn resolve_drag(&mut self, _ctx: &Context, _style: &DockStyle, request: &DropRequest<'_, u32>) -> Option<DropFeedback> {
+            if request.released {
+                self.0 += 1;
+            }
+            Some(DropFeedback::default())
+        }
+    }
+    let ctx = Context::default();
+    let area = Id::new("host-owned");
+    let layout = sample();
+    let mut content = Content(0);
+    let from = pos2(30.0, 20.0);
+    let to = pos2(400.0, 300.0);
+    let render = |events: Vec<Event>, content: &mut Content| {
+        let mut output = DockOutput::default();
+        ctx.run_ui(RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), events, ..Default::default() }, |ui| {
+            output = DockArea::new(area).show_customized(
+                ui,
+                &layout,
+                &DockStyle::from_ui(ui),
+                |p| p.to_string(),
+                |_| Permissions::default(),
+                |_| PanelLimits::default(),
+                content,
+            );
+        })
+        .textures_delta
+        .clear();
+        output
+    };
+    render(
+        vec![
+            Event::PointerMoved(from),
+            Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
+        ],
+        &mut content,
+    );
+    assert!(begin_drag(&ctx, area, 1u32, Rect::from_min_size(Pos2::ZERO, vec2(200.0, 200.0))));
+    render(vec![Event::PointerMoved(to)], &mut content);
+    let output = render(
+        vec![Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE }],
+        &mut content,
+    );
+    assert_eq!(content.0, 1);
+    assert!(output.actions.iter().all(|action| !matches!(action, Action::Move { .. } | Action::Float { .. })));
+}
+
+#[test]
+fn overflow_noop_detection_uses_logical_order_including_hidden_tabs() {
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(140.0, 200.0));
+    let target = DropTarget {
+        anchor: 1,
+        rect,
+        tab_strip: Some(Rect::from_min_size(Pos2::ZERO, vec2(140.0, 30.0))),
+        tabs: vec![
+            (1, Rect::from_min_size(Pos2::ZERO, vec2(60.0, 30.0))),
+            (2, Rect::NOTHING),
+            (3, Rect::from_min_size(pos2(60.0, 0.0), vec2(60.0, 30.0))),
+        ],
+        allow_splits: true,
+        accepts_tabs: true,
+    };
+    assert!(resolve_drop(&1, pos2(10.0, 12.0), std::slice::from_ref(&target)).unwrap().noop);
+    // Before the next visible tab crosses hidden tab 2 and really changes the order.
+    assert!(!resolve_drop(&1, pos2(65.0, 12.0), std::slice::from_ref(&target)).unwrap().noop);
+    assert!(resolve_drop(&3, pos2(130.0, 12.0), std::slice::from_ref(&target)).unwrap().noop);
+}
+
+#[test]
+fn insertion_markers_stay_inside_clipped_and_singleton_strips() {
+    for width in [0.5, 1.0, 20.0, 140.0] {
+        let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(width, 200.0));
+        let strip = Rect::from_min_size(rect.min, vec2(width, 30.0));
+        for tab_left in [-100.0, 10.0, 300.0] {
+            let target = DropTarget {
+                anchor: 1,
+                rect,
+                tab_strip: Some(strip.expand(5.0)),
+                tabs: vec![(1, Rect::from_min_size(pos2(tab_left, 20.0), vec2(60.0, 30.0)))],
+                allow_splits: true,
+                accepts_tabs: true,
+            };
+            for x in [rect.left(), rect.center().x, rect.right()] {
+                let proposal = resolve_drop(&1, pos2(x, 25.0), std::slice::from_ref(&target)).unwrap();
+                assert!(proposal.noop);
+                let marker = proposal.insertion.unwrap();
+                assert!(rect.intersect(target.tab_strip.unwrap()).contains_rect(marker));
+                assert!(marker.width() > 0.0 && marker.width() <= 2.0);
+            }
+        }
+    }
+}
+
+#[test]
+fn insertion_marker_handles_subpixel_strip_crossing_zero_without_panicking() {
+    let rect = Rect::from_min_max(pos2(-0.001, 0.0), pos2(0.002, 30.0));
+    let target = DropTarget { anchor: 1, rect, tab_strip: Some(rect), tabs: vec![(1, rect)], allow_splits: true, accepts_tabs: true };
+    let proposal = resolve_drop(&1, pos2(0.0, 12.0), &[target]).unwrap();
+    assert!(proposal.noop);
+    assert!(rect.contains_rect(proposal.insertion.unwrap()));
+}
+
+#[test]
+fn overflowing_strip_paints_a_single_ellipsis_symbol() {
+    use egui_kittest::Harness;
+    fn paints(shape: &egui::Shape, text: &str) -> bool {
+        match shape {
+            egui::Shape::Text(shape) => shape.galley.text() == text,
+            egui::Shape::Vec(shapes) => shapes.iter().any(|shape| paints(shape, text)),
+            _ => false,
+        }
+    }
+    let layout = Layout { root: Some(tabs(&[1, 2, 3, 4, 5, 6], 0)), floating: vec![] };
+    let mut h = Harness::builder().with_size(vec2(150.0, 240.0)).build_ui(move |ui| {
+        DockArea::new(Id::new("overflow-symbol")).show(
+            ui,
+            &layout,
+            &DockStyle::from_ui(ui),
+            |panel| format!("Panel {panel}"),
+            |_| Permissions::default(),
+            |_ui: &mut egui::Ui, _panel: &u32| {},
+        );
+    });
+    h.run_steps(2);
+    assert!(h.output().shapes.iter().any(|shape| paints(&shape.shape, "\u{2026}")));
 }

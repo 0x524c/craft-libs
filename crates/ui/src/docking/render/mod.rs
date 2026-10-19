@@ -7,6 +7,8 @@ use crate::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis, SplitSize, split
 use super::{Action, DockContent, DockOutput, DockStyle, DropTarget, Layout, Node, PanelLimits, Permissions};
 
 mod floating;
+
+pub(in crate::docking) use floating::RESIZE_HANDLES;
 mod group;
 mod preview;
 
@@ -187,50 +189,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     pub(super) fn node_limits(&self, node: &Node<P>) -> PanelLimits {
-        match node {
-            Node::Dock { .. } => PanelLimits { min: Vec2::splat(self.style.min_pane), ..PanelLimits::default() },
-            Node::Tabs { panels, .. } => {
-                let mut limits = PanelLimits::default();
-                for panel in panels {
-                    let policy = self.limits(panel);
-                    limits.min = limits.min.max(policy.min).max(Vec2::splat(self.style.min_pane));
-                    limits.max = limits.max.min(policy.max);
-                }
-                limits.max = limits.max.max(limits.min);
-                if panels.len() != 1 || panels.first().is_some_and(|p| self.permissions(p) != Permissions::PROTECTED) {
-                    limits.min.y = (limits.min.y + self.style.tab_height).min(1_000_000.0);
-                    limits.max.y = (limits.max.y + self.style.tab_height).min(1_000_000.0);
-                }
-                limits
-            }
-            Node::Stack { entries } => {
-                let mut limits = PanelLimits::default();
-                for entry in entries {
-                    let policy = self.limits(&entry.panel);
-                    limits.min.x = limits.min.x.max(policy.min.x).max(self.style.min_pane);
-                    limits.min.y += if entry.open { policy.min.y.max(self.style.min_pane) } else { 0.0 } + self.style.tab_height;
-                    limits.max.x = limits.max.x.min(policy.max.x);
-                }
-                limits.min = limits.min.min(Vec2::splat(1_000_000.0));
-                limits.max = limits.max.max(limits.min);
-                limits
-            }
-            Node::Split { axis, first, second, .. } => {
-                let a = self.node_limits(first);
-                let b = self.node_limits(second);
-                let limits = match axis {
-                    SplitAxis::Horizontal => PanelLimits {
-                        min: vec2(a.min.x + b.min.x + self.style.gap, a.min.y.max(b.min.y)),
-                        max: vec2(a.max.x + b.max.x + self.style.gap, a.max.y.min(b.max.y)),
-                    },
-                    SplitAxis::Vertical => PanelLimits {
-                        min: vec2(a.min.x.max(b.min.x), a.min.y + b.min.y + self.style.gap),
-                        max: vec2(a.max.x.min(b.max.x), a.max.y + b.max.y + self.style.gap),
-                    },
-                };
-                PanelLimits { min: limits.min.min(Vec2::splat(1_000_000.0)), max: limits.max.max(limits.min).min(Vec2::splat(1_000_000.0)) }
-            }
-        }
+        node_limits(node, self.style, &*self.content)
     }
 
     pub(super) fn contents(&mut self, ui: &mut Ui, panel: &P, rect: Rect) {
@@ -244,6 +203,54 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         self.content.body(&mut child, panel);
         if child.rect_contains_pointer(rect) && child.input(|i| i.pointer.primary_pressed()) {
             self.output.focused = Some(panel.clone());
+        }
+    }
+}
+
+/// Size policy of a subtree, shared by the renderer and its measurements.
+pub(in crate::docking) fn node_limits<P>(node: &Node<P>, style: &DockStyle, content: &dyn DockContent<P>) -> PanelLimits {
+    match node {
+        Node::Dock { .. } => PanelLimits { min: Vec2::splat(style.min_pane), ..PanelLimits::default() },
+        Node::Tabs { panels, .. } => {
+            let mut limits = PanelLimits::default();
+            for panel in panels {
+                let policy = content.limits(panel);
+                limits.min = limits.min.max(policy.min).max(Vec2::splat(style.min_pane));
+                limits.max = limits.max.min(policy.max);
+            }
+            limits.max = limits.max.max(limits.min);
+            if panels.len() != 1 || panels.first().is_some_and(|p| content.permissions(p) != Permissions::PROTECTED) {
+                limits.min.y = (limits.min.y + style.tab_height).min(1_000_000.0);
+                limits.max.y = (limits.max.y + style.tab_height).min(1_000_000.0);
+            }
+            limits
+        }
+        Node::Stack { entries } => {
+            let mut limits = PanelLimits::default();
+            for entry in entries {
+                let policy = content.limits(&entry.panel);
+                limits.min.x = limits.min.x.max(policy.min.x).max(style.min_pane);
+                limits.min.y += if entry.open { policy.min.y.max(style.min_pane) } else { 0.0 } + style.tab_height;
+                limits.max.x = limits.max.x.min(policy.max.x);
+            }
+            limits.min = limits.min.min(Vec2::splat(1_000_000.0));
+            limits.max = limits.max.max(limits.min);
+            limits
+        }
+        Node::Split { axis, first, second, .. } => {
+            let a = node_limits(first, style, content);
+            let b = node_limits(second, style, content);
+            let limits = match axis {
+                SplitAxis::Horizontal => PanelLimits {
+                    min: vec2(a.min.x + b.min.x + style.gap, a.min.y.max(b.min.y)),
+                    max: vec2(a.max.x + b.max.x + style.gap, a.max.y.min(b.max.y)),
+                },
+                SplitAxis::Vertical => PanelLimits {
+                    min: vec2(a.min.x.max(b.min.x), a.min.y + b.min.y + style.gap),
+                    max: vec2(a.max.x.min(b.max.x), a.max.y + b.max.y + style.gap),
+                },
+            };
+            PanelLimits { min: limits.min.min(Vec2::splat(1_000_000.0)), max: limits.max.max(limits.min).min(Vec2::splat(1_000_000.0)) }
         }
     }
 }
