@@ -965,7 +965,11 @@ impl DialogState {
                 Ok(()) => self.run(env, then),
                 Err(e) => self.refuse(profile_error(env, &e)),
             },
-            (Prompt::SaveChanges { then, .. }, Answer::No) => self.run(env, then),
+            // Don't Save reloads the stored set first, so an import does not start from the edits.
+            (Prompt::SaveChanges { set, then }, Answer::No) => match self.load_set(env, &set) {
+                Ok(()) => self.run(env, then),
+                Err(e) => self.refuse(profile_error(env, &e)),
+            },
             (Prompt::ResetAll | Prompt::DeleteSet(_), Answer::No) => {}
         }
     }
@@ -1310,6 +1314,27 @@ mod tests {
         assert_eq!(fx.p.active, "Fixture Defaults");
         assert!(fx.km.overrides().is_empty() && !st.can_undo(), "the set loads with a fresh undo history");
         assert!(fx.p.get("Mine", &fx.b).is_some_and(Overrides::is_empty), "Don't Save keeps the stored set");
+    }
+
+    #[test]
+    fn dont_save_before_import_drops_the_edits() {
+        use crate::import::{ContextRule, ForeignEntry, ForeignKey};
+        let mut fx = Fx::new(Options::default());
+        fx.p.save_as("Mine", Overrides::new(), &fx.b).ok();
+        let mut st = open(&mut fx);
+        record(&mut st, &mut fx, add("object.front"), &["F2"]);
+        st.request_import(&mut fx.env());
+        st.answer(&mut fx.env(), Answer::No);
+        assert!(matches!(st.finish(), Some(Outcome::Import { .. })));
+        assert!(fx.km.overrides().is_empty() && !st.can_undo());
+        let read = |text: &str| ForeignKey::read(Some("Default"), text, crate::Flavor::Windows);
+        let set = ForeignSet { name: Some("Theirs".into()), entries: vec![ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S"))] };
+        let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() };
+        st.review_import(&mut fx.env(), set, options);
+        st.import_reviewed(&mut fx.env());
+        assert_eq!(fx.p.active, "Theirs");
+        assert_eq!(fx.p.get("Theirs", &fx.b).and_then(|o| o.get("object.front")), None);
+        assert!(fx.p.get("Mine", &fx.b).is_some_and(Overrides::is_empty));
     }
 
     #[test]
