@@ -158,7 +158,7 @@ impl<P> Default for Layout<P> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum Placement<P> {
@@ -168,7 +168,13 @@ pub enum Placement<P> {
     /// `Tabs` and `Stack` nodes only.
     Split(Zone),
     /// A new group above or below the anchor's group, in a dock column or a floating stack.
-    Group { below: bool },
+    /// `height` is the inserted group's preferred height ([`super::Group::height`]); `None`
+    /// keeps a moved group's own height, or shares the free height for a new group.
+    Group {
+        below: bool,
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+        height: Option<f32>,
+    },
     /// A new column before (towards the window edge) or after the anchor's column.
     Column { after: bool },
     /// A new frame along one edge of the docked layout, a quarter of its width or height: the
@@ -306,29 +312,39 @@ pub enum Action<P> {
     },
 }
 
-/// Rendering and command adapters can protect a document canvas while leaving panels movable.
+/// What may happen to a panel. [`Layout::apply_with_permissions`] enforces these for every
+/// action, whoever issues it. They also decide which gestures and menu items the renderer
+/// offers; [`super::DockStyle::close_menu_items`] and [`super::DockStyle::close_button`] hide
+/// the built-in close controls of a panel that stays closable by command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Permissions {
     pub movable: bool,
     pub floatable: bool,
     pub closable: bool,
+    /// Other panels may join this panel's group as tabs.
     pub accepts_tabs: bool,
+    /// Other panels may split this panel's frame (`Placement::Split` with a side zone).
+    /// Outer-edge frames ([`Placement::Edge`]) are not splits of the anchor.
+    pub accepts_splits: bool,
 }
 
 impl Default for Permissions {
     fn default() -> Self {
-        Self { movable: true, floatable: true, closable: true, accepts_tabs: true }
+        Self { movable: true, floatable: true, closable: true, accepts_tabs: true, accepts_splits: true }
     }
 }
 
 impl Permissions {
-    pub const PROTECTED: Self = Self { movable: false, floatable: false, closable: false, accepts_tabs: false };
+    /// A document canvas: it stays docked and open, and takes neither tabs nor side splits.
+    /// A group dropped on it floats there. An application that opens panels beside its canvas
+    /// uses `Permissions { accepts_splits: true, ..Permissions::PROTECTED }`.
+    pub const PROTECTED: Self = Self { movable: false, floatable: false, closable: false, accepts_tabs: false, accepts_splits: false };
 
-    /// Lock Workspace: nothing moves, floats or closes; tab drops keep their policy.
+    /// Lock Workspace: nothing moves, floats or closes; tab and split drops keep their policy.
     /// [`super::Workspace::apply`] applies this when the workspace is locked; an application
     /// with a global lock preference applies it in its own permissions callback.
     pub fn locked(self) -> Self {
-        Self { movable: false, floatable: false, closable: false, accepts_tabs: self.accepts_tabs }
+        Self { movable: false, floatable: false, closable: false, ..self }
     }
 }
 
@@ -380,7 +396,7 @@ fn valid_size(size: SplitSize) -> bool {
     }
 }
 
-fn valid_height(height: Option<f32>) -> bool {
+pub(super) fn valid_height(height: Option<f32>) -> bool {
     height.is_none_or(|v| v.is_finite() && (0.0..=MAX_EXTENT).contains(&v))
 }
 
@@ -504,7 +520,7 @@ impl<P: Clone + Eq + Hash> Layout<P> {
     }
 
     /// The panels `panel` can join as a tab: every other panel whose permissions accept tabs.
-    /// A "Move to group" menu with an empty answer has nothing to offer and stays hidden.
+    /// A "Move Panel to Group" menu with an empty answer has nothing to offer and stays hidden.
     pub fn move_targets(&self, panel: &P, permissions: impl Fn(&P) -> Permissions) -> Vec<&P> {
         self.panels().into_iter().filter(|target| *target != panel && permissions(target).accepts_tabs).collect()
     }
@@ -540,10 +556,10 @@ impl<P: Clone + Eq + Hash> Layout<P> {
         let first = |g: Option<&Group<P>>| g.and_then(|g| g.panels.first()).cloned();
         if let Some(anchor) = first(groups.get(group + 1)) {
             location.anchor = Some(anchor);
-            location.placement = Placement::Group { below: false };
+            location.placement = Placement::Group { below: false, height: None };
         } else if let Some(anchor) = first(group.checked_sub(1).and_then(|i| groups.get(i))) {
             location.anchor = Some(anchor);
-            location.placement = Placement::Group { below: true };
+            location.placement = Placement::Group { below: true, height: None };
         } else if groups.len() == 1
             && let Place::Dock { path, column, .. } = &place
             && let Some(Node::Dock { columns, .. }) = self.root.as_ref().and_then(|root| node_at(root, path))
@@ -686,21 +702,23 @@ impl<P: Clone + Eq + Hash> Layout<P> {
         Ok(())
     }
 
-    pub fn apply(&mut self, action: Action<P>) -> Result<(), DockError> {
+    /// [`Self::apply_with_permissions`] with default permissions.
+    pub fn apply(&mut self, action: Action<P>) -> Result<Vec<P>, DockError> {
         self.apply_with_permissions(action, |_| Permissions::default())
     }
 
-    /// Check application policy before making an atomic change. The callback must be stable
-    /// throughout one call. Registry validation remains with the application, particularly Open.
-    pub fn apply_with_permissions(&mut self, action: Action<P>, permissions: impl Fn(&P) -> Permissions) -> Result<(), DockError> {
+    /// Check application policy before making an atomic change, and return the panels the
+    /// action closed (see [`Self::closed_by`]) so the application can release their state.
+    /// The callback must be stable throughout one call. Registry validation remains with the
+    /// application, particularly Open.
+    pub fn apply_with_permissions(&mut self, action: Action<P>, permissions: impl Fn(&P) -> Permissions) -> Result<Vec<P>, DockError> {
         self.validate()?;
         match &action {
             Action::Move { panel, anchor, placement } | Action::OpenAt { panel, anchor, placement } => {
                 if !permissions(panel).movable {
                     return Err(DockError::NotAllowed);
                 }
-                let tab = matches!(placement, Placement::Tab { .. } | Placement::Split(Zone::Center));
-                if tab && !permissions(anchor).accepts_tabs {
+                if !placement_allowed(placement, permissions(anchor)) {
                     return Err(DockError::NotAllowed);
                 }
             }
@@ -715,9 +733,7 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                 }
                 match to {
                     Target::Float { .. } if members.iter().any(|p| !permissions(p).floatable) => return Err(DockError::NotAllowed),
-                    Target::At { anchor, placement: Placement::Tab { .. } | Placement::Split(Zone::Center) }
-                        if !members.contains(anchor) && !permissions(anchor).accepts_tabs =>
-                    {
+                    Target::At { anchor, placement } if !members.contains(anchor) && !placement_allowed(placement, permissions(anchor)) => {
                         return Err(DockError::NotAllowed);
                     }
                     _ => {}
@@ -735,26 +751,29 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             }
             _ => {}
         }
+        let closed = self.closed_by(&action)?;
         let mut proposed = self.clone();
         proposed.apply_inner(action)?;
         proposed.validate()?;
         *self = proposed;
-        Ok(())
+        Ok(closed)
     }
 
     /// Apply every action in order, or none: the first rejection leaves the layout unchanged.
-    pub fn apply_all(&mut self, actions: impl IntoIterator<Item = Action<P>>, permissions: impl Fn(&P) -> Permissions) -> Result<(), DockError> {
+    /// Returns every panel the actions closed, in order.
+    pub fn apply_all(&mut self, actions: impl IntoIterator<Item = Action<P>>, permissions: impl Fn(&P) -> Permissions) -> Result<Vec<P>, DockError> {
         let mut proposed = self.clone();
+        let mut closed = Vec::new();
         for action in actions {
-            proposed.apply_with_permissions(action, &permissions)?;
+            closed.extend(proposed.apply_with_permissions(action, &permissions)?);
         }
         *self = proposed;
-        Ok(())
+        Ok(closed)
     }
 
     /// The panels a close action (`Close`, `CloseGroup`, `CloseWindow`, `CloseOthers`) would
-    /// remove, in group order, so the application can release their state once the action is
-    /// applied. Empty for other actions.
+    /// remove, in group order. Empty for other actions. The apply methods return the same
+    /// list; this one answers before applying.
     pub fn closed_by(&self, action: &Action<P>) -> Result<Vec<P>, DockError> {
         Ok(match action {
             Action::Close { panel } => vec![panel.clone()],
@@ -987,6 +1006,16 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             return Ok(());
         }
         Err(DockError::MissingTarget)
+    }
+}
+
+/// Whether the anchor's permissions take this placement: tabs need `accepts_tabs`, side
+/// splits `accepts_splits`.
+fn placement_allowed<P>(placement: &Placement<P>, anchor: Permissions) -> bool {
+    match placement {
+        Placement::Tab { .. } | Placement::Split(Zone::Center) => anchor.accepts_tabs,
+        Placement::Split(_) => anchor.accepts_splits,
+        _ => true,
     }
 }
 

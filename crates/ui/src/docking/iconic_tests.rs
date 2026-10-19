@@ -254,7 +254,8 @@ fn group_dropped_on_an_iconic_column_joins_as_an_icon_group() {
     assert!(d.filled(line), "with the insertion line under group 1");
     let out = d.release(target);
     assert!(
-        out.actions.contains(&Action::MoveGroup { panel: 5, to: Target::At { anchor: 1, placement: Placement::Group { below: true } } }),
+        out.actions
+            .contains(&Action::MoveGroup { panel: 5, to: Target::At { anchor: 1, placement: Placement::Group { below: true, height: None } } }),
         "{:?}",
         out.actions
     );

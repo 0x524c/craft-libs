@@ -12,6 +12,9 @@ pub struct DropTarget<P> {
     pub tabs: Vec<(P, Rect)>,
     pub allow_splits: bool,
     pub accepts_tabs: bool,
+    /// The strip runs right to left: the first tab is rightmost, and an insertion slot sits
+    /// at the right edge of the tab it precedes.
+    pub right_to_left: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -70,11 +73,18 @@ pub fn tab_insertion_marker<P: Eq>(target: &DropTarget<P>, before: Option<&P>) -
         return None;
     }
     let index = before.and_then(|before| target.tabs.iter().position(|(panel, _)| panel == before));
+    let rtl = target.right_to_left;
+    let leading = |rect: &Rect| if rtl { rect.right() } else { rect.left() };
+    let visible = || target.tabs.iter().filter(|(_, rect)| usable(*rect)).map(|(_, rect)| rect);
     let x = index
         .and_then(|index| target.tabs.get(index..))
-        .and_then(|tabs| tabs.iter().find(|(_, rect)| usable(*rect)).map(|(_, rect)| rect.left()))
+        .and_then(|tabs| tabs.iter().find(|(_, rect)| usable(*rect)).map(|(_, rect)| leading(rect)))
         .unwrap_or_else(|| {
-            target.tabs.iter().filter(|(_, rect)| usable(*rect)).map(|(_, rect)| rect.right()).fold(strip.left(), f32::max).min(strip.right())
+            if rtl {
+                visible().map(|rect| rect.left()).fold(strip.right(), f32::min).max(strip.left())
+            } else {
+                visible().map(|rect| rect.right()).fold(strip.left(), f32::max).min(strip.right())
+            }
         });
     let width = strip.width().min(2.0);
     let left = (x - width * 0.5).max(strip.left()).min((strip.right() - width).max(strip.left()));
@@ -98,7 +108,8 @@ pub fn resolve_drop<P: Clone + Eq>(panel: &P, pointer: Pos2, targets: &[DropTarg
         if !target.accepts_tabs {
             return None;
         }
-        let before = target.tabs.iter().filter(|(_, r)| usable(*r)).find(|(_, r)| pointer.x < r.center().x);
+        let ahead = |r: &Rect| if target.right_to_left { pointer.x > r.center().x } else { pointer.x < r.center().x };
+        let before = target.tabs.iter().filter(|(_, r)| usable(*r)).find(|(_, r)| ahead(r));
         let before_panel = before.map(|(p, _)| p.clone());
         let insertion = tab_insertion_marker(target, before_panel.as_ref())?;
         let old_order: Vec<_> = target.tabs.iter().map(|(p, _)| p).collect();
@@ -176,8 +187,8 @@ impl<P: Clone> DockTarget<P> {
     pub(super) fn to(&self) -> Target<P> {
         match self {
             Self::ColumnEdge { anchor, after } => Target::At { anchor: anchor.clone(), placement: Placement::Column { after: *after } },
-            Self::Seam { anchor } => Target::At { anchor: anchor.clone(), placement: Placement::Group { below: true } },
-            Self::GroupBand { anchor, below } => Target::At { anchor: anchor.clone(), placement: Placement::Group { below: *below } },
+            Self::Seam { anchor } => Target::At { anchor: anchor.clone(), placement: Placement::Group { below: true, height: None } },
+            Self::GroupBand { anchor, below } => Target::At { anchor: anchor.clone(), placement: Placement::Group { below: *below, height: None } },
             Self::NewDock { side } => Target::NewDock { side: *side },
         }
     }

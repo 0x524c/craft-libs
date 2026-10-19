@@ -7,7 +7,7 @@
 //! let mut params = params.clone();
 //! params["command"] = json!(id);
 //! let command: DockCommand<PanelId> = serde_json::from_value(params)?;
-//! command.apply(&mut app.workspace, |p| app.permissions(p))?;
+//! command.apply(&mut app.workspace, style.right_to_left, |p| app.permissions(p))?;
 //! ```
 
 use std::hash::Hash;
@@ -40,7 +40,8 @@ const DEFAULT_FLOAT: [f32; 4] = [48.0, 48.0, 260.0, 320.0];
 /// | `ui.dock` | `{action}`, or `{operation, …}`, see [`DockOperation`] |
 ///
 /// `zone` is `tab` (the default for `move` and `dock`), `center`, `left`, `right`, `top`,
-/// `bottom`, `above` or `below` (a new group in a dock column or floating stack). `before`
+/// `bottom`, `above` or `below` (a new group in a dock column or floating stack). The side
+/// zones map onto the anchor's container with [`Placement::for_zone`]. `before`
 /// names the tab to insert before; `null` appends. `group` moves the panel's whole group,
 /// `column` its dock column. `side` is `Start` or `End`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -232,21 +233,29 @@ fn required<'de, D: Deserializer<'de>, T: Deserialize<'de>>(deserializer: D) -> 
     T::deserialize(deserializer)
 }
 
-/// `zone` and `before` as a placement. `default` is the zone when none is given.
-fn placement<P: Clone>(zone: Option<ZoneName>, before: &Option<Option<P>>, default: ZoneName) -> Result<Placement<P>, DockError> {
-    let before = before.clone();
-    Ok(match (zone.unwrap_or(default), before) {
-        (ZoneName::Tab | ZoneName::Center, Some(before)) => Placement::Tab { before },
-        (ZoneName::Tab, None) => Placement::Tab { before: None },
-        (ZoneName::Center, None) => Placement::Split(Zone::Center),
-        (_, Some(_)) => return Err(DockError::InvalidPlacement),
-        (ZoneName::Left, None) => Placement::Split(Zone::Left),
-        (ZoneName::Right, None) => Placement::Split(Zone::Right),
-        (ZoneName::Top, None) => Placement::Split(Zone::Top),
-        (ZoneName::Bottom, None) => Placement::Split(Zone::Bottom),
-        (ZoneName::Above, None) => Placement::Group { below: false },
-        (ZoneName::Below, None) => Placement::Group { below: true },
-    })
+/// Where a command puts what it moves relative to `anchor`: `zone` and `before`, with side
+/// zones mapped by [`Placement::for_zone`]. `default` is the zone when none is given.
+struct Zoned<'a, P> {
+    layout: &'a Layout<P>,
+    right_to_left: bool,
+}
+
+impl<P: Clone + Eq + Hash> Zoned<'_, P> {
+    fn placement(&self, anchor: &P, zone: Option<ZoneName>, before: &Option<Option<P>>, default: ZoneName) -> Result<Placement<P>, DockError> {
+        let side = |zone| Placement::for_zone(self.layout, anchor, zone, self.right_to_left);
+        Ok(match (zone.unwrap_or(default), before.clone()) {
+            (ZoneName::Tab | ZoneName::Center, Some(before)) => Placement::Tab { before },
+            (ZoneName::Tab, None) => Placement::Tab { before: None },
+            (ZoneName::Center, None) => Placement::Split(Zone::Center),
+            (_, Some(_)) => return Err(DockError::InvalidPlacement),
+            (ZoneName::Left, None) => side(Zone::Left)?,
+            (ZoneName::Right, None) => side(Zone::Right)?,
+            (ZoneName::Top, None) => side(Zone::Top)?,
+            (ZoneName::Bottom, None) => side(Zone::Bottom)?,
+            (ZoneName::Above, None) => Placement::Group { below: false, height: None },
+            (ZoneName::Below, None) => Placement::Group { below: true, height: None },
+        })
+    }
 }
 
 /// How much of the layout a command moves.
@@ -319,8 +328,13 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
     /// belong to the application: those return [`DockError::NotAllowed`]; use [`Self::apply`].
     /// A panel or anchor that is not shown returns [`DockError::MissingPanel`] or
     /// [`DockError::MissingTarget`].
-    pub fn to_actions(&self, workspace: &Workspace<P>) -> Result<Vec<Action<P>>, DockError> {
+    ///
+    /// `left`, `right`, `top` and `bottom` zones follow [`Placement::for_zone`]: beside a docked
+    /// anchor they make a new column or group, and `right_to_left` is the
+    /// [`super::DockStyle::right_to_left`] the layout is drawn with.
+    pub fn to_actions(&self, workspace: &Workspace<P>, right_to_left: bool) -> Result<Vec<Action<P>>, DockError> {
         let layout = &workspace.layout;
+        let zoned = Zoned { layout, right_to_left };
         let shown = |panel: &P| if layout.contains(panel) { Ok(()) } else { Err(DockError::MissingPanel) };
         let one = |action: Action<P>| Ok(vec![action]);
         match self {
@@ -329,7 +343,7 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
                 shown(panel)?;
                 let placement = match given {
                     Some(placement) => placement.clone(),
-                    None => placement(*zone, before, ZoneName::Tab)?,
+                    None => zoned.placement(anchor, *zone, before, ZoneName::Tab)?,
                 };
                 one(Unit::of(*group, false).to(layout, panel, Target::At { anchor: anchor.clone(), placement })?)
             }
@@ -358,7 +372,7 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
                 shown(panel)?;
                 let unit = Unit::of(*group, *column);
                 if let Some(anchor) = anchor {
-                    let placement = placement(*zone, before, ZoneName::Tab)?;
+                    let placement = zoned.placement(anchor, *zone, before, ZoneName::Tab)?;
                     return one(unit.to(layout, panel, Target::At { anchor: anchor.clone(), placement })?);
                 }
                 if let Some(side) = side {
@@ -425,7 +439,7 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
                 DockOperation::Float { panel, rect } => one(Action::Float { panel: panel.clone(), rect: *rect }),
                 DockOperation::MoveFloating { panel, rect } => one(Action::MoveFloating { panel: panel.clone(), rect: *rect }),
                 DockOperation::Move { panel, target, zone, before } => {
-                    let placement = placement(*zone, before, ZoneName::Center)?;
+                    let placement = zoned.placement(target, *zone, before, ZoneName::Center)?;
                     one(Action::Move { panel: panel.clone(), anchor: target.clone(), placement })
                 }
                 DockOperation::SetStackOpen { panel, open } => one(Action::SetStackOpen { panel: panel.clone(), open: *open }),
@@ -442,7 +456,7 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
     /// the application can release their state. Showing a hidden panel restores its last
     /// location; Lock sets [`Workspace::locked`]. Application-owned commands
     /// ([`Self::is_app_owned`]) return [`DockError::NotAllowed`] and change nothing.
-    pub fn apply(&self, workspace: &mut Workspace<P>, permissions: impl Fn(&P) -> Permissions) -> Result<Vec<P>, DockError> {
+    pub fn apply(&self, workspace: &mut Workspace<P>, right_to_left: bool, permissions: impl Fn(&P) -> Permissions) -> Result<Vec<P>, DockError> {
         let show = match self {
             Self::Activate { panel }
             | Self::Dock { panel, anchor: None, side: None, .. }
@@ -457,7 +471,7 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
             workspace.locked = locked.unwrap_or(!workspace.locked);
             return Ok(Vec::new());
         }
-        let actions = self.to_actions(workspace)?;
+        let actions = self.to_actions(workspace, right_to_left)?;
         workspace.apply_all(actions, permissions)
     }
 }

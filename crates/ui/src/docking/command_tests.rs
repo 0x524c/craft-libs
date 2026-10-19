@@ -40,14 +40,14 @@ fn parse(params: Value) -> Result<DockCommand<P>, serde_json::Error> {
 /// The actions `params` makes on a fresh workspace.
 fn actions(params: Value) -> Vec<Action<P>> {
     let command = parse(params.clone()).unwrap_or_else(|e| panic!("{params}: {e}"));
-    command.to_actions(&workspace()).unwrap_or_else(|e| panic!("{params}: {e}"))
+    command.to_actions(&workspace(), false).unwrap_or_else(|e| panic!("{params}: {e}"))
 }
 
 /// Apply `params` to a fresh workspace; return it and the panels closed.
 fn applied(params: Value) -> (Workspace<P>, Vec<P>) {
     let mut workspace = workspace();
     let command = parse(params.clone()).unwrap_or_else(|e| panic!("{params}: {e}"));
-    let closed = command.apply(&mut workspace, permissions).unwrap_or_else(|e| panic!("{params}: {e}"));
+    let closed = command.apply(&mut workspace, false, permissions).unwrap_or_else(|e| panic!("{params}: {e}"));
     (workspace, closed)
 }
 
@@ -56,7 +56,7 @@ fn rejected(params: Value, error: DockError) {
     let mut workspace = workspace();
     let before = workspace.clone();
     let command = parse(params.clone()).unwrap_or_else(|e| panic!("{params}: {e}"));
-    assert_eq!(command.apply(&mut workspace, permissions), Err(error), "{params}");
+    assert_eq!(command.apply(&mut workspace, false, permissions), Err(error), "{params}");
     assert_eq!(workspace, before, "{params}");
 }
 
@@ -90,12 +90,15 @@ fn dock_commands_parse_every_documented_shape_and_map_to_atomic_actions() {
     assert_eq!(actions(with(json!({"before": "channels"}))), mv(tab(Some("channels"))));
     assert_eq!(actions(with(json!({"zone": "center", "before": null}))), mv(tab(None)));
     assert_eq!(actions(with(json!({"zone": "center"}))), mv(Placement::Split(Zone::Center)));
-    assert_eq!(actions(with(json!({"zone": "Left"}))), mv(Placement::Split(Zone::Left)));
-    assert_eq!(actions(with(json!({"zone": "below"}))), mv(Placement::Group { below: true }));
+    assert_eq!(actions(with(json!({"zone": "Left"}))), mv(Placement::Column { after: false }));
+    assert_eq!(actions(with(json!({"zone": "below"}))), mv(Placement::Group { below: true, height: None }));
     assert_eq!(actions(with(json!({"placement": {"Column": {"after": true}}}))), mv(Placement::Column { after: true }));
     assert_eq!(
         actions(with(json!({"group": true, "zone": "above"}))),
-        vec![Action::MoveGroup { panel: s("history"), to: Target::At { anchor: s("layers"), placement: Placement::Group { below: false } } }]
+        vec![Action::MoveGroup {
+            panel: s("history"),
+            to: Target::At { anchor: s("layers"), placement: Placement::Group { below: false, height: None } }
+        }]
     );
 
     // float: a docked panel, a lone floating panel, a group and a column.
@@ -219,7 +222,7 @@ fn dock_commands_parse_every_documented_shape_and_map_to_atomic_actions() {
     assert_eq!(actions(op(json!({"operation": "move", "panel": "color", "target": "layers"}))), to_layers(Placement::Split(Zone::Center)));
     assert_eq!(
         actions(op(json!({"operation": "move", "panel": "color", "target": "layers", "zone": "left"}))),
-        to_layers(Placement::Split(Zone::Left))
+        to_layers(Placement::Column { after: false })
     );
     assert_eq!(actions(op(json!({"operation": "move", "panel": "color", "target": "layers", "before": null}))), to_layers(tab(None)));
     assert_eq!(
@@ -278,6 +281,33 @@ fn dock_commands_parse_every_documented_shape_and_map_to_atomic_actions() {
     let mut locked = workspace();
     locked.locked = true;
     let before = locked.clone();
-    assert!(parse(json!({"command": "window.panel.window", "panel": "layers"})).unwrap().apply(&mut locked, permissions).is_err());
+    assert!(parse(json!({"command": "window.panel.window", "panel": "layers"})).unwrap().apply(&mut locked, false, permissions).is_err());
     assert_eq!(locked, before);
+}
+
+#[test]
+fn side_zones_map_to_the_placement_the_anchor_container_takes_in_either_direction() {
+    let command =
+        |zone: &str, anchor: &str| parse(json!({"command": "window.panel.move", "panel": "history", "anchor": anchor, "zone": zone})).unwrap();
+    let placed = |zone: &str, anchor: &str, rtl: bool| match command(zone, anchor).to_actions(&workspace(), rtl) {
+        Ok(actions) => match actions.as_slice() {
+            [Action::Move { placement, .. }] => Ok(placement.clone()),
+            other => panic!("{other:?}"),
+        },
+        Err(error) => Err(error),
+    };
+    // A start dock is on the left edge left to right, on the right edge right to left.
+    assert_eq!(placed("right", "layers", false), Ok(Placement::Column { after: true }));
+    assert_eq!(placed("right", "layers", true), Ok(Placement::Column { after: false }));
+    assert_eq!(placed("left", "layers", true), Ok(Placement::Column { after: true }));
+    assert_eq!(placed("top", "layers", false), Ok(Placement::Group { below: false, height: None }));
+    assert_eq!(placed("bottom", "color", false), Ok(Placement::Group { below: true, height: None }));
+    assert_eq!(placed("left", "color", false), Err(DockError::InvalidPlacement));
+    assert_eq!(placed("left", "canvas", true), Ok(Placement::Split(Zone::Left)));
+
+    let (workspace, _) = applied(json!({"command": "window.panel.move", "panel": "history", "anchor": "layers", "zone": "right"}));
+    let Some(Node::Split { first, .. }) = &workspace.layout.root else { panic!() };
+    let Node::Dock { columns, .. } = &**first else { panic!() };
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns[1].groups[0].panels, vec![s("history")]);
 }

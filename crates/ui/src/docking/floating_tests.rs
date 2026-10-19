@@ -204,7 +204,8 @@ fn title_bar_drag_moves_every_stacked_group_and_drops_into_a_dock_as_stacked_gro
     // Released over another window's lower band: its groups stack below that window's.
     let out = d.drag(title, pos2(660.0, 480.0));
     assert!(
-        out.actions.contains(&Action::MoveWindow { panel: 5, to: Target::At { anchor: 8, placement: Placement::Group { below: true } } }),
+        out.actions
+            .contains(&Action::MoveWindow { panel: 5, to: Target::At { anchor: 8, placement: Placement::Group { below: true, height: None } } }),
         "{:?}",
         out.actions
     );
@@ -237,7 +238,8 @@ fn title_bar_drag_onto_dock_targets_docks_the_window() {
     let seam = pos2(120.0, d.tab(4).unwrap().top());
     let out = d.drag(title, seam);
     assert!(
-        out.actions.contains(&Action::MoveWindow { panel: 8, to: Target::At { anchor: 2, placement: Placement::Group { below: true } } }),
+        out.actions
+            .contains(&Action::MoveWindow { panel: 8, to: Target::At { anchor: 2, placement: Placement::Group { below: true, height: None } } }),
         "{:?}",
         out.actions
     );
@@ -262,7 +264,8 @@ fn floating_stack_seams_and_bands_insert_groups() {
     let bar = d.response(Id::new(AREA).with(("drag-bar", Some(&6u32)))).unwrap().center();
     let out = d.drag(bar, pos2(660.0, 360.0));
     assert!(
-        out.actions.contains(&Action::MoveGroup { panel: 6, to: Target::At { anchor: 8, placement: Placement::Group { below: false } } }),
+        out.actions
+            .contains(&Action::MoveGroup { panel: 6, to: Target::At { anchor: 8, placement: Placement::Group { below: false, height: None } } }),
         "{:?}",
         out.actions
     );
@@ -274,7 +277,11 @@ fn floating_stack_seams_and_bands_insert_groups() {
     let tab = d.tab(8).unwrap().center();
     let seam = pos2(420.0, 237.0);
     let out = d.drag(tab, seam);
-    assert!(out.actions.contains(&Action::Move { panel: 8, anchor: 5, placement: Placement::Group { below: true } }), "{:?}", out.actions);
+    assert!(
+        out.actions.contains(&Action::Move { panel: 8, anchor: 5, placement: Placement::Group { below: true, height: None } }),
+        "{:?}",
+        out.actions
+    );
     assert_eq!(groups_of(window_of(&d.layout, 5).unwrap()), vec![vec![5], vec![8], vec![6, 7]]);
 
     // The divider between two open groups resizes both.

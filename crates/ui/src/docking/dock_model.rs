@@ -6,7 +6,7 @@
 
 use std::hash::Hash;
 
-use super::model::{DockError, Floating, Layout, MAX_DEPTH, MAX_NODES, Node, Placement, Zone, valid_rect, valid_width};
+use super::model::{DockError, Floating, Layout, MAX_DEPTH, MAX_NODES, Node, Placement, Zone, valid_height, valid_rect, valid_width};
 use crate::layout::{SplitAxis, SplitSize};
 
 /// Width of a new column when nothing better is known.
@@ -82,6 +82,39 @@ pub enum Target<P> {
     NewDock { side: Side },
     /// A new floating window. `None` keeps the source's size at a default position.
     Float { rect: Option<[f32; 4]> },
+}
+
+impl<P: Clone + Eq + Hash> Placement<P> {
+    /// The placement for a drop zone on `anchor`'s group, in the vocabulary its container
+    /// accepts. `zone` is physical: `Left` is the left half on screen in either direction.
+    ///
+    /// | Anchor in | `Center` | `Top`, `Bottom` | `Left`, `Right` |
+    /// |---|---|---|---|
+    /// | the split tree | [`Placement::Split`] | `Split` | `Split` |
+    /// | a dock column | `Split(Center)` (join as tabs) | [`Placement::Group`] above or below | [`Placement::Column`] on that side |
+    /// | a floating window | `Split(Center)` | `Group` above or below | [`DockError::InvalidPlacement`] |
+    ///
+    /// A dock's `Column { after }` counts from its window edge, which depends on the dock's
+    /// side and `right_to_left` (see [`Side`]); this picks `after` so the new column lands on
+    /// the zone's side of the anchor's column.
+    pub fn for_zone(layout: &Layout<P>, anchor: &P, zone: Zone, right_to_left: bool) -> Result<Self, DockError> {
+        let place = layout.place(anchor).ok_or(DockError::MissingTarget)?;
+        Ok(match (place, zone) {
+            (Place::Node(_), zone) | (_, zone @ Zone::Center) => Placement::Split(zone),
+            (Place::Dock { .. } | Place::Floating { .. }, Zone::Top | Zone::Bottom) => Placement::Group { below: zone == Zone::Bottom, height: None },
+            (Place::Floating { .. }, _) => return Err(DockError::InvalidPlacement),
+            (Place::Dock { path, .. }, _) => {
+                let side = match layout.root.as_ref().and_then(|root| node_at(root, &path)) {
+                    Some(Node::Dock { side, .. }) => *side,
+                    _ => return Err(DockError::MissingTarget),
+                };
+                // The physical edge of the dock: Start is left in a left-to-right layout.
+                let left_edge = (side == Side::Start) != right_to_left;
+                // `after` is away from the window edge: rightwards for a left dock.
+                Placement::Column { after: (zone == Zone::Right) == left_edge }
+            }
+        })
+    }
 }
 
 /// What the Window menu shows for a panel. The model does not track the z-order of floating
@@ -501,7 +534,14 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                         *node = Node::Split { axis, size: SplitSize::Ratio(0.5), first: Box::new(first), second: Box::new(second) };
                         Ok(())
                     }
-                    Placement::Group { below } => {
+                    Placement::Group { below, height } => {
+                        if !valid_height(height) {
+                            return Err(DockError::InvalidGeometry);
+                        }
+                        let mut moving = moving;
+                        if height.is_some() {
+                            moving.groups.iter_mut().for_each(|group| group.height = height);
+                        }
                         let (groups, index) = match &place {
                             Place::Dock { group, .. } => (&mut self.column_mut(&place).ok_or(DockError::MissingTarget)?.groups, *group),
                             Place::Floating { window, group } => {

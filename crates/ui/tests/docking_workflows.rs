@@ -416,7 +416,7 @@ mod v1_fixtures {
             // Float the column by command, then drag its window back to the start edge.
             let float: DockCommand<String> =
                 serde_json::from_value(json!({"command": "window.panel.float", "panel": bars[0], "column": true})).unwrap();
-            let actions = float.to_actions(&craft_ui::docking::Workspace::new(d.layout.clone())).unwrap();
+            let actions = float.to_actions(&craft_ui::docking::Workspace::new(d.layout.clone()), false).unwrap();
             d.layout.apply_all(actions, |p| d.content.permissions(p)).unwrap_or_else(|e| panic!("{at}: {e}"));
             d.settle();
             assert!(start_columns(&d.layout).is_empty(), "{at}: floated");

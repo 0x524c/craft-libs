@@ -61,7 +61,7 @@ fn move_targets_skip_the_panel_itself_and_protected_anchors() {
     let guarded = |p: &u32| if *p == 3 { Permissions::PROTECTED } else { Permissions::default() };
     assert!(!layout.move_targets(&1, guarded).contains(&&3));
 
-    // A lone panel has nowhere to go — its "Move to group" menu hides
+    // A lone panel has nowhere to go — its "Move Panel to Group" menu hides
     // (storytold/lightcraft#1768).
     let single = Layout { root: Some(tabs(&[1], 0)), floating: Vec::new() };
     assert!(single.move_targets(&1, all).is_empty());
@@ -135,13 +135,15 @@ fn protected_canvas_remains_present_and_cannot_be_grouped_with_panels() {
         move_to(1, 3, Zone::Center),
         move_to(3, 1, Zone::Center),
         Action::OpenAt { panel: 1, anchor: 3, placement: Placement::Tab { before: None } },
+        Action::OpenAt { panel: 7, anchor: 1, placement: Placement::Split(Zone::Left) },
     ] {
         let mut next = layout.clone();
         assert_eq!(next.apply_with_permissions(action, permissions), Err(DockError::NotAllowed));
         assert_eq!(next, layout);
     }
+    let beside = |panel: &u32| if *panel == 1 { Permissions { accepts_splits: true, ..Permissions::PROTECTED } } else { Permissions::default() };
     let mut next = layout;
-    next.apply_with_permissions(Action::OpenAt { panel: 7, anchor: 1, placement: Placement::Split(Zone::Left) }, permissions).unwrap();
+    next.apply_with_permissions(Action::OpenAt { panel: 7, anchor: 1, placement: Placement::Split(Zone::Left) }, beside).unwrap();
     assert!(next.contains(&1) && next.contains(&7));
 }
 
@@ -229,6 +231,7 @@ fn target(anchor: u32, members: &[u32], rect: Rect) -> DropTarget<u32> {
             .collect(),
         allow_splits: true,
         accepts_tabs: true,
+        right_to_left: false,
     }
 }
 
@@ -266,7 +269,7 @@ fn long_action_sequence_never_loses_or_duplicates_a_panel() {
                 2 => Placement::Split(Zone::Top),
                 3 => Placement::Split(Zone::Bottom),
                 4 => Placement::Split(Zone::Center),
-                5 => Placement::Group { below: seed & 1 == 0 },
+                5 => Placement::Group { below: seed & 1 == 0, height: None },
                 _ => Placement::Column { after: seed & 2 == 0 },
             };
             let to = match (seed >> 32) % 4 {
@@ -1244,7 +1247,7 @@ fn popup_action_labels_use_custom_visual_text_and_logical_accessibility() {
     h.input_mut().events.push(Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
     h.run_steps(2);
     assert!(egui::Popup::is_any_open(&h.ctx));
-    for logical in ["Float panel", "Move to group", "Close panel"] {
+    for logical in ["Float panel", "Move Panel to Group", "Close panel"] {
         assert!(
             h.output().shapes.iter().any(|shape| paints(&shape.shape, &format!("Action visual: {logical}"))),
             "custom action must paint: {logical}"
@@ -1381,6 +1384,7 @@ fn returning_to_a_singleton_or_floating_source_body_is_an_explicit_noop() {
                 tabs: panels.iter().map(|id| (*id, Rect::NOTHING)).collect(),
                 allow_splits,
                 accepts_tabs: true,
+                right_to_left: false,
             };
             let proposal = resolve_drop(&1, rect.center(), &[target]).unwrap();
             assert!(proposal.noop);
@@ -1441,6 +1445,7 @@ fn unchanged_tab_slots_are_explicit_noops_with_bounded_insertion_markers() {
         ],
         allow_splits: true,
         accepts_tabs: true,
+        right_to_left: false,
     };
     for (panel, positions) in [(1, [10.0, 50.0]), (2, [70.0, 110.0]), (3, [130.0, 210.0])] {
         for x in positions {
@@ -1522,6 +1527,7 @@ fn overflow_noop_detection_uses_logical_order_including_hidden_tabs() {
         ],
         allow_splits: true,
         accepts_tabs: true,
+        right_to_left: false,
     };
     assert!(resolve_drop(&1, pos2(10.0, 12.0), std::slice::from_ref(&target)).unwrap().noop);
     // Before the next visible tab crosses hidden tab 2 and really changes the order.
@@ -1542,6 +1548,7 @@ fn insertion_markers_stay_inside_clipped_and_singleton_strips() {
                 tabs: vec![(1, Rect::from_min_size(pos2(tab_left, 20.0), vec2(60.0, 30.0)))],
                 allow_splits: true,
                 accepts_tabs: true,
+                right_to_left: false,
             };
             for x in [rect.left(), rect.center().x, rect.right()] {
                 let proposal = resolve_drop(&1, pos2(x, 25.0), std::slice::from_ref(&target)).unwrap();
@@ -1557,7 +1564,8 @@ fn insertion_markers_stay_inside_clipped_and_singleton_strips() {
 #[test]
 fn insertion_marker_handles_subpixel_strip_crossing_zero_without_panicking() {
     let rect = Rect::from_min_max(pos2(-0.001, 0.0), pos2(0.002, 30.0));
-    let target = DropTarget { anchor: 1, rect, tab_strip: Some(rect), tabs: vec![(1, rect)], allow_splits: true, accepts_tabs: true };
+    let target =
+        DropTarget { anchor: 1, rect, tab_strip: Some(rect), tabs: vec![(1, rect)], allow_splits: true, accepts_tabs: true, right_to_left: false };
     let proposal = resolve_drop(&1, pos2(0.0, 12.0), &[target]).unwrap();
     assert!(proposal.noop);
     assert!(rect.contains_rect(proposal.insertion.unwrap()));

@@ -211,7 +211,7 @@ fn group_dropped_on_a_seam_inserts_between_and_shows_a_horizontal_line() {
     d.hold(bar(&d, 5), seam);
     assert!(d.painted(hline(307.0, 0.0..=240.0)), "a horizontal line across the column at the seam");
     let out = d.step(vec![button(seam, false)]);
-    assert_eq!(moved(&out.actions), Some((5, &Target::At { anchor: 2, placement: Placement::Group { below: true } })));
+    assert_eq!(moved(&out.actions), Some((5, &Target::At { anchor: 2, placement: Placement::Group { below: true, height: None } })));
     assert_eq!(columns(&d.layout, Side::Start), vec![vec![vec![2], vec![5], vec![3]]]);
     assert!(d.layout.floating.is_empty());
 }
@@ -220,7 +220,7 @@ fn group_dropped_on_a_seam_inserts_between_and_shows_a_horizontal_line() {
 fn a_tab_dropped_on_a_seam_or_column_edge_moves_only_that_panel() {
     let mut d = Driver::new(docked(Side::Start, &[&[&[2, 3], &[4]]]));
     let out = d.drag(d.tab(3).center(), pos2(120.0, 309.0));
-    assert_eq!(out.actions, vec![Action::Move { panel: 3, anchor: 2, placement: Placement::Group { below: true } }]);
+    assert_eq!(out.actions, vec![Action::Move { panel: 3, anchor: 2, placement: Placement::Group { below: true, height: None } }]);
     assert_eq!(columns(&d.layout, Side::Start), vec![vec![vec![2], vec![3], vec![4]]]);
     d.settle();
     d.drag(d.tab(4).center(), pos2(246.0, 200.0));

@@ -109,7 +109,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     fn title_bar(&mut self, ui: &mut Ui, window: &Floating<P>, title: Rect, rect: Rect, style: &ChromeStyle) {
         let Some(first) = window.panels().next() else { return };
         let movable = window.panels().all(|p| self.permissions(p).movable);
-        let closable = window.panels().all(|p| self.permissions(p).closable);
+        let closable = self.style.close_button && window.panels().all(|p| self.permissions(p).closable);
         let (move_label, close_label) = (self.style.move_window_label.clone(), self.style.close_window_label.clone());
         let mut bar = TitleBar::new(self.id.with(("move-group", Some(first))), &move_label).movable(movable);
         if closable {
@@ -256,7 +256,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 let anchor = members.first()?.clone();
                 return Some(DropProposal {
                     anchor,
-                    placement: Placement::Group { below: true },
+                    placement: Placement::Group { below: true, height: None },
                     preview: Rect::NOTHING,
                     insertion: None,
                     noop: true,
@@ -266,7 +266,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 Some(panel) => (panel, true),
                 None => (anchor(b)?, false),
             };
-            return Some(DropProposal { anchor, placement: Placement::Group { below }, preview: Rect::NOTHING, insertion: Some(line), noop: false });
+            return Some(DropProposal {
+                anchor,
+                placement: Placement::Group { below, height: None },
+                preview: Rect::NOTHING,
+                insertion: Some(line),
+                noop: false,
+            });
         }
         let (panels, rect, strip) = hit.groups.iter().find(|(_, rect, _)| rect.contains(pointer))?;
         if strip.contains(pointer) || same(panels) {
@@ -281,7 +287,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             return None;
         };
         let insertion = Some(line(if below { rect.bottom() } else { rect.top() }));
-        Some(DropProposal { anchor: anchor(panels)?, placement: Placement::Group { below }, preview: Rect::NOTHING, insertion, noop: false })
+        Some(DropProposal {
+            anchor: anchor(panels)?,
+            placement: Placement::Group { below, height: None },
+            preview: Rect::NOTHING,
+            insertion,
+            noop: false,
+        })
     }
 
     /// What a group drag carries: the whole window rect for the only group of a floating

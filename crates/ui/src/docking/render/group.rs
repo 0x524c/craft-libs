@@ -33,7 +33,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     pub(super) fn group(&mut self, ui: &mut Ui, panels: &[P], active: usize, minimized: bool, rect: Rect, kind: GroupKind) {
         let Some(selected) = panels.get(active) else { return };
         let policy = self.permissions(selected);
-        let splits = kind == GroupKind::Frame;
+        let splits = kind == GroupKind::Frame && policy.accepts_splits;
+        let rtl = self.style.right_to_left;
         if stripless(panels, &*self.content) {
             self.contents(ui, selected, rect);
             self.targets.push(DropTarget {
@@ -43,6 +44,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 tabs: vec![(selected.clone(), Rect::NOTHING)],
                 allow_splits: splits,
                 accepts_tabs: policy.accepts_tabs,
+                right_to_left: rtl,
             });
             return;
         }
@@ -50,10 +52,19 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let strip = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.top() + self.style.tab_height).min(rect.bottom())));
         ui.painter().rect_filled(strip, 0.0, self.style.tab_background);
         let floating = matches!(kind, GroupKind::Floating { .. });
+        // Laid out left to right, then mirrored in a right-to-left layout: tabs from the right
+        // edge, the header (the host's ≡) at the left.
+        let mirror = |r: Rect| {
+            if rtl {
+                Rect::from_x_y_ranges((strip.left() + strip.right() - r.right())..=(strip.left() + strip.right() - r.left()), r.y_range())
+            } else {
+                r
+            }
+        };
         let requested = self.content.group_header_width(panels, selected, floating);
         let header_width = if requested.is_finite() { requested.clamp(0.0, strip.width()) } else { 0.0 };
         if header_width > 0.0 {
-            let header = Rect::from_min_max(pos2(strip.right() - header_width, strip.top()), strip.max);
+            let header = mirror(Rect::from_min_max(pos2(strip.right() - header_width, strip.top()), strip.max));
             let mut child = ui.new_child(UiBuilder::new().id(self.id.with(("header", selected))).max_rect(header));
             child.set_clip_rect(header.intersect(ui.clip_rect()));
             self.content.group_header(&mut child, panels, selected, floating);
@@ -78,13 +89,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let mut shown = Vec::new();
         for (index, width) in &fit.shown {
             let Some(panel) = panels.get(*index) else { continue };
-            let tab = Rect::from_min_size(pos2(x, strip.top()), vec2(*width, strip.height()));
+            let tab = mirror(Rect::from_min_size(pos2(x, strip.top()), vec2(*width, strip.height())));
             self.tab(ui, panel, tab, *index == active, rect, Some(&owner));
             shown.push((panel.clone(), tab));
             x += width;
         }
         if !fit.overflow.is_empty() && fit.overflow_width > 0.0 {
-            let overflow = Rect::from_min_size(pos2(x, strip.top()), vec2(fit.overflow_width, strip.height()));
+            let overflow = mirror(Rect::from_min_size(pos2(x, strip.top()), vec2(fit.overflow_width, strip.height())));
             let response = ui.interact(overflow, self.id.with(("overflow", selected)), Sense::click());
             self.register_interaction(ui.ctx(), response.id);
             response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.panels_label));
@@ -104,10 +115,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             });
             x += fit.overflow_width;
         }
-        let bar = Rect::from_min_max(pos2(x.min(strip.right() - header_width), strip.top()), pos2(strip.right() - header_width, strip.bottom()));
+        let bar =
+            mirror(Rect::from_min_max(pos2(x.min(strip.right() - header_width), strip.top()), pos2(strip.right() - header_width, strip.bottom())));
         self.group_handle(ui, "drag-bar", bar, &owner, movable);
         // Registered last, so the band wins over the tabs below it.
-        let border = Rect::from_min_max(strip.min, pos2(strip.right() - header_width, (strip.top() + BORDER_BAND).min(strip.bottom())));
+        let border = mirror(Rect::from_min_max(strip.min, pos2(strip.right() - header_width, (strip.top() + BORDER_BAND).min(strip.bottom()))));
         self.group_handle(ui, "drag-border", border, &owner, movable);
         // Logical order, hidden tabs included without a hit area, for no-op detection.
         let tabs =
@@ -119,6 +131,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             tabs,
             allow_splits: splits,
             accepts_tabs: policy.accepts_tabs,
+            right_to_left: rtl,
         });
         if !minimized {
             self.contents(ui, selected, Rect::from_min_max(pos2(rect.left(), strip.bottom()), rect.max));
@@ -150,7 +163,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let active = response.has_focus() || response.hovered();
         if movable {
             // A grip mark at rest, centred in the bar's reserved width beside the header.
-            let grip = Rect::from_min_max(pos2((hit.right() - self.style.drag_bar_width).max(hit.left()), hit.top()), hit.max);
+            let grip = if self.style.right_to_left {
+                Rect::from_min_max(hit.min, pos2((hit.left() + self.style.drag_bar_width).min(hit.right()), hit.bottom()))
+            } else {
+                Rect::from_min_max(pos2((hit.right() - self.style.drag_bar_width).max(hit.left()), hit.top()), hit.max)
+            };
             let stroke = Stroke::new(1.0, if active { self.style.text } else { self.style.inactive_text });
             let half = (hit.height() * 0.2).min(4.0);
             for k in -1..=1 {
@@ -192,10 +209,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     /// The group items of the menu tail: Close Tab Group, Minimize or Expand, Float Tab Group
-    /// and Group with. `panel` is the panel whose menu this is.
+    /// and Move Group to. `panel` is the panel whose menu this is.
     fn group_menu(&mut self, ui: &mut Ui, owner: &TabGroup<'_, P>, panel: &P) {
         let all = |check: &dyn Fn(crate::docking::Permissions) -> bool| owner.panels.iter().all(|p| check(self.permissions(p)));
-        let closable = all(&|p| p.closable);
+        let closable = self.style.close_menu_items && all(&|p| p.closable);
         let movable = all(&|p| p.movable);
         let floatable = movable && all(&|p| p.floatable);
         if closable && self.menu_action(ui, &self.close_group_label()) {
@@ -220,7 +237,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         let targets = if movable { self.group_targets(owner.panels) } else { Vec::new() };
         if !targets.is_empty() {
-            let logical = self.style.group_with_label.clone();
+            let logical = self.style.move_group_to_label.clone();
             let text = self.content.action_label(ui, &logical, &self.style.font, self.style.text);
             let response = ui.menu_button(text, |ui| {
                 egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
@@ -278,21 +295,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         response
     }
 
-    /// A tab's label, cut at the end with '…' to fit `width`. egui does not wrap a host's
-    /// pre-laid-out `WidgetText::Galley` again, so that one is laid out again from its job.
+    /// A tab's label, cut at the end with '…' to fit `width`.
     pub(super) fn tab_label(&mut self, ui: &Ui, panel: &P, label: &str, color: Color32, width: f32) -> Arc<Galley> {
-        let galley = self.content.label(ui, panel, label, &self.style.font, color).into_galley(
-            ui,
-            Some(egui::TextWrapMode::Truncate),
-            width,
-            self.style.font.clone(),
-        );
-        if galley.size().x <= width + 0.5 {
-            return galley;
-        }
-        let mut job = (*galley.job).clone();
-        job.wrap = egui::text::TextWrapping::truncate_at_width(width);
-        ui.painter().layout_job(job)
+        let text = self.content.label(ui, panel, label, &self.style.font, color);
+        crate::docking::chrome::truncated(ui, text, width, self.style.font.clone())
     }
 
     /// True while a tab's focus came from the pointer, which shows no focus outline. Tab or an
@@ -369,7 +375,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let targets: Vec<P> =
                 if policy.movable { self.layout.move_targets(panel, |p| self.permissions(p)).into_iter().cloned().collect() } else { Vec::new() };
             if !targets.is_empty() {
-                let text = self.content.action_label(ui, &self.style.move_label, &self.style.font, self.style.text);
+                let text = self.content.action_label(ui, &self.style.move_panel_to_label, &self.style.font, self.style.text);
                 let response = ui.menu_button(text, |ui| {
                     egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                         for target in &targets {
@@ -384,9 +390,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                         }
                     });
                 });
-                response.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.move_label));
+                response
+                    .response
+                    .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.move_panel_to_label));
             }
-            if policy.closable {
+            if policy.closable && self.style.close_menu_items {
                 let text = self.content.action_label(ui, &self.style.close_label, &self.style.font, self.style.text);
                 let response = ui.button(text);
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.close_label));

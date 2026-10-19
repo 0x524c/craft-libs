@@ -127,7 +127,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     let panel_rect = Rect::from_min_max(pos2(rect.left(), top), pos2(rect.right(), (top + header + share).min(rect.bottom())));
                     let title_rect = Rect::from_min_max(panel_rect.min, pos2(panel_rect.right(), (top + header).min(panel_rect.bottom())));
                     self.tab(ui, &entry.panel, title_rect, entry.open, panel_rect, None);
-                    let collapse = Rect::from_min_max(pos2((title_rect.right() - 18.0).max(title_rect.left()), title_rect.top()), title_rect.max);
+                    let collapse = if self.style.right_to_left {
+                        Rect::from_min_max(title_rect.min, pos2((title_rect.left() + 18.0).min(title_rect.right()), title_rect.bottom()))
+                    } else {
+                        Rect::from_min_max(pos2((title_rect.right() - 18.0).max(title_rect.left()), title_rect.top()), title_rect.max)
+                    };
                     let response = ui.interact(collapse, self.id.with(("collapse", &entry.panel)), Sense::click());
                     self.register_interaction(ui.ctx(), response.id);
                     response.widget_info(|| {
@@ -152,8 +156,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                         rect: panel_rect,
                         tab_strip: Some(title_rect),
                         tabs: vec![(entry.panel.clone(), title_rect)],
-                        allow_splits: true,
+                        allow_splits: self.permissions(&entry.panel).accepts_splits,
                         accepts_tabs: self.permissions(&entry.panel).accepts_tabs,
+                        right_to_left: self.style.right_to_left,
                     });
                     top = panel_rect.bottom();
                     if entry.open && remaining > 0.0 {
@@ -211,7 +216,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             ui.new_child(UiBuilder::new().id(self.id.with(("body", panel))).max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
         child.set_clip_rect(rect.intersect(ui.clip_rect()));
         self.content.body(&mut child, panel);
-        if child.rect_contains_pointer(rect) && child.input(|i| i.pointer.primary_pressed()) {
+        // Any button: a canvas pans with the middle button and opens menus with the secondary.
+        if child.rect_contains_pointer(rect) && child.input(|i| i.pointer.any_pressed()) {
             self.output.focused = Some(panel.clone());
         }
     }

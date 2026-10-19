@@ -3,7 +3,11 @@
 //! these; other hosts (task panes) use them with their own ids and actions. Nothing here changes
 //! a layout: the caller turns the responses into its own commands.
 
-use egui::{Color32, Context, FontId, Id, Key, LayerId, Order, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2, WidgetText, pos2, vec2};
+use std::sync::Arc;
+
+use egui::{
+    Color32, Context, FontId, Galley, Id, Key, LayerId, Order, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2, WidgetText, pos2, vec2,
+};
 
 use super::{DockStyle, PanelLimits, resize::AnchoredResize};
 
@@ -24,6 +28,8 @@ pub struct ChromeStyle {
     pub weak_text: Color32,
     pub accent: Color32,
     pub font: FontId,
+    /// Mirror the title bar: buttons at the left, the title at the right.
+    pub right_to_left: bool,
 }
 
 impl ChromeStyle {
@@ -40,6 +46,7 @@ impl ChromeStyle {
             weak_text: style.inactive_text,
             accent: style.accent,
             font: style.font.clone(),
+            right_to_left: style.right_to_left,
         }
     }
 }
@@ -248,8 +255,21 @@ pub fn clamp(rect: Rect, bounds: Rect) -> Rect {
     Rect::from_min_size(min, size)
 }
 
+/// `text` on one line no wider than `width`, cut at the end with '…'. egui does not wrap a
+/// host's pre-laid-out `WidgetText::Galley` again, so that one is laid out again from its job.
+pub(super) fn truncated(ui: &Ui, text: WidgetText, width: f32, font: FontId) -> Arc<Galley> {
+    let galley = text.into_galley(ui, Some(egui::TextWrapMode::Truncate), width, font);
+    if galley.size().x <= width + 0.5 {
+        return galley;
+    }
+    let mut job = (*galley.job).clone();
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+    ui.painter().layout_job(job)
+}
+
 /// A title bar: two grip lines (or a title), an optional ▾ menu button and an optional ×, 10 pt
-/// in from the right edge. The bar senses clicks and drags; double-clicks are the caller's.
+/// in from the right edge, mirrored when [`ChromeStyle::right_to_left`] is set. The bar senses
+/// clicks and drags; double-clicks are the caller's.
 pub struct TitleBar<'a> {
     id: Id,
     move_label: &'a str,
@@ -274,7 +294,7 @@ impl<'a> TitleBar<'a> {
         Self { id, move_label, title: None, menu: None, close: None, movable: true }
     }
 
-    /// Text at the left instead of the grip lines.
+    /// Text at the leading edge instead of the grip lines, cut with '…' to fit.
     pub fn title(mut self, title: impl Into<WidgetText>) -> Self {
         self.title = Some(title.into());
         self
@@ -302,17 +322,27 @@ impl<'a> TitleBar<'a> {
         let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
         painter.rect_filled(rect, 0.0, style.title_background);
         let side = rect.height();
+        // Laid out left to right, then mirrored in a right-to-left layout.
+        let mirror = |r: Rect| {
+            if style.right_to_left {
+                Rect::from_x_y_ranges((rect.left() + rect.right() - r.right())..=(rect.left() + rect.right() - r.left()), r.y_range())
+            } else {
+                r
+            }
+        };
         let close_rect = self.close.map(|_| Rect::from_center_size(pos2(rect.right() - 10.0, rect.center().y), vec2(side, side)));
         let menu_right = close_rect.map_or(rect.right() - 3.0, |close| close.left() - 2.0);
         let menu_rect = self.menu.map(|_| Rect::from_min_max(pos2(menu_right - side, rect.top()), pos2(menu_right, rect.bottom())));
         let buttons = menu_rect.or(close_rect).map_or(rect.right(), |r| r.left());
-        let bar_rect = Rect::from_min_max(rect.min, pos2(buttons.max(rect.left()), rect.bottom()));
+        let bar_rect = mirror(Rect::from_min_max(rect.min, pos2(buttons.max(rect.left()), rect.bottom())));
+        let (close_rect, menu_rect) = (close_rect.map(mirror), menu_rect.map(mirror));
         let bar = ui.interact(bar_rect, self.id, Sense::click_and_drag());
         let bar = if self.movable { bar.on_hover_cursor(egui::CursorIcon::Grab) } else { bar };
         bar.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), self.move_label));
         if let Some(title) = self.title {
-            let galley = title.into_galley(ui, Some(egui::TextWrapMode::Truncate), (bar_rect.width() - 12.0).max(0.0), style.font.clone());
-            painter.galley(pos2(rect.left() + 6.0, rect.center().y - galley.size().y * 0.5), galley, style.text);
+            let galley = truncated(ui, title, (bar_rect.width() - 12.0).max(0.0), style.font.clone());
+            let x = if style.right_to_left { bar_rect.right() - 6.0 - galley.size().x } else { bar_rect.left() + 6.0 };
+            painter.galley(pos2(x, rect.center().y - galley.size().y * 0.5), galley, style.text);
         } else {
             let grip = Stroke::new(0.6, style.weak_text);
             for k in 0..2 {

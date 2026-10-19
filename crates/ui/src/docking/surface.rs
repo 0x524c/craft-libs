@@ -28,7 +28,8 @@ pub struct DockStyle {
     /// Localize these action labels in the application adapter.
     pub float_label: String,
     pub close_label: String,
-    pub move_label: String,
+    /// Tab menu item that moves one panel into another group (submenu of target panels).
+    pub move_panel_to_label: String,
     pub panels_label: String,
     pub resize_label: String,
     pub resize_window_label: String,
@@ -38,7 +39,8 @@ pub struct DockStyle {
     pub minimize_label: String,
     pub expand_label: String,
     pub float_group_label: String,
-    pub group_with_label: String,
+    /// Group menu item that moves the whole group into another group (submenu of targets).
+    pub move_group_to_label: String,
     /// Minimum width of the drag bar left of the group header. Tabs shrink, then overflow,
     /// before the bar narrows.
     pub drag_bar_width: f32,
@@ -74,8 +76,12 @@ pub struct DockStyle {
     pub right_to_left: bool,
     /// [D] Accessibility label of a column bar.
     pub move_column_label: String,
+    /// [D] Column menu and group menu items.
     pub collapse_to_icons_label: String,
     pub expand_panels_label: String,
+    /// [D] Accessibility labels of the column bar's »/« button, distinct from the menu items.
+    pub collapse_column_label: String,
+    pub expand_column_label: String,
     pub move_window_label: String,
     pub close_window_label: String,
     /// Frame profile menu labels.
@@ -87,6 +93,12 @@ pub struct DockStyle {
     pub restore_frame_label: String,
     /// Shown where native windows are available (feature `native-windows`).
     pub new_window_label: String,
+    /// Show the built-in Close items in tab and group menus (Close panel, Close Tab Group,
+    /// Close Other Panels in Group) for closable panels. A host that draws its own Close items
+    /// turns this off and keeps [`Permissions::closable`], so its close actions still apply.
+    pub close_menu_items: bool,
+    /// Show × on the title bar of a floating window whose panels are all closable.
+    pub close_button: bool,
 }
 
 /// Which arrangement a [`DockStyle`] renders and labels.
@@ -114,7 +126,7 @@ impl DockStyle {
             font: FontId::proportional(12.0),
             float_label: "Float panel".into(),
             close_label: "Close panel".into(),
-            move_label: "Move to group".into(),
+            move_panel_to_label: "Move Panel to Group".into(),
             panels_label: "Panels".into(),
             resize_label: "Resize panels".into(),
             resize_window_label: "Resize panel window".into(),
@@ -123,7 +135,7 @@ impl DockStyle {
             minimize_label: "Minimize".into(),
             expand_label: "Expand".into(),
             float_group_label: "Float Tab Group".into(),
-            group_with_label: "Group with".into(),
+            move_group_to_label: "Move Group to".into(),
             drag_bar_width: 40.0,
             floating_background: visuals.window_fill,
             floating_stroke: visuals.window_stroke,
@@ -142,6 +154,8 @@ impl DockStyle {
             move_column_label: "Move panel column".into(),
             collapse_to_icons_label: "Collapse to Icons".into(),
             expand_panels_label: "Expand Panels".into(),
+            collapse_column_label: "Collapse column to icons".into(),
+            expand_column_label: "Expand column".into(),
             move_window_label: "Move panel window".into(),
             close_window_label: "Close panel window".into(),
             undock_label: "Undock Panel".into(),
@@ -151,6 +165,8 @@ impl DockStyle {
             maximize_label: "Maximize Frame".into(),
             restore_frame_label: "Restore Frame Size".into(),
             new_window_label: "Move Panel to New Window".into(),
+            close_menu_items: true,
+            close_button: true,
         }
     }
 
@@ -185,6 +201,8 @@ impl DockStyle {
 pub struct DockOutput<P> {
     pub actions: Vec<Action<P>>,
     pub error: Option<DockError>,
+    /// The panel the user focused this frame: a clicked tab or menu entry, a drop, a raised
+    /// window, or a press of any pointer button in a panel body, stripless panels included.
     pub focused: Option<P>,
     /// Whole-floating-group gesture identity; host may display its own group drop preview.
     pub group_drag: Option<P>,

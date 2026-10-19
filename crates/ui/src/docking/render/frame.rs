@@ -213,7 +213,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     pub(super) fn frame_items(&mut self, ui: &mut egui::Ui, owner: &TabGroup<'_, P>, panel: &P) {
         if self.style.profile == Profile::Frame {
             let others = owner.panels.iter().filter(|p| *p != panel).all(|p| self.permissions(p).closable);
-            if owner.panels.len() > 1 && others && self.menu_action(ui, &self.style.close_others_label.clone()) {
+            if owner.panels.len() > 1 && others && self.style.close_menu_items && self.menu_action(ui, &self.style.close_others_label.clone()) {
                 self.output.actions.push(Action::CloseOthers { panel: panel.clone() });
             }
             if owner.kind == GroupKind::Frame {

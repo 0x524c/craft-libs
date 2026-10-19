@@ -62,9 +62,9 @@ fn panels_of(groups: &[Group<u32>]) -> Vec<Vec<u32>> {
 #[test]
 fn group_moves_keep_order_active_tab_and_minimized_state() {
     let targets = [
-        Target::At { anchor: 5, placement: Placement::Group { below: true } },
+        Target::At { anchor: 5, placement: Placement::Group { below: true, height: None } },
         Target::At { anchor: 5, placement: Placement::Column { after: true } },
-        Target::At { anchor: 8, placement: Placement::Group { below: false } },
+        Target::At { anchor: 8, placement: Placement::Group { below: false, height: None } },
         Target::NewDock { side: Side::Start },
         Target::Float { rect: Some([20.0, 20.0, 200.0, 300.0]) },
         Target::Float { rect: None },
@@ -143,7 +143,7 @@ fn column_moves_and_floats_keep_every_group() {
 #[test]
 fn window_docks_as_stacked_groups_or_merges_as_tabs() {
     let mut layout = docked();
-    layout.apply(Action::MoveWindow { panel: 8, to: Target::At { anchor: 4, placement: Placement::Group { below: true } } }).unwrap();
+    layout.apply(Action::MoveWindow { panel: 8, to: Target::At { anchor: 4, placement: Placement::Group { below: true, height: None } } }).unwrap();
     assert_eq!(panels_of(&dock(&layout, Side::End)[0].groups), [vec![2, 3], vec![4], vec![6, 7], vec![8]]);
     assert!(layout.floating.is_empty());
 
@@ -287,7 +287,7 @@ fn locked_workspace_rejects_structure_but_allows_activate_open_minimize_and_resi
         Action::Move { panel: 2, anchor: 5, placement: Placement::Tab { before: None } },
         Action::MoveGroup { panel: 2, to: Target::Float { rect: None } },
         Action::MoveColumn { panel: 5, to: Target::NewDock { side: Side::Start } },
-        Action::MoveWindow { panel: 6, to: Target::At { anchor: 4, placement: Placement::Group { below: true } } },
+        Action::MoveWindow { panel: 6, to: Target::At { anchor: 4, placement: Placement::Group { below: true, height: None } } },
         Action::Float { panel: 4, rect: [0.0, 0.0, 100.0, 100.0] },
         Action::MoveFloating { panel: 6, rect: [0.0, 0.0, 100.0, 100.0] },
         Action::Close { panel: 4 },

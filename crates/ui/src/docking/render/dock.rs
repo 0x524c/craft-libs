@@ -346,7 +346,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if usable(button) {
             let response = ui.interact(button, self.id.with(("column-collapse", Some(first))), Sense::click());
             self.register_interaction(ui.ctx(), response.id);
-            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label));
+            let button_label = if column.iconic { &self.style.expand_column_label } else { &self.style.collapse_column_label };
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), button_label));
             // The arrows point where the column goes: towards the window edge when it collapses.
             let glyph = if (edge == Edge::Left) != column.iconic { "«" } else { "»" };
             let color = if response.hovered() || response.has_focus() { self.style.text } else { self.style.inactive_text };

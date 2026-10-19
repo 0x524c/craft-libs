@@ -18,7 +18,10 @@ Office apps that draw their own document with a few task panes beside it use
 
 Sides are logical: `Side::Start` is the left edge, or the right edge when
 `DockStyle::right_to_left` is set. egui has no app-wide direction, so the app sets it from its
-locale.
+locale. Right to left, tab strips also mirror: the first tab is rightmost, the group header and
+drag bar are at the left, and drop insertion slots follow. Accordion headers and floating title
+bars (`chrome::TitleBar`, through `ChromeStyle::right_to_left`) mirror too. Frame splits keep
+their sides.
 
 ## Model
 
@@ -57,17 +60,25 @@ layout.apply(Action::Move {
 - `Move`, `Float` and `Close` act on one panel. `MoveGroup`, `MoveColumn` and `MoveWindow` move a
   group, a dock column or a floating window, named by any panel in it.
 - A `Target` is `At { anchor, placement }`, `Float { rect }` or `NewDock { side }`.
-- A `Placement` is a tab position, a split zone, a new group above or below, a new column, or a
-  new frame on an outer edge.
+- A `Placement` is a tab position, a split zone, a new group above or below (with an optional
+  preferred `height`), a new column, or a new frame on an outer edge.
+- Containers take different placements: a dock column takes groups and columns, not splits.
+  `Placement::for_zone(layout, anchor, zone, right_to_left)` maps a left, right, top, bottom or
+  centre zone onto what the anchor's container takes: a split in the frame tree, a new column on
+  that side or a new group above or below in a dock, a group above or below in a floating window.
 - Other actions select, minimize, collapse to icons, resize splits, columns and groups, and move
   a floating window to its own OS window (`SetNative`, feature `native-windows`).
 
 Every action checks the whole result before it commits. A bad target, a duplicate id, a stale
 split path or invalid geometry returns a `DockError` and leaves the layout unchanged. The source
-panel is never lost.
+panel is never lost. `apply`, `apply_with_permissions` and `apply_all` return the panels the
+actions closed, so the app can release their state; `closed_by` lists them before applying.
 
-`Permissions` limit what may happen to a panel. `Permissions::PROTECTED` keeps a canvas docked
-and open and takes no tabs, but allows splits beside it. `apply_with_permissions` applies them.
+`Permissions` limit what may happen to a panel: `movable`, `floatable`, `closable`,
+`accepts_tabs` and `accepts_splits`. `apply_with_permissions` enforces them for every action,
+whoever issues it. `Permissions::PROTECTED` keeps a canvas docked and open and takes neither tabs
+nor side splits; a group dropped on it floats there. An app that opens panels beside its canvas
+uses `Permissions { accepts_splits: true, ..Permissions::PROTECTED }`.
 
 ## Workspace
 
@@ -98,7 +109,8 @@ survives.
 
 `DockOutput` also has:
 
-- `focused`: the focused panel.
+- `focused`: the panel the user focused this frame: a clicked tab, a drop, a raised window, or a
+  press of any pointer button in a panel body, bare and protected panels included.
 - `events`: requests outside the layout, such as `DockEvent::ToggleMaximize` (Frame) and
   `DockEvent::ToggleAutoCollapse` (Dock).
 - `error`: a rejected gesture.
@@ -112,6 +124,10 @@ Builder options on `DockArea`:
 | `auto_collapse_iconic(on)` | Close a flyout on Escape or a click outside (default on). |
 | `raise_panel(panel)` | Raise and focus a panel's floating window this frame. |
 | `blocked_rects(rects)` | App overlays that docking gestures must ignore. |
+
+`DockStyle::close_menu_items` and `DockStyle::close_button` hide the built-in Close menu items
+and the floating window ×. They hide controls only: a panel that stays `closable` still closes
+by the app's own Close items and commands.
 
 `DockArea::chrome_has_focus` tells whether keyboard focus is on docking chrome rather than on a
 panel body. `begin_drag` hands a drag that started in the app's own chrome to the area.
@@ -141,7 +157,7 @@ let command: DockCommand<PanelId> = serde_json::from_value(params)?;
 if command.is_app_owned() {
     return app.workspace_command(command);
 }
-let closed = command.apply(&mut app.workspace, |panel| app.permissions(panel))?;
+let closed = command.apply(&mut app.workspace, style.right_to_left, |panel| app.permissions(panel))?;
 ```
 
 | Id | Params (`?` is optional) |
@@ -160,7 +176,9 @@ let closed = command.apply(&mut app.workspace, |panel| app.permissions(panel))?;
 | `ui.dock` | `{action}`, or `{operation, …}` |
 
 - `zone` is `tab`, `center`, `left`, `right`, `top`, `bottom`, `above` or `below`. `before` names
-  the tab to insert before; `null` appends.
+  the tab to insert before; `null` appends. `left`, `right`, `top` and `bottom` follow
+  `Placement::for_zone`, so beside a docked panel they make a new column or group. `apply` and
+  `to_actions` take the layout's `right_to_left` for that.
 - `group` moves the panel's whole group; `column` moves its dock column, or its whole window when
   it floats. `side` is `Start` or `End`.
 - Without a value, `minimized`, `iconic` and `locked` toggle.

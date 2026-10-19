@@ -89,6 +89,8 @@ struct Driver {
     modifiers: Modifiers,
     focused: bool,
     transparent: bool,
+    /// Applied to the style every frame.
+    tweak: fn(&mut DockStyle),
     shapes: Vec<egui::epaint::ClippedShape>,
     time: f64,
 }
@@ -107,6 +109,7 @@ impl Driver {
             modifiers: Modifiers::NONE,
             focused: true,
             transparent: false,
+            tweak: |_| {},
             shapes: Vec::new(),
             time: 0.0,
         };
@@ -126,13 +129,14 @@ impl Driver {
             time: Some(self.time),
             ..Default::default()
         };
-        let (layout, content, area, transparent) = (&self.layout, &mut self.content, self.area, self.transparent);
+        let (layout, content, area, transparent, tweak) = (&self.layout, &mut self.content, self.area, self.transparent, self.tweak);
         let mut full = self.ctx.run_ui(input, |ui| {
             let mut style = DockStyle::from_ui(ui);
             if transparent {
                 style.background = Color32::TRANSPARENT;
                 style.tab_background = Color32::TRANSPARENT;
             }
+            tweak(&mut style);
             ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
                 output = DockArea::new(Id::new(AREA)).show_content(ui, layout, &style, content);
             });
@@ -274,21 +278,24 @@ fn top_border_drags_the_group_and_the_menu_button_only_clicks() {
 }
 
 #[test]
-fn group_drop_on_a_frame_edge_splits_and_on_a_protected_canvas_centre_floats() {
+fn group_drop_on_a_frame_edge_splits_and_on_a_protected_canvas_floats() {
     let canvas = || TestContent { protected: vec![1], ..Default::default() };
     let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 600.0));
-    let mut d = Driver::with(frames(), canvas(), area);
+    let mut d = Driver::with(frames(), TestContent::default(), area);
     let out = d.drag(d.rect("drag-bar", 2).center(), pos2(20.0, 300.0));
     assert!(matches!(moved_group(&out.actions), Some(Target::At { anchor: 1, placement: Placement::Split(Zone::Left) })), "{:?}", out.actions);
     let Some(Node::Split { first, second, .. }) = &d.layout.root else { panic!() };
     assert_eq!(**first, tabs(&[2, 3], 1));
     assert_eq!(**second, tabs(&[1], 0));
 
-    // The canvas centre takes nothing: no join, no preview; the group floats there.
-    let mut d = Driver::with(frames(), canvas(), area);
-    let out = d.drag(d.rect("drag-bar", 2).center(), pos2(150.0, 300.0));
-    assert!(matches!(moved_group(&out.actions), Some(Target::Float { .. })), "{:?}", out.actions);
-    assert_eq!(d.layout.root, Some(tabs(&[1], 0)));
+    // A protected canvas takes nothing, at its centre or its edge: no join, no split, no
+    // preview; the group floats there.
+    for at in [pos2(150.0, 300.0), pos2(20.0, 300.0)] {
+        let mut d = Driver::with(frames(), canvas(), area);
+        let out = d.drag(d.rect("drag-bar", 2).center(), at);
+        assert!(matches!(moved_group(&out.actions), Some(Target::Float { .. })), "{:?}", out.actions);
+        assert_eq!(d.layout.root, Some(tabs(&[1], 0)));
+    }
 }
 
 #[test]
@@ -508,7 +515,7 @@ fn drag_bar_menu_has_the_group_items_and_opens_from_the_keyboard() {
     h.run_steps(1);
     h.input_mut().events.push(Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
     h.run_steps(2);
-    for label in ["Close Tab Group", "Minimize", "Float Tab Group", "Group with"] {
+    for label in ["Close Tab Group", "Minimize", "Float Tab Group", "Move Group to"] {
         assert_eq!(h.query_all_by_label(label).count(), 1, "{label}");
     }
     h.get_by_label("Close Tab Group").click();

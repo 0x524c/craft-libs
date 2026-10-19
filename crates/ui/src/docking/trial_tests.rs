@@ -1,5 +1,7 @@
 //! Fixes from the DesignCraft trial: group float size, tab label elision, the drag ghost and
-//! grip, double-clicks on minimized groups, pointer focus, label keys and borrowed lookups.
+//! grip, double-clicks on minimized groups, pointer focus, label keys and borrowed lookups; then
+//! split permissions, body focus, right-to-left strips, close controls, menu and button names,
+//! zone mapping, closed panels from `apply` and group heights.
 
 use super::*;
 
@@ -190,7 +192,7 @@ fn localized_covers_every_label_and_contains_takes_a_borrowed_panel() {
     });
     full.textures_delta.clear();
     let values: Vec<&str> = debug.split("_label: \"").skip(1).filter_map(|rest| rest.split('"').next()).collect();
-    assert_eq!(values.len(), 25, "{debug}");
+    assert_eq!(values.len(), 27, "{debug}");
     assert!(values.iter().all(|v| v.starts_with("dock.")), "a label without a key: {values:?}");
     let unique: std::collections::HashSet<_> = values.iter().collect();
     assert_eq!(unique.len(), values.len());
@@ -198,4 +200,193 @@ fn localized_covers_every_label_and_contains_takes_a_borrowed_panel() {
     let window = Floating::single(vec!["swatches".to_owned()], 0, [0.0, 0.0, 200.0, 200.0]);
     assert!(window.contains("swatches"));
     assert!(!window.contains("layers"));
+}
+
+const AREA_600: Rect = Rect { min: pos2(0.0, 0.0), max: pos2(600.0, 600.0) };
+
+#[test]
+fn a_protected_canvas_takes_no_side_split_and_a_group_dropped_on_its_edge_floats() {
+    let protected = |p: &u32| if *p == 0 { Permissions::PROTECTED } else { Permissions::default() };
+    let split = Action::Move { panel: 4, anchor: 0, placement: Placement::Split(Zone::Left) };
+    let mut layout = docked();
+    assert_eq!(layout.apply_with_permissions(split.clone(), protected), Err(DockError::NotAllowed));
+    let opt_in = |p: &u32| if *p == 0 { Permissions { accepts_splits: true, ..Permissions::PROTECTED } } else { Permissions::default() };
+    assert!(layout.apply_with_permissions(split, opt_in).is_ok());
+
+    let mut d = Driver::with(docked(), TestContent { protected: vec![0], ..Default::default() }, AREA_600);
+    let bar = d.rect("drag-bar", 2);
+    let out = d.drag(bar.center(), pos2(300.0, 300.0));
+    assert!(matches!(moved_group(&out.actions), Some(Target::Float { .. })), "{:?}", out.actions);
+}
+
+#[test]
+fn a_press_in_a_stripless_panel_reports_it_focused() {
+    let mut d = Driver::with(docked(), TestContent { protected: vec![0], ..Default::default() }, AREA_600);
+    for pressed in [PointerButton::Primary, PointerButton::Secondary, PointerButton::Middle] {
+        let at = pos2(420.0, 300.0);
+        let press = Event::PointerButton { pos: at, button: pressed, pressed: true, modifiers: Modifiers::NONE };
+        let out = d.step(vec![Event::PointerMoved(at), press]);
+        assert_eq!(out.focused, Some(0), "{pressed:?}");
+        d.step(vec![Event::PointerButton { pos: at, button: pressed, pressed: false, modifiers: Modifiers::NONE }]);
+        d.step(vec![key(egui::Key::Escape)]);
+    }
+}
+
+#[test]
+fn right_to_left_mirrors_the_tab_strip_and_its_insertion_slots() {
+    let mut d = Driver::with(frames(), TestContent { header: 30.0, ..Default::default() }, AREA_600);
+    d.tweak = |style| style.right_to_left = true;
+    d.step(vec![]);
+    d.step(vec![]);
+    let (first, second, bar) = (d.tab(2), d.tab(3), d.rect("drag-bar", 2));
+    assert!((first.right() - 600.0).abs() < 1.0, "the first tab starts at the right edge: {first:?}");
+    assert!(second.right() <= first.left() + 0.5, "{first:?} {second:?}");
+    assert!(bar.right() <= second.left() + 0.5 && bar.left() >= 304.0 + 30.0 - 0.5, "the bar sits between the tabs and the header: {bar:?}");
+
+    // Just right of the first tab's centre is before it in a right-to-left strip.
+    let out = d.drag(d.tab(1).center(), pos2(first.center().x + 6.0, first.center().y));
+    assert!(out.actions.contains(&Action::Move { panel: 1, anchor: 3, placement: Placement::Tab { before: Some(2) } }), "{:?}", out.actions);
+
+    let strip = Rect::from_min_max(pos2(0.0, 0.0), pos2(100.0, 20.0));
+    let target = DropTarget {
+        anchor: 1,
+        rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(100.0, 80.0)),
+        tab_strip: Some(strip),
+        tabs: vec![(1, Rect::from_min_max(pos2(60.0, 0.0), pos2(100.0, 20.0))), (2, Rect::from_min_max(pos2(20.0, 0.0), pos2(60.0, 20.0)))],
+        allow_splits: true,
+        accepts_tabs: true,
+        right_to_left: true,
+    };
+    let drop = |x: f32| resolve_drop(&9, pos2(x, 10.0), std::slice::from_ref(&target)).unwrap();
+    assert_eq!((drop(90.0).placement, drop(90.0).insertion.unwrap().center().x), (Placement::Tab { before: Some(1) }, 99.0));
+    assert_eq!((drop(70.0).placement, drop(70.0).insertion.unwrap().center().x), (Placement::Tab { before: Some(2) }, 60.0));
+    assert_eq!((drop(10.0).placement, drop(10.0).insertion.unwrap().center().x), (Placement::Tab { before: None }, 20.0));
+}
+
+#[test]
+fn a_right_to_left_title_bar_puts_its_buttons_left_and_cuts_a_galley_title() {
+    let ctx = Context::default();
+    let mut shapes = Vec::new();
+    let mut rects = (Rect::NOTHING, Rect::NOTHING, Rect::NOTHING);
+    let bar = Rect::from_min_size(pos2(10.0, 10.0), vec2(120.0, 18.0));
+    for _ in 0..2 {
+        let mut full = ctx.run_ui(RawInput::default(), |ui| {
+            let mut style = DockStyle::from_ui(ui);
+            style.right_to_left = true;
+            let chrome = chrome::ChromeStyle::from_dock(&style);
+            let title = egui::WidgetText::Galley(ui.painter().layout_no_wrap("Paragraph Styles and More".into(), style.font.clone(), style.text));
+            let shown = chrome::TitleBar::new(Id::new("title"), "Move").title(title).menu("Menu").close("Close").show(ui, bar, &chrome);
+            rects = (shown.bar.rect, shown.menu.unwrap().rect, shown.close.unwrap().rect);
+        });
+        full.textures_delta.clear();
+        shapes = full.shapes;
+    }
+    let (grip, menu, close) = rects;
+    assert!(close.center().x < menu.center().x && menu.right() <= grip.left() + 0.5, "{close:?} {menu:?} {grip:?}");
+    assert!((grip.right() - bar.right()).abs() < 0.5);
+    let title = flat(&shapes)
+        .into_iter()
+        .find_map(|(_, shape)| match shape {
+            egui::Shape::Text(text) if text.galley.text().starts_with("Para") => Some(text),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(last_char(&title.galley), Some('…'));
+    assert!(title.pos.x + title.galley.size().x <= grip.right() + 0.5 && title.pos.x >= grip.left());
+}
+
+#[test]
+fn hidden_close_controls_leave_closing_to_the_host() {
+    let layout = Layout { root: Some(tabs(&[1, 2], 0)), floating: vec![Floating::single(vec![5, 6], 0, [80.0, 70.0, 300.0, 220.0])] };
+    let close = Id::new(AREA).with(("move-group", Some(&5u32))).with("close");
+    let mut d = Driver::new(layout);
+    assert!(d.ctx.read_response(close).is_some());
+    d.tweak = |style| {
+        style.close_button = false;
+        style.close_menu_items = false;
+    };
+    d.step(vec![]);
+    d.step(vec![]);
+    assert!(d.ctx.read_response(close).is_none());
+    let at = d.tab(1).center();
+    let secondary = |pressed| Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed, modifiers: Modifiers::NONE };
+    d.step(vec![Event::PointerMoved(at), secondary(true)]);
+    d.step(vec![secondary(false)]);
+    d.step(vec![]);
+    let painted = |d: &Driver, label: &str| texts(d).iter().any(|(_, t)| t.galley.text() == label);
+    assert!(painted(&d, "Float panel"), "the tab menu is open");
+    assert!(!painted(&d, "Close panel") && !painted(&d, "Close Tab Group"));
+    // The panels stay closable: the host's own Close applies and reports what it closed.
+    assert_eq!(d.layout.apply_with_permissions(Action::CloseWindow { panel: 5 }, |p| d.content.permissions(p)), Ok(vec![5, 6]));
+}
+
+#[test]
+fn apply_all_returns_every_panel_its_actions_closed() {
+    let mut layout = Layout { root: Some(tabs(&[1, 2, 3], 0)), floating: vec![Floating::single(vec![5, 6], 0, [80.0, 70.0, 300.0, 220.0])] };
+    let closed = layout
+        .apply_all([Action::Activate { panel: 2 }, Action::CloseOthers { panel: 2 }, Action::CloseWindow { panel: 6 }], |_| Permissions::default());
+    assert_eq!(closed, Ok(vec![1, 3, 5, 6]));
+    assert_eq!(layout.apply(Action::Close { panel: 2 }), Ok(vec![2]));
+}
+
+#[test]
+fn the_column_button_and_the_column_menu_item_have_distinct_names() {
+    use egui_kittest::{Harness, kittest::Queryable};
+    let mut h = Harness::builder().with_size(vec2(800.0, 600.0)).build_ui_state(
+        |ui, content: &mut TestContent| {
+            DockArea::new(Id::new(AREA)).show_content(ui, &docked(), &DockStyle::from_ui(ui), content);
+        },
+        TestContent { protected: vec![0], ..Default::default() },
+    );
+    h.run_steps(2);
+    assert_eq!(h.query_all_by_label("Collapse column to icons").count(), 1);
+    assert_eq!(h.query_all_by_label("Collapse to Icons").count(), 0);
+    let at = h.ctx.read_response(Id::new(AREA).with(("column-bar", Some(&2u32)))).unwrap().rect.center();
+    h.input_mut().events.extend([
+        Event::PointerMoved(at),
+        Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: true, modifiers: Modifiers::NONE },
+    ]);
+    h.run_steps(1);
+    h.input_mut().events.push(Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    assert_eq!(h.query_all_by_label("Collapse to Icons").count(), 1);
+    assert_eq!(h.query_all_by_label("Collapse column to icons").count(), 1);
+}
+
+#[test]
+fn for_zone_maps_side_zones_onto_columns_groups_and_splits() {
+    let layout = Layout { root: docked().root, floating: vec![Floating::single(vec![5], 0, [300.0, 80.0, 200.0, 200.0])] };
+    let zone = |anchor, zone, rtl| Placement::for_zone(&layout, &anchor, zone, rtl);
+    assert_eq!(zone(2, Zone::Right, false), Ok(Placement::Column { after: true }));
+    assert_eq!(zone(2, Zone::Right, true), Ok(Placement::Column { after: false }));
+    assert_eq!(zone(4, Zone::Bottom, false), Ok(Placement::Group { below: true, height: None }));
+    assert_eq!(zone(2, Zone::Center, false), Ok(Placement::Split(Zone::Center)));
+    assert_eq!(zone(5, Zone::Top, false), Ok(Placement::Group { below: false, height: None }));
+    assert_eq!(zone(5, Zone::Left, false), Err(DockError::InvalidPlacement));
+    assert_eq!(zone(0, Zone::Left, true), Ok(Placement::Split(Zone::Left)));
+    assert_eq!(zone(9, Zone::Left, false), Err(DockError::MissingTarget));
+
+    // An end dock mirrors a start dock.
+    let mut end = docked();
+    let Some(Node::Split { first, second, size, .. }) = &mut end.root else { panic!() };
+    std::mem::swap(first, second);
+    *size = SplitSize::FixedSecond(240.0);
+    let Node::Dock { side, .. } = &mut **second else { panic!() };
+    *side = Side::End;
+    assert_eq!(Placement::for_zone(&end, &2, Zone::Left, false), Ok(Placement::Column { after: true }));
+    assert_eq!(Placement::for_zone(&end, &2, Zone::Left, true), Ok(Placement::Column { after: false }));
+}
+
+#[test]
+fn a_group_placement_gives_the_inserted_group_its_height() {
+    let mut layout = docked();
+    let below = |height| Placement::Group { below: true, height };
+    layout.apply(Action::OpenAt { panel: 7, anchor: 4, placement: below(Some(180.0)) }).unwrap();
+    layout.apply(Action::MoveGroup { panel: 2, to: Target::At { anchor: 7, placement: below(Some(90.0)) } }).unwrap();
+    layout.apply(Action::OpenAt { panel: 8, anchor: 4, placement: below(None) }).unwrap();
+    let Some(Node::Split { first, .. }) = &layout.root else { panic!() };
+    let Node::Dock { columns, .. } = &**first else { panic!() };
+    let heights: Vec<_> = columns[0].groups.iter().map(|g| (g.panels.clone(), g.height)).collect();
+    assert_eq!(heights, vec![(vec![4], None), (vec![8], None), (vec![7], Some(180.0)), (vec![2, 3], Some(90.0))]);
+    assert_eq!(layout.apply(Action::OpenAt { panel: 9, anchor: 4, placement: below(Some(f32::NAN)) }), Err(DockError::InvalidGeometry));
 }
