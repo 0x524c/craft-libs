@@ -105,6 +105,7 @@ pub(crate) struct Message {
 }
 
 /// What to do after the Save changes prompt.
+#[allow(dead_code, reason = "set row and import review")]
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Then {
     Switch(String),
@@ -112,6 +113,7 @@ pub(crate) enum Then {
     Import,
 }
 
+#[allow(dead_code, reason = "set row prompts")]
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Prompt {
     /// "Restore every default shortcut in this set?"
@@ -132,6 +134,7 @@ pub(crate) enum Answer {
 }
 
 /// A foreign set under review.
+#[allow(dead_code, reason = "set row and import review")]
 #[derive(Clone, Debug)]
 pub(crate) struct Review {
     pub set: ForeignSet,
@@ -182,6 +185,20 @@ pub struct DialogState {
     rows: RowCache,
     changed: bool,
     outcome: Option<Outcome>,
+    // ---- The view's own state ----
+    /// The table's share of the table/detail split.
+    pub(crate) split: f32,
+    /// The chip of the selected row that Enter and Delete act on.
+    pub(crate) chip: usize,
+    /// Typed entry in the detail pane, and the parse error shown under it.
+    pub(crate) typing: Option<String>,
+    pub(crate) type_error: Option<String>,
+    /// Height of the bars and footer under the table, measured last frame.
+    pub(crate) bottom_h: f32,
+    /// One of the dialog's text fields had focus at the end of last frame.
+    pub(crate) text_focus: bool,
+    /// The table lines drawn last frame.
+    pub(crate) visible: std::ops::Range<usize>,
 }
 
 impl Default for DialogState {
@@ -215,6 +232,13 @@ impl DialogState {
             rows: RowCache::default(),
             changed: false,
             outcome: None,
+            split: 0.62,
+            chip: 0,
+            typing: None,
+            type_error: None,
+            bottom_h: 0.0,
+            text_focus: false,
+            visible: 0..0,
         }
     }
 
@@ -275,6 +299,11 @@ impl DialogState {
         self.rows.get(env.keymap, env.options, env.text, &view)
     }
 
+    /// The table's lines as last built by [`lines`](Self::lines).
+    pub(crate) fn lines_cached(&self) -> &[crate::ui::rows::Line] {
+        &self.rows.built().lines
+    }
+
     // ---- Selection and view ----
 
     pub(crate) fn select_row(&mut self, command: &CommandRef) {
@@ -282,6 +311,9 @@ impl DialogState {
             self.selected = Some(command.clone());
             self.context = None;
             self.field = None;
+            self.chip = 0;
+            self.typing = None;
+            self.type_error = None;
         }
     }
 
@@ -676,7 +708,11 @@ impl DialogState {
             self.ok(env);
         }
     }
+}
 
+// The set row and the import review draw with these (T3); until then some are unused.
+#[allow(dead_code, reason = "set row and import review actions")]
+impl DialogState {
     // ---- Sets ----
 
     /// Whether the keymap's overrides differ from the stored active set.

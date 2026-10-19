@@ -22,8 +22,11 @@ craft-settings = { workspace = true }
 tempfile = "3"
 egui = { workspace = true, features = ["default_fonts"] }
 egui_kittest = "0.36"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [features]
 egui = ["dep:egui"]
 # The Keyboard Shortcuts dialog.
 ui = ["egui", "dep:craft-ui", "dep:craft-i18n"]
+# Screenshots of the dialog for review (tests/ui_snapshot.rs; needs a GPU or software adapter).
+snapshot = ["ui", "egui_kittest/wgpu"]

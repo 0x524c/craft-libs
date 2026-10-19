@@ -172,7 +172,13 @@ impl RowCache {
         &self.built
     }
 
+    /// The lines last built.
+    pub(crate) fn built(&self) -> &Built {
+        &self.built
+    }
+
     /// Forgets the lines, for a change the key does not cover (the interface language).
+    #[allow(dead_code, reason = "for hosts that switch the interface language")]
     pub(crate) fn invalidate(&mut self) {
         self.key = None;
     }

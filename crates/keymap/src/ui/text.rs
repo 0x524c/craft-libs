@@ -111,6 +111,7 @@ pub const PLURALS: &[(&str, &str)] = &[
     ("{n} command will change", "{n} commands will change"),
     ("{n} item without a shortcut", "{n} items without a shortcut"),
     ("{n} shortcut also works in another scope", "{n} shortcuts also work in another scope"),
+    ("{n} entry was ignored: too many commands", "{n} entries were ignored: too many commands"),
 ];
 
 /// Every source string the dialog looks up with [`Text::ui`], for the shared catalog.
@@ -145,6 +146,9 @@ pub const STRINGS: &[&str] = &[
     "(cycles)",
     // Table and detail pane.
     "Command",
+    "Commands",
+    "Detail pane size",
+    "Select a command to see and change its shortcuts",
     "Shortcut",
     "Default",
     "Application",
@@ -182,6 +186,14 @@ pub const STRINGS: &[&str] = &[
     "Take It and Go to Conflict",
     "Keep Both",
     "Go to Conflict",
+    "Cancel the new shortcut",
+    // Saved shortcuts that could not be used.
+    "{key}: no command has this name",
+    "{key}: “{text}” is not a shortcut ({error})",
+    "{key}: {text} is reserved by the system",
+    "{key}: the scope in “{text}” is unknown",
+    "{key}: listed more than once",
+    "{key}: part of the entry was dropped",
     // Sets.
     "Set:",
     "(modified)",
@@ -252,7 +264,14 @@ mod tests {
     /// Every `ui("…")` and `plural(n, "…", "…")` literal in the dialog's sources is listed.
     #[test]
     fn every_looked_up_string_is_listed() {
-        let sources = [include_str!("mod.rs"), include_str!("state.rs"), include_str!("rows.rs"), include_str!("capture.rs")];
+        let sources = [
+            include_str!("mod.rs"),
+            include_str!("state.rs"),
+            include_str!("rows.rs"),
+            include_str!("capture.rs"),
+            include_str!("view.rs"),
+            include_str!("style.rs"),
+        ];
         let mut missing = Vec::new();
         for src in sources {
             let src = src.split("#[cfg(test)]").next().unwrap_or(src);

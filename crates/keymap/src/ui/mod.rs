@@ -15,16 +15,15 @@ use crate::import::{ForeignSet, ImportOptions};
 use crate::keymap::{Bindable, Binding, Keymap};
 use crate::profiles::{Builtins, ProfileError, Profiles};
 
-// The view draws with these; until it calls every action some stay unused.
-#[expect(dead_code, reason = "actions and row fields the view calls")]
 mod capture;
-#[expect(dead_code, reason = "actions and row fields the view calls")]
 mod rows;
-#[expect(dead_code, reason = "actions and row fields the view calls")]
 mod state;
+mod style;
 mod text;
+mod view;
 
 pub use state::DialogState;
+pub use style::DialogStyle;
 pub use text::{English, I18nText, PLURALS, STRINGS, Text, trigger_text};
 
 use state::Env;
@@ -88,37 +87,6 @@ pub struct Format {
     pub id: &'static str,
     pub label: &'static str,
     pub extensions: &'static [&'static str],
-}
-
-/// The dialog's colours.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct DialogStyle {
-    pub accent: egui::Color32,
-    pub warning: egui::Color32,
-    pub dim: egui::Color32,
-    pub changed: egui::Color32,
-    pub app_key: egui::Color32,
-    pub scoped_key: egui::Color32,
-    pub both_key: egui::Color32,
-    pub modifier_key: egui::Color32,
-    pub free_key: egui::Color32,
-}
-
-impl DialogStyle {
-    pub fn from_visuals(v: &egui::Visuals) -> DialogStyle {
-        let accent = v.selection.bg_fill;
-        DialogStyle {
-            accent,
-            warning: v.warn_fg_color,
-            dim: v.weak_text_color(),
-            changed: accent,
-            app_key: accent,
-            scoped_key: v.warn_fg_color,
-            both_key: v.error_fg_color,
-            modifier_key: v.widgets.active.bg_fill,
-            free_key: v.widgets.inactive.bg_fill,
-        }
-    }
 }
 
 /// A rule an app adds for which bindings a command may get; `Err` carries the message shown.
@@ -229,19 +197,37 @@ impl<'a> ShortcutsDialog<'a> {
         f(&mut env)
     }
 
-    /// A window with title, body and Cancel/OK.
+    /// A window with title, body and Cancel/OK, sized to the screen (at least 640×480 where the
+    /// screen allows, at most 1320×900). Closing it with × is Cancel.
     pub fn show(self, ctx: &egui::Context, state: &mut DialogState) -> Option<Outcome> {
-        let title = self.text.ui(self.options.map_or("Keyboard Shortcuts", |o| o.title)).into_owned();
-        egui::Window::new(title).collapsible(false).show(ctx, |ui| self.ui(ui, state)).and_then(|r| r.inner).flatten()
+        self.with_env(|env| {
+            let title = env.text.visual(&env.text.ui(env.options.title));
+            let screen = ctx.content_rect().size();
+            let max = egui::vec2(1320.0, 900.0).min(screen - egui::vec2(16.0, 16.0)).max(egui::vec2(240.0, 180.0));
+            let min = egui::vec2(640.0, 480.0).min(max);
+            let mut open = true;
+            let mut out = None;
+            egui::Window::new(title)
+                .id(egui::Id::new("craft_keymap.shortcuts"))
+                .collapsible(false)
+                .resizable(true)
+                .open(&mut open)
+                .default_size((screen * 0.8).clamp(min, max))
+                .min_size(min)
+                .max_size(max)
+                .show(ctx, |ui| out = frame(ui, env, state));
+            if !open && state.is_open() {
+                state.cancel(env);
+                out = state.finish();
+            }
+            out
+        })
     }
 
-    /// The body only, for a host's own modal, preferences page or backstage.
+    /// The body only, for a host's own modal, preferences page or backstage. It fills the
+    /// available rectangle.
     pub fn ui(self, ui: &mut egui::Ui, state: &mut DialogState) -> Option<Outcome> {
-        self.with_env(|env| {
-            state.begin(env);
-            state.input(env, ui.ctx());
-            state.finish()
-        })
+        self.with_env(|env| frame(ui, env, state))
     }
 
     /// OK, for hosts that draw their own button.
@@ -278,4 +264,14 @@ impl<'a> ShortcutsDialog<'a> {
             state.review_import(env, set, options);
         });
     }
+}
+
+/// One frame: take recorded keys before anything else sees them, draw, report.
+fn frame(ui: &mut egui::Ui, env: &mut Env, state: &mut DialogState) -> Option<Outcome> {
+    state.begin(env);
+    state.input(env, ui.ctx());
+    if state.is_open() {
+        view::body(ui, env, state);
+    }
+    state.finish()
 }
