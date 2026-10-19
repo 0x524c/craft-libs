@@ -470,3 +470,26 @@ mod serde_tests {
         }
     }
 }
+
+#[test]
+fn edge_placement_splits_the_part_between_the_docks_or_the_root() {
+    // Dock layout: a floating window lands under the frames, beside the end dock.
+    let mut layout = docked();
+    layout.apply(Action::MoveWindow { panel: 6, to: Target::At { anchor: 1, placement: Placement::Edge(Zone::Bottom) } }).unwrap();
+    let Some(Node::Split { first, second, .. }) = &layout.root else { panic!("{layout:?}") };
+    assert!(matches!(&**second, Node::Dock { .. }));
+    let Node::Split { axis: SplitAxis::Vertical, size: SplitSize::Ratio(size), second: bottom, .. } = &**first else { panic!("{first:?}") };
+    assert_eq!(*size, 0.75);
+    assert_eq!(**bottom, tabs(&[6, 7, 8], 1));
+    assert!(layout.floating.is_empty());
+
+    // Frame layout: one panel takes the whole left edge.
+    let mut frames = Layout { root: Some(hsplit(SplitSize::Ratio(0.5), tabs(&[1], 0), tabs(&[2, 3], 0))), floating: Vec::new() };
+    frames.apply(Action::Move { panel: 3, anchor: 1, placement: Placement::Edge(Zone::Left) }).unwrap();
+    let Some(Node::Split { axis: SplitAxis::Horizontal, size: SplitSize::Ratio(size), first, .. }) = &frames.root else { panic!() };
+    assert_eq!((*size, &**first), (0.25, &tabs(&[3], 0)));
+
+    let before = frames.clone();
+    assert_eq!(frames.apply(Action::Move { panel: 2, anchor: 1, placement: Placement::Edge(Zone::Center) }), Err(DockError::InvalidPlacement));
+    assert_eq!(frames, before);
+}

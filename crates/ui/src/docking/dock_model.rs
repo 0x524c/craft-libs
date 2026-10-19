@@ -6,7 +6,7 @@
 
 use std::hash::Hash;
 
-use super::model::{DockError, Floating, Layout, MAX_NODES, Node, Placement, Zone, valid_rect, valid_width};
+use super::model::{DockError, Floating, Layout, MAX_DEPTH, MAX_NODES, Node, Placement, Zone, valid_rect, valid_width};
 use crate::layout::{SplitAxis, SplitSize};
 
 /// Width of a new column when nothing better is known.
@@ -240,6 +240,25 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             }
         }
         None
+    }
+
+    /// The node an edge split wraps: the root, or the part between the docks.
+    pub(in crate::docking) fn edge_path(&self) -> Vec<bool> {
+        let mut path = Vec::new();
+        let mut node = self.root.as_ref();
+        while let Some(Node::Split { axis: SplitAxis::Horizontal, first, second, .. }) = node {
+            if path.len() > MAX_DEPTH {
+                break;
+            }
+            let second_side = match (&**first, &**second) {
+                (Node::Dock { .. }, _) => true,
+                (_, Node::Dock { .. }) => false,
+                _ => break,
+            };
+            path.push(second_side);
+            node = Some(if second_side { second } else { first });
+        }
+        path
     }
 
     pub(super) fn columns_mut(&mut self, path: &[bool]) -> Option<&mut Vec<Column<P>>> {
@@ -492,6 +511,24 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                         };
                         let index = (index + usize::from(below)).min(groups.len());
                         groups.splice(index..index, moving.groups);
+                        Ok(())
+                    }
+                    Placement::Edge(zone) => {
+                        if zone == Zone::Center || matches!(place, Place::Floating { .. }) {
+                            return Err(DockError::InvalidPlacement);
+                        }
+                        let path = self.edge_path();
+                        let node = self.root.as_mut().and_then(|root| node_at_mut(root, &path)).ok_or(DockError::MissingTarget)?;
+                        if matches!(node, Node::Dock { .. }) {
+                            return Err(DockError::InvalidPlacement);
+                        }
+                        let (panels, active) = flatten(moving.groups);
+                        let new = Node::Tabs { panels, active };
+                        let old = std::mem::replace(node, Node::Tabs { panels: Vec::new(), active: 0 });
+                        let axis = if matches!(zone, Zone::Top | Zone::Bottom) { SplitAxis::Vertical } else { SplitAxis::Horizontal };
+                        let (first, second, size) =
+                            if matches!(zone, Zone::Top | Zone::Left) { (new, old, 0.25) } else { (old, new, 0.75) };
+                        *node = Node::Split { axis, size: SplitSize::Ratio(size), first: Box::new(first), second: Box::new(second) };
                         Ok(())
                     }
                     Placement::Column { after } => {
