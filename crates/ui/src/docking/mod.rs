@@ -22,6 +22,8 @@ pub use workspace::Workspace;
 use surface::{Drag, GroupDrag, GroupGesture};
 
 #[cfg(test)]
+mod dock_tests;
+#[cfg(test)]
 mod group_tests;
 #[cfg(test)]
 mod model_tests;
