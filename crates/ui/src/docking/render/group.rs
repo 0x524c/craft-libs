@@ -1,6 +1,6 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{fmt::Debug, hash::Hash, sync::Arc};
 
-use egui::{Key, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
+use egui::{Color32, Galley, Id, Key, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 
 use super::{Renderer, clamp_float, stripless};
 use crate::docking::{Action, DropTarget, GroupDrag, GroupGesture, Placement, Target, begin_drag, surface::TAB_PADDING};
@@ -147,7 +147,18 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if owner.kind != GroupKind::Frame && response.double_clicked() {
             self.output.actions.push(Action::SetMinimized { panel: owner.selected.clone(), minimized: !owner.minimized });
         }
-        if response.has_focus() || response.hovered() {
+        let active = response.has_focus() || response.hovered();
+        if movable {
+            // A grip mark at rest, centred in the bar's reserved width beside the header.
+            let grip = Rect::from_min_max(pos2((hit.right() - self.style.drag_bar_width).max(hit.left()), hit.top()), hit.max);
+            let stroke = Stroke::new(1.0, if active { self.style.text } else { self.style.inactive_text });
+            let half = (hit.height() * 0.2).min(4.0);
+            for k in -1..=1 {
+                let x = grip.center().x + k as f32 * 3.0;
+                ui.painter().with_clip_rect(hit).line_segment([pos2(x, grip.center().y - half), pos2(x, grip.center().y + half)], stroke);
+            }
+        }
+        if active {
             ui.painter().with_clip_rect(hit).rect_stroke(
                 hit.shrink(1.0),
                 0.0,
@@ -200,7 +211,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             self.output.actions.push(Action::SetIconic { panel: panel.clone(), iconic: true });
         }
         if floatable && !matches!(owner.kind, GroupKind::Floating { .. }) && self.menu_action(ui, &self.float_group_label()) {
-            let rect = clamp_float(owner.rect.translate(vec2(24.0, 24.0)), ui.ctx().content_rect());
+            let size = self.group_float_size(owner.panels, owner.rect.size());
+            let rect = clamp_float(Rect::from_min_size(owner.rect.min + vec2(24.0, 24.0), size), ui.ctx().content_rect());
             self.output.actions.push(Action::MoveGroup {
                 panel: panel.clone(),
                 to: Target::Float { rect: Some([rect.left(), rect.top(), rect.width(), rect.height()]) },
@@ -266,41 +278,76 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         response
     }
 
+    /// A tab's label, cut at the end with '…' to fit `width`. egui does not wrap a host's
+    /// pre-laid-out `WidgetText::Galley` again, so that one is laid out again from its job.
+    pub(super) fn tab_label(&mut self, ui: &Ui, panel: &P, label: &str, color: Color32, width: f32) -> Arc<Galley> {
+        let galley = self.content.label(ui, panel, label, &self.style.font, color).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Truncate),
+            width,
+            self.style.font.clone(),
+        );
+        if galley.size().x <= width + 0.5 {
+            return galley;
+        }
+        let mut job = (*galley.job).clone();
+        job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+        ui.painter().layout_job(job)
+    }
+
+    /// True while a tab's focus came from the pointer, which shows no focus outline. Tab or an
+    /// arrow key (keyboard navigation) clears it.
+    fn pointer_focus(&self, ui: &Ui, tab: Id) -> bool {
+        let key = tab.with("pointer-focus");
+        let navigated = ui.input(|i| [Key::Tab, Key::ArrowLeft, Key::ArrowRight, Key::ArrowUp, Key::ArrowDown].iter().any(|k| i.key_pressed(*k)));
+        if navigated {
+            ui.ctx().data_mut(|d| d.remove_temp::<bool>(key));
+        }
+        ui.ctx().data(|d| d.get_temp::<bool>(key)).unwrap_or(false)
+    }
+
     pub(super) fn tab(&mut self, ui: &mut Ui, panel: &P, rect: Rect, active: bool, group: Rect, owner: Option<&TabGroup<'_, P>>) {
         let minimized = owner.filter(|owner| owner.kind != GroupKind::Frame).map(|owner| owner.minimized);
         let policy = self.permissions(panel);
         let label = self.label_of(panel);
         let color = if active { self.style.text } else { self.style.inactive_text };
-        // A tab squeezed below its natural width cuts its label with '…' inside the padding its
-        // natural width was measured with, instead of letting it run under its neighbours.
-        let galley = self.content.label(ui, panel, &label, &self.style.font, color).into_galley(
-            ui,
-            Some(egui::TextWrapMode::Truncate),
-            (rect.width() - TAB_PADDING).max(0.0),
-            self.style.font.clone(),
-        );
+        let galley = self.tab_label(ui, panel, &label, color, (rect.width() - TAB_PADDING).max(0.0));
         let elided = galley.elided;
-        let response = tabs::Tab::new(self.id.with(("tab", panel)), &label, active)
+        let tab_id = self.id.with(("tab", panel));
+        let pointer_focus = self.pointer_focus(ui, tab_id);
+        let response = tabs::Tab::new(tab_id, &label, active)
             .sense(if policy.movable { Sense::click_and_drag() } else { Sense::click() })
-            .focus_stroke(Stroke::new(1.0, self.style.accent))
+            .focus_stroke(if pointer_focus { Stroke::NONE } else { Stroke::new(1.0, self.style.accent) })
             .show_at(ui, rect, |ui, response| {
                 let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
                 painter.rect_filled(rect, 0.0, if active || response.hovered() { self.style.active_background } else { self.style.tab_background });
-                painter.galley(rect.center() - galley.size() * 0.5, galley.clone(), color);
+                let at = pos2(rect.left() + TAB_PADDING * 0.5, rect.center().y - galley.size().y * 0.5);
+                painter.galley(at, galley.clone(), color);
             });
         let response = if elided { response.on_hover_text(&label) } else { response };
         self.register_interaction(ui.ctx(), response.id);
+        if response.is_pointer_button_down_on() || response.clicked() {
+            ui.ctx().data_mut(|d| d.insert_temp(tab_id.with("pointer-focus"), true));
+        }
+        // The click that expands a minimized group is not the first half of a double-click.
+        let expand_key = self.id.with(("expanded-by-click", owner.map(|owner| owner.panels.first())));
         if response.clicked() {
             self.output.actions.push(Action::Activate { panel: panel.clone() });
             self.output.focused = Some(panel.clone());
             if minimized == Some(true) && !active {
                 self.output.actions.push(Action::SetMinimized { panel: panel.clone(), minimized: false });
+                let now = ui.input(|i| i.time);
+                ui.ctx().data_mut(|d| d.insert_temp(expand_key, now));
             }
         }
         if let Some(minimized) = minimized
             && response.double_clicked()
         {
-            self.output.actions.push(Action::SetMinimized { panel: panel.clone(), minimized: !minimized });
+            let (now, window) = (ui.input(|i| i.time), ui.ctx().options(|o| o.input_options.max_double_click_delay));
+            let expanded_by_first_click = ui.ctx().data_mut(|d| d.remove_temp::<f64>(expand_key)).is_some_and(|t| now - t <= window);
+            if !expanded_by_first_click {
+                self.output.actions.push(Action::SetMinimized { panel: panel.clone(), minimized: !minimized });
+            }
         }
         if policy.movable && response.drag_started() && begin_drag(ui.ctx(), self.id, panel.clone(), group) {
             self.latch_undock(ui.ctx(), owner.map(|owner| owner.kind));

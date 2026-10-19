@@ -626,7 +626,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             ui.allocate_rect(rect, Sense::hover());
         }
         renderer.floating(ui.ctx(), &view.floating);
-        renderer.finish_group_drag(ui.ctx());
+        renderer.finish_group_drag(ui);
         renderer.finish_drag(ui.ctx());
         ui.ctx().data_mut(|d| d.insert_temp(self.id.with("owned-interactions"), renderer.owned_interactions));
         renderer.output

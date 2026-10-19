@@ -1,10 +1,11 @@
 use std::{fmt::Debug, hash::Hash};
 
-use egui::{Color32, Context, Key, Pos2, Rect, Stroke, StrokeKind, Vec2, vec2};
+use egui::{Color32, Context, Key, Pos2, Rect, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 
 use super::{Renderer, clamp_float, dock::group_action};
 use crate::docking::{
     Action, Drag, DropProposal, DropRequest, GroupDrag, GroupGesture, Placement, Target, Zone, cancel_drag, dock_model::Place, resolve_drop,
+    surface::TAB_PADDING,
 };
 
 /// Ctrl (Windows, Linux) or Cmd (macOS) held: the drop floats and no target is offered.
@@ -16,7 +17,8 @@ fn float_only(ctx: &Context) -> bool {
 const DOCKED_FLOAT_HEIGHT: f32 = 320.0;
 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
-    pub(in crate::docking) fn finish_group_drag(&mut self, ctx: &Context) {
+    pub(in crate::docking) fn finish_group_drag(&mut self, ui: &Ui) {
+        let ctx = ui.ctx();
         let key = self.id.with("group-drag");
         let Some(drag) = ctx.data(|d| d.get_temp::<GroupDrag<P>>(key)) else { return };
         if !drag.members.iter().all(|p| self.layout.contains(p) && self.permissions(p).movable) {
@@ -26,7 +28,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let (escape, focused, down, released, pointer) =
             ctx.input(|i| (i.key_pressed(Key::Escape), i.focused, i.pointer.primary_down(), i.pointer.primary_released(), i.pointer.interact_pos()));
         let pointer = pointer.filter(|p| p.is_finite());
-        let ghost = pointer.map(|pointer| clamp_float(drag.source.translate(pointer - drag.origin), ctx.content_rect()));
+        let ghost = pointer.map(|pointer| self.group_ghost(ctx, &drag, pointer));
         if !escape
             && focused
             && (down || released)
@@ -63,7 +65,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
         } else if let Some(pointer) = pointer.filter(|p| !self.blockers.iter().any(|r| r.contains(*p))) {
             self.output.group_drag = Some(drag.panel.clone());
-            self.paint_group_drag(ctx, &drag, pointer, float_only);
+            self.paint_group_drag(ui, &drag, pointer, float_only);
         }
     }
 
@@ -121,20 +123,35 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         // No target: hosts that still apply their own policy for a whole-group release get it.
         self.output.group_drop = Some((drag.panel.clone(), pointer));
-        let rect = clamp_float(drag.source.translate(pointer - drag.origin), ctx.content_rect());
+        let rect = self.group_ghost(ctx, drag, pointer);
         let action = group_action(drag, Target::Float { rect: Some([rect.left(), rect.top(), rect.width(), rect.height()]) });
         if self.layout.clone().apply_with_permissions(action.clone(), |p| self.permissions(p)).is_ok() {
             self.output.actions.push(action);
         }
     }
 
-    /// Ghost outline at the pointer (a window moving live is its own ghost) and one
-    /// destination preview.
-    fn paint_group_drag(&self, ctx: &Context, drag: &GroupDrag<P>, pointer: Pos2, float_only: bool) {
+    /// The ghost at the pointer (a window moving live is its own ghost) under one destination
+    /// preview. The ghost has a translucent fill, a 2 pt outline and the members' labels.
+    fn paint_group_drag(&mut self, ui: &Ui, drag: &GroupDrag<P>, pointer: Pos2, float_only: bool) {
+        let ctx = ui.ctx();
         let painter = self.preview_painter(ctx);
         if drag.gesture != GroupGesture::Window {
-            let ghost = clamp_float(drag.source.translate(pointer - drag.origin), ctx.content_rect());
-            painter.rect_stroke(ghost, 0.0, Stroke::new(1.0, self.style.accent.gamma_multiply(0.6)), StrokeKind::Inside);
+            let ghost = self.group_ghost(ctx, drag, pointer);
+            painter.rect(ghost, 0.0, self.style.accent.gamma_multiply(0.15), Stroke::new(2.0, self.style.accent), StrokeKind::Inside);
+            let strip = Rect::from_min_size(ghost.min, vec2(ghost.width(), self.style.tab_height.min(ghost.height())));
+            let labels = painter.with_clip_rect(strip.shrink(2.0));
+            let mut x = strip.left() + TAB_PADDING * 0.5;
+            for panel in &drag.members {
+                let width = strip.right() - TAB_PADDING * 0.5 - x;
+                if width <= 0.0 {
+                    break;
+                }
+                let label = self.label_of(panel);
+                let galley = self.tab_label(ui, panel, &label, self.style.text, width);
+                let advance = galley.size().x + TAB_PADDING;
+                labels.galley(pos2(x, strip.center().y - galley.size().y * 0.5), galley, self.style.text);
+                x += advance;
+            }
         }
         if float_only {
             return;
@@ -276,6 +293,28 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let limits = self.limits(panel);
         let header = vec2(0.0, self.style.tab_height);
         size.max(limits.min + header).min(limits.max + header)
+    }
+
+    /// Size of a group or column floated by a drag or Float Tab Group: the source width, and the
+    /// tallest member's floating size, else the source height capped like a panel leaving a
+    /// dock column. A group that already floats keeps its size.
+    pub(super) fn group_float_size(&self, members: &[P], source: Vec2) -> Vec2 {
+        let place = members.first().and_then(|panel| self.layout.place(panel));
+        if matches!(place, Some(Place::Floating { .. }) | None) {
+            return source;
+        }
+        let valid = |s: &Vec2| s.is_finite() && s.x > 0.0 && s.y > 0.0;
+        let host = members.iter().filter_map(|panel| self.content.floating_size(panel).filter(valid)).map(|s| s.y).reduce(f32::max);
+        let docked = matches!(place, Some(Place::Dock { .. }));
+        vec2(source.x, host.unwrap_or(if docked { source.y.min(DOCKED_FLOAT_HEIGHT) } else { source.y }))
+    }
+
+    /// Where a group or column drag floats with the pointer at `pointer`, keeping the grab
+    /// offset, inside the window (Z2).
+    fn group_ghost(&self, ctx: &Context, drag: &GroupDrag<P>, pointer: Pos2) -> Rect {
+        let size = if drag.gesture == GroupGesture::Window { drag.source.size() } else { self.group_float_size(&drag.members, drag.source.size()) };
+        let grab = (drag.origin - drag.source.min).clamp(Vec2::ZERO, size);
+        clamp_float(Rect::from_min_size(pointer - grab, size), ctx.content_rect())
     }
 
     fn tab_float_rect(&self, ctx: &Context, drag: &Drag<P>, pointer: Pos2) -> Rect {

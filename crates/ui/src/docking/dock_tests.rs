@@ -339,10 +339,12 @@ fn column_bar_drag_moves_the_column_and_away_from_a_dock_floats_its_groups() {
     assert_eq!(d.rect("column-bar", 2).left(), 240.0 + 18.0);
     let grab = d.rect("column-bar", 2).center();
     d.hold(grab, pos2(560.0, 300.0));
-    let ghost = source.translate(pos2(560.0, 300.0) - grab);
-    let ghost = egui::Rect::from_min_size(ghost.min.min(pos2(800.0, 600.0) - source.size()).max(Pos2::ZERO), source.size());
+    // The column's width; a docked column floats at most 320 pt tall.
+    let size = vec2(source.width(), 320.0);
+    let ghost = egui::Rect::from_min_size(pos2(560.0, 300.0) - (grab - source.min), size);
+    let ghost = egui::Rect::from_min_size(ghost.min.min(pos2(800.0, 600.0) - size).max(Pos2::ZERO), size);
     assert!(
-        d.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.rect == ghost && r.fill == egui::Color32::TRANSPARENT)),
+        d.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.rect == ghost && r.fill != egui::Color32::TRANSPARENT)),
         "a ghost of the column follows the pointer"
     );
     let out = d.step(vec![button(pos2(560.0, 300.0), false)]);

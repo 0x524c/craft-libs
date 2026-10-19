@@ -6,6 +6,9 @@ use egui::{Color32, Context, Event, Id, Modifiers, PointerButton, RawInput, Rect
 
 const AREA: &str = "group-area";
 
+#[path = "trial_tests.rs"]
+mod trial;
+
 fn tabs(panels: &[u32], active: usize) -> Node<u32> {
     Node::Tabs { panels: panels.to_vec(), active }
 }
