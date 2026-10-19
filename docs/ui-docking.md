@@ -145,9 +145,10 @@ docking and `craft_ui::panes` both draw) for apps that draw their own windows.
 Every shown tab carries its panel's full name. Tabs that do not fit go to the "…" button at the
 end of the strip, whose menu lists the hidden panels; choosing one makes it active. The active tab
 is always shown, in its logical place: when it lies past the tabs that fit, it takes the place of
-the last of them. Only an active tab wider than the strip alone is cut with "…", and its tooltip
-names it in full. The drag bar keeps its reserved width until the tabs overflow. A tab dropped on
-the "…" button goes to the end of the group.
+the last of them. Only an active tab wider than the room beside the "…" button, or a lone tab
+wider than the strip, is cut with "…", and its tooltip names it in full. The drag bar always keeps
+its reserved width: tabs go to the overflow menu before it narrows, and only a strip narrower than
+the bar itself shrinks it. A tab dropped on the "…" button goes to the end of the group.
 
 ## Floating size
 
