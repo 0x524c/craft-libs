@@ -16,12 +16,17 @@ mod workspace;
 
 pub use dock_model::{Column, ColumnLocation, Group, GroupLocation, PanelState, Side, Target};
 pub use model::{Action, DockError, Floating, Layout, Location, MAX_DEPTH, MAX_PANELS, Node, Permissions, Placement, StackEntry, Zone};
-pub use surface::{DockArea, DockContent, DockOutput, DockStyle, DropFeedback, DropRequest, PanelLimits, begin_drag, cancel_drag, is_dragging};
+pub use surface::{
+    DockArea, DockContent, DockEvent, DockOutput, DockStyle, DropFeedback, DropRequest, HidePanels, PanelLimits, Profile, begin_drag, cancel_drag,
+    is_dragging,
+};
 pub use targets::{DropProposal, DropTarget, drop_zone, resolve_drop, tab_insertion_marker, zone_rect};
 pub use workspace::Workspace;
 
 use surface::{Drag, GroupDrag, GroupGesture};
 
+#[cfg(test)]
+mod floating_tests;
 #[cfg(test)]
 mod group_tests;
 #[cfg(test)]

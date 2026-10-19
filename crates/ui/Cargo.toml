@@ -16,6 +16,8 @@ serde = { version = "1", features = ["derive"], optional = true }
 
 [features]
 serde = ["dep:serde"]
+# Floating windows may move to their own OS windows (desktop egui backends with viewports).
+native-windows = []
 
 [dev-dependencies]
 egui = { workspace = true, features = ["default_fonts"] }

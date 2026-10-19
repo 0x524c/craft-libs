@@ -7,6 +7,11 @@ use crate::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis, SplitSize, split
 use super::{Action, DockContent, DockOutput, DockStyle, DropTarget, Layout, Node, PanelLimits, Permissions};
 
 mod floating;
+mod frame;
+#[cfg(feature = "native-windows")]
+mod native;
+
+pub(in crate::docking) use frame::{FrameState, view};
 
 pub(in crate::docking) use group::GroupKind;
 
@@ -26,6 +31,7 @@ pub(super) struct Renderer<'a, P> {
     pub(super) targets: Vec<DropTarget<P>>,
     pub(super) owned_interactions: Vec<Id>,
     pub(super) output: DockOutput<P>,
+    pub(super) frame: FrameState<P>,
 }
 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
@@ -62,6 +68,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if !crate::docking::targets::usable(rect) {
             return;
         }
+        self.note_edge(path, rect);
         match node {
             Node::Split { axis, size, first, second } => {
                 let Some(wanted) = split_rect(rect, *axis, *size, self.style.gap, 0.0) else { return };
@@ -89,7 +96,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 if response.delta != 0.0
                     && let Some(size) = split.resized(*size, (split.first_size() + response.delta).clamp(lo, hi) - split.first_size(), 0.0)
                 {
-                    self.output.actions.push(Action::ResizeSplit { path: path.clone(), size });
+                    self.output.actions.push(Action::ResizeSplit { path: self.original_path(path), size });
                 }
             }
             Node::Tabs { panels, active } => self.group(ui, panels, *active, false, rect, GroupKind::Frame),
@@ -266,12 +273,7 @@ pub(in crate::docking) fn node_limits<P>(node: &Node<P>, style: &DockStyle, cont
 }
 
 pub(super) fn clamp_float(rect: Rect, screen: Rect) -> Rect {
-    if !crate::docking::targets::usable(screen) {
-        return rect;
-    }
-    let size = rect.size().max(vec2(1.0, 1.0)).min(screen.size());
-    let min = rect.min.max(screen.min).min(screen.max - size);
-    Rect::from_min_size(min, size)
+    crate::docking::chrome::clamp(rect, screen)
 }
 
 pub(super) fn split_bounds(available: f32, axis: SplitAxis, first: PanelLimits, second: PanelLimits) -> (f32, f32) {

@@ -904,7 +904,7 @@ fn custom_chrome_shaped_labels_and_programmatic_raise_are_available() {
     assert!(out.actions.is_empty());
     assert!(content.headers >= 3 && content.bodies >= 3);
     assert!(content.labels.iter().any(|s| s == "Logical 5"));
-    let at = pos2(130.0, 82.0);
+    let at = pos2(130.0, 96.0);
     custom_frame(
         &ctx,
         &layout,
@@ -1249,9 +1249,7 @@ fn popup_action_labels_use_custom_visual_text_and_logical_accessibility() {
             h.output().shapes.iter().any(|shape| paints(&shape.shape, &format!("Action visual: {logical}"))),
             "custom action must paint: {logical}"
         );
-        // This sample also has a floating-group grip labeled Move to group.
-        let expected = if logical == "Move to group" { 2 } else { 1 };
-        assert_eq!(h.query_all_by_label(logical).count(), expected, "popup action must retain its own logical accessibility: {logical}");
+        assert_eq!(h.query_all_by_label(logical).count(), 1, "popup action must retain its own logical accessibility: {logical}");
         assert_eq!(
             h.query_all_by_label(&format!("Action visual: {logical}")).count(),
             0,
@@ -1368,7 +1366,7 @@ fn collapsed_floating_height_cap_does_not_disable_keyboard_width_resizing() {
     }
     ctx.memory_mut(|memory| memory.request_focus(id));
     frame(vec![Event::Key { key: egui::Key::ArrowRight, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
-    assert_eq!(layout.floating[0].rect, [80.0, 70.0, 308.0, 26.0]);
+    assert_eq!(layout.floating[0].rect, [80.0, 70.0, 308.0, 40.0]);
 }
 
 #[test]

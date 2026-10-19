@@ -576,7 +576,8 @@ impl<P: Clone + Eq + Hash> Layout<P> {
     }
 
     /// Restore an absent panel at a captured location. Missing anchors are reported without
-    /// changes, allowing the app to choose an explicit default. Unrelated tabs retain selection.
+    /// changes, allowing the app to choose an explicit default; a floating panel whose
+    /// window is gone floats at its last rect instead. Unrelated tabs retain selection.
     pub fn restore(&mut self, panel: P, location: &Location<P>) -> Result<(), DockError> {
         self.validate()?;
         if self.contains(&panel) {
@@ -608,10 +609,8 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             if !valid_rect(rect) {
                 return Err(DockError::InvalidGeometry);
             }
-            if let Some(anchor) = &location.anchor {
-                if !proposed.floating.iter().any(|g| g.contains(anchor)) {
-                    return Err(DockError::MissingTarget);
-                }
+            // A window that closed as a whole reopens at its last rect.
+            if let Some(anchor) = location.anchor.as_ref().filter(|anchor| proposed.floating.iter().any(|g| g.contains(anchor))) {
                 if let Placement::Group { .. } = location.placement {
                     proposed.insert_moving(moving(), Target::At { anchor: anchor.clone(), placement: location.placement.clone() })?;
                 } else {
