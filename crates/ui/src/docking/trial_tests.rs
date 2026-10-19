@@ -79,39 +79,44 @@ impl DockContent<u32> for GalleyLabels {
 }
 
 #[test]
-fn shrunk_tabs_end_their_labels_with_an_ellipsis_inside_the_tab_active_or_not() {
+fn galley_labels_stay_whole_and_only_an_over_wide_active_tab_ends_with_an_ellipsis_inside_it() {
     let panels = [1, 2, 3, 4, 5, 6];
     let layout = Layout { root: Some(tabs(&panels, 3)), floating: Vec::new() };
-    let ctx = Context::default();
-    let mut content = GalleyLabels;
-    let mut shapes = Vec::new();
-    for _ in 0..2 {
-        let input = RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), ..Default::default() };
-        let mut full = ctx.run_ui(input, |ui| {
-            let style = DockStyle::from_ui(ui);
-            ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(pos2(0.0, 0.0), vec2(320.0, 400.0))), |ui| {
-                DockArea::new(Id::new(AREA)).show_content(ui, &layout, &style, &mut content);
+    for width in [320.0, 90.0] {
+        let ctx = Context::default();
+        let mut content = GalleyLabels;
+        let mut shapes = Vec::new();
+        for _ in 0..2 {
+            let input = RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), ..Default::default() };
+            let mut full = ctx.run_ui(input, |ui| {
+                let style = DockStyle::from_ui(ui);
+                ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 400.0))), |ui| {
+                    DockArea::new(Id::new(AREA)).show_content(ui, &layout, &style, &mut content);
+                });
             });
-        });
-        full.textures_delta.clear();
-        shapes = full.shapes;
-    }
-    let texts: Vec<_> = flat(&shapes)
-        .into_iter()
-        .filter_map(|(clip, shape)| match shape {
-            egui::Shape::Text(text) => Some((clip, text)),
-            _ => None,
-        })
-        .collect();
-    for panel in panels {
-        let tab = ctx.read_response(Id::new(AREA).with(("tab", &panel))).unwrap().rect;
-        let Some((clip, text)) = texts.iter().find(|(_, t)| t.galley.text().ends_with(&format!(" {panel}")) && tab.contains(t.pos)) else {
-            panic!("no label in tab {panel}")
-        };
-        assert_eq!(last_char(&text.galley), Some('…'), "tab {panel}");
-        let drawn = Rect::from_min_size(text.pos, text.galley.size());
-        assert!(drawn.right() <= tab.right() + 0.5 && drawn.left() >= tab.left(), "tab {panel}: {drawn:?} in {tab:?}");
-        assert!(tab.contains_rect(clip.intersect(drawn)), "tab {panel}");
+            full.textures_delta.clear();
+            shapes = full.shapes;
+        }
+        let texts: Vec<_> = flat(&shapes)
+            .into_iter()
+            .filter_map(|(clip, shape)| match shape {
+                egui::Shape::Text(text) => Some((clip, text)),
+                _ => None,
+            })
+            .collect();
+        let shown: Vec<u32> = panels.into_iter().filter(|p| ctx.read_response(Id::new(AREA).with(("tab", p))).is_some()).collect();
+        assert!(shown.contains(&4) && shown.len() < panels.len(), "{width}: {shown:?}");
+        for panel in shown {
+            let tab = ctx.read_response(Id::new(AREA).with(("tab", &panel))).unwrap().rect;
+            let Some((clip, text)) = texts.iter().find(|(_, t)| t.galley.text().ends_with(&format!(" {panel}")) && tab.contains(t.pos)) else {
+                panic!("no label in tab {panel}")
+            };
+            let cut = width < 100.0;
+            assert_eq!(last_char(&text.galley), if cut { Some('…') } else { char::from_digit(panel, 10) }, "{width}: tab {panel}");
+            let drawn = Rect::from_min_size(text.pos, text.galley.size());
+            assert!(drawn.right() <= tab.right() + 0.5 && drawn.left() >= tab.left(), "tab {panel}: {drawn:?} in {tab:?}");
+            assert!(tab.contains_rect(clip.intersect(drawn)), "tab {panel}");
+        }
     }
 }
 

@@ -41,8 +41,8 @@ pub struct DockStyle {
     pub float_group_label: String,
     /// Group menu item that moves the whole group into another group (submenu of targets).
     pub move_group_to_label: String,
-    /// Minimum width of the drag bar left of the group header. Tabs shrink, then overflow,
-    /// before the bar narrows.
+    /// Minimum width of the drag bar left of the group header. Tabs overflow before the bar
+    /// narrows.
     pub drag_bar_width: f32,
     /// Painted under every floating window, so it stays opaque when the panel colours are not.
     pub floating_background: Color32,

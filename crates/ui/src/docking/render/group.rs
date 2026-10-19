@@ -29,6 +29,9 @@ pub(super) struct TabGroup<'a, P> {
 /// The top band of a strip that drags the whole group.
 const BORDER_BAND: f32 = 4.0;
 
+/// Width of the "…" button that lists the panels a strip has no room for.
+const OVERFLOW_WIDTH: f32 = 22.0;
+
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     pub(super) fn group(&mut self, ui: &mut Ui, panels: &[P], active: usize, minimized: bool, rect: Rect, kind: GroupKind) {
         let Some(selected) = panels.get(active) else { return };
@@ -70,7 +73,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             child.set_clip_rect(header.intersect(ui.clip_rect()));
             self.content.group_header(&mut child, panels, selected, floating);
         }
-        // The drag bar keeps its reserved width: tabs shrink, then overflow, before it narrows.
+        // The drag bar keeps its reserved width: tabs overflow before it narrows.
         let bar_width = self.style.drag_bar_width.clamp(0.0, (strip.width() - header_width).max(0.0));
         let tabs_width = (strip.width() - header_width - bar_width).max(0.0);
         let widths: Vec<f32> = panels
@@ -84,7 +87,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     + TAB_PADDING
             })
             .collect();
-        let fit = tabs::fit(&widths, active, tabs_width, 40.0, 22.0);
+        // Tabs keep their full names; the rest go to the overflow menu. Only an active tab wider
+        // than the strip is cut, with its name in a tooltip.
+        let fit = tabs::fit_whole(&widths, active, tabs_width, OVERFLOW_WIDTH);
         let owner = TabGroup { panels, selected, minimized, kind, rect };
         let mut x = strip.left();
         let mut shown = Vec::new();
