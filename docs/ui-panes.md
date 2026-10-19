@@ -42,7 +42,13 @@ for request in out.requests {
         PaneRequest::Focus(_) => {}
     }
 }
-egui::CentralPanel::default().show(ui, |ui| document(ui));
+egui::CentralPanel::default().show(ui, |ui| {
+    let response = document(ui);
+    if out.to_document {
+        // F6 or Shift+F6 left the panes: the document takes keyboard focus.
+        response.request_focus();
+    }
+});
 ```
 
 | Piece | Behaviour |
