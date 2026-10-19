@@ -2,7 +2,7 @@ use std::{fmt::Debug, hash::Hash};
 
 use egui::{Context, Id, Key, Rect, Sense, Stroke, Ui, Vec2, pos2, vec2};
 
-use super::{Renderer, clamp_float};
+use super::{GroupKind, Renderer, clamp_float};
 use crate::docking::{Action, Floating, Node, PanelLimits, resize::AnchoredResize};
 
 /// Floating window resize handles: id suffix, hit rect and the edges they move.
@@ -54,7 +54,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let Some(first) = window.panels().next() else { continue };
             let [x, y, width, height] = window.rect;
             let limits = self.node_limits(&Node::Tabs { panels: window.panels().cloned().collect(), active: 0 });
-            let size = vec2(width, height).max(limits.min).min(limits.max);
+            let mut size = vec2(width, height).max(limits.min).min(limits.max);
+            if window.groups.iter().all(|group| group.minimized) {
+                size.y = size.y.min(window.groups.len() as f32 * self.style.tab_height);
+            }
             let rect = clamp_float(Rect::from_min_size(pos2(x, y), size), screen);
             let id = self.id.with(("floating", first));
             if self.activation.as_ref().is_some_and(|panel| window.contains(panel)) {
@@ -62,11 +65,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 ctx.memory_mut(|memory| memory.request_focus(self.id.with(("tab", self.activation.as_ref().unwrap_or(first)))));
                 self.output.focused = self.activation.clone();
             }
-            egui::Area::new(id).order(egui::Order::Middle).fixed_pos(rect.min).movable(false).constrain_to(screen).show(ctx, |ui| {
+            egui::Area::new(id).fade_in(false).order(egui::Order::Middle).fixed_pos(rect.min).movable(false).constrain_to(screen).show(ctx, |ui| {
                 ui.set_min_size(rect.size());
                 let rect = Rect::from_min_size(ui.min_rect().min, rect.size());
                 ui.allocate_rect(rect, Sense::hover());
-                self.stacked_groups(ui, &window.groups, rect, true);
+                // Opaque even when the host's panel colours are transparent.
+                ui.painter().rect_filled(rect, 0.0, self.style.floating_background);
+                self.stacked_groups(ui, &window.groups, rect, GroupKind::Floating { window: rect });
+                ui.painter().rect_stroke(rect, 0.0, self.style.floating_stroke, egui::StrokeKind::Outside);
                 self.resize_handles(ui, window, id, rect, limits, screen);
             });
         }

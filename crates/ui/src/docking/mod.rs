@@ -19,8 +19,10 @@ pub use surface::{DockArea, DockContent, DockOutput, DockStyle, DropFeedback, Dr
 pub use targets::{DropProposal, DropTarget, drop_zone, resolve_drop, tab_insertion_marker, zone_rect};
 pub use workspace::Workspace;
 
-use surface::{Drag, GroupDrag};
+use surface::{Drag, GroupDrag, GroupGesture};
 
+#[cfg(test)]
+mod group_tests;
 #[cfg(test)]
 mod model_tests;
 #[cfg(test)]

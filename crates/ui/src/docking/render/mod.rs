@@ -8,6 +8,8 @@ use super::{Action, DockContent, DockOutput, DockStyle, DropTarget, Layout, Node
 
 mod floating;
 
+pub(in crate::docking) use group::GroupKind;
+
 pub(in crate::docking) use floating::RESIZE_HANDLES;
 mod group;
 mod preview;
@@ -90,7 +92,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     self.output.actions.push(Action::ResizeSplit { path: path.clone(), size });
                 }
             }
-            Node::Tabs { panels, active } => self.group(ui, panels, *active, rect, false),
+            Node::Tabs { panels, active } => self.group(ui, panels, *active, false, rect, GroupKind::Frame),
             Node::Dock { columns, .. } => {
                 // Interim rendering: columns side by side, groups stacked evenly.
                 let total: f32 = columns.iter().map(|c| c.width).sum();
@@ -99,7 +101,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     let width = if total > 0.0 { rect.width() * column.width / total } else { 0.0 };
                     let column_rect = Rect::from_min_max(pos2(left, rect.top()), pos2(left + width, rect.bottom()));
                     left += width;
-                    self.stacked_groups(ui, &column.groups, column_rect, false);
+                    self.stacked_groups(ui, &column.groups, column_rect, GroupKind::Dock);
                 }
             }
             Node::Stack { entries } => {
@@ -117,7 +119,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     };
                     let panel_rect = Rect::from_min_max(pos2(rect.left(), top), pos2(rect.right(), (top + header + share).min(rect.bottom())));
                     let title_rect = Rect::from_min_max(panel_rect.min, pos2(panel_rect.right(), (top + header).min(panel_rect.bottom())));
-                    self.tab(ui, &entry.panel, title_rect, entry.open, panel_rect);
+                    self.tab(ui, &entry.panel, title_rect, entry.open, panel_rect, None);
                     let collapse = Rect::from_min_max(pos2((title_rect.right() - 18.0).max(title_rect.left()), title_rect.top()), title_rect.max);
                     let response = ui.interact(collapse, self.id.with(("collapse", &entry.panel)), Sense::click());
                     response.widget_info(|| {
@@ -207,6 +209,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 }
 
+/// A lone protected or bare panel draws no tab strip and no drag bar.
+pub(in crate::docking) fn stripless<P>(panels: &[P], content: &dyn DockContent<P>) -> bool {
+    match panels {
+        [panel] => content.permissions(panel) == Permissions::PROTECTED || content.bare(panel),
+        _ => false,
+    }
+}
+
 /// Size policy of a subtree, shared by the renderer and its measurements.
 pub(in crate::docking) fn node_limits<P>(node: &Node<P>, style: &DockStyle, content: &dyn DockContent<P>) -> PanelLimits {
     match node {
@@ -219,7 +229,7 @@ pub(in crate::docking) fn node_limits<P>(node: &Node<P>, style: &DockStyle, cont
                 limits.max = limits.max.min(policy.max);
             }
             limits.max = limits.max.max(limits.min);
-            if panels.len() != 1 || panels.first().is_some_and(|p| content.permissions(p) != Permissions::PROTECTED) {
+            if !stripless(panels, content) {
                 limits.min.y = (limits.min.y + style.tab_height).min(1_000_000.0);
                 limits.max.y = (limits.max.y + style.tab_height).min(1_000_000.0);
             }

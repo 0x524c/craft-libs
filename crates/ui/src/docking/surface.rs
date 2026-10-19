@@ -32,6 +32,19 @@ pub struct DockStyle {
     pub panels_label: String,
     pub resize_label: String,
     pub resize_window_label: String,
+    /// Accessibility label of a group's drag bar and top border.
+    pub move_group_label: String,
+    pub close_group_label: String,
+    pub minimize_label: String,
+    pub expand_label: String,
+    pub float_group_label: String,
+    pub group_with_label: String,
+    /// Minimum width of the drag bar left of the group header. Tabs shrink, then overflow,
+    /// before the bar narrows.
+    pub drag_bar_width: f32,
+    /// Painted under every floating window, so it stays opaque when the panel colours are not.
+    pub floating_background: Color32,
+    pub floating_stroke: Stroke,
 }
 
 impl DockStyle {
@@ -55,11 +68,22 @@ impl DockStyle {
             panels_label: "Panels".into(),
             resize_label: "Resize panels".into(),
             resize_window_label: "Resize panel window".into(),
+            move_group_label: "Move tab group".into(),
+            close_group_label: "Close Tab Group".into(),
+            minimize_label: "Minimize".into(),
+            expand_label: "Expand".into(),
+            float_group_label: "Float Tab Group".into(),
+            group_with_label: "Group with".into(),
+            drag_bar_width: 40.0,
+            floating_background: visuals.window_fill,
+            floating_stroke: visuals.window_stroke,
         }
     }
 
     pub(super) fn valid(&self) -> bool {
-        [self.tab_height, self.gap, self.min_pane, self.border.width, self.font.size].iter().all(|v| v.is_finite() && (0.0..=4096.0).contains(v))
+        [self.tab_height, self.gap, self.min_pane, self.border.width, self.font.size, self.drag_bar_width, self.floating_stroke.width]
+            .iter()
+            .all(|v| v.is_finite() && (0.0..=4096.0).contains(v))
             && self.tab_height > 0.0
             && self.font.size > 0.0
     }
@@ -117,10 +141,26 @@ pub(super) struct Drag<P> {
     pub(super) grab: Vec2,
 }
 
+/// What a group gesture moves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum GroupGesture {
+    /// A floating window's grip: the window follows the pointer.
+    Window,
+    /// A drag bar or top border: a ghost follows the pointer, the release picks the target.
+    Group,
+}
+
 #[derive(Clone)]
 pub(super) struct GroupDrag<P> {
+    /// The first member; identifies the gesture.
     pub(super) panel: P,
+    /// The floating window rect at the press, restored when a window move is cancelled.
     pub(super) original: [f32; 4],
+    pub(super) gesture: GroupGesture,
+    pub(super) members: Vec<P>,
+    pub(super) origin: Pos2,
+    /// The group (or window) rect at the press. A floated group keeps this size.
+    pub(super) source: Rect,
 }
 
 /// Start a docking drag from an application's existing tab/header. Use the same area ID when
@@ -322,7 +362,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
         let matches = |id: Id| id == focused;
         let group = |panels: &[P]| {
             panels.iter().any(|panel| matches(self.id.with(("tab", panel))) || matches(self.id.with(("overflow", panel))))
-                || matches(self.id.with(("move-group", panels.first())))
+                || ["move-group", "drag-bar", "drag-border"].iter().any(|name| matches(self.id.with((*name, panels.first()))))
         };
         for floating in &layout.floating {
             if floating.groups.iter().any(|g| group(&g.panels))

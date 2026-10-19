@@ -2,70 +2,77 @@ use std::{fmt::Debug, hash::Hash};
 
 use egui::{Key, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 
-use super::{Renderer, clamp_float};
-use crate::docking::{Action, DropTarget, GroupDrag, Permissions, Placement, begin_drag, surface::TAB_PADDING};
+use super::{Renderer, clamp_float, stripless};
+use crate::docking::{Action, DropTarget, Group, GroupDrag, GroupGesture, Placement, Target, begin_drag, surface::TAB_PADDING};
 use crate::tabs;
 
+/// Where a group is drawn. It decides the drop targets the group offers and its gestures.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::docking) enum GroupKind {
+    /// A `Tabs` node of the split tree: side drops split it.
+    Frame,
+    /// A group in a dock column.
+    Dock,
+    /// A group in the floating window drawn at `window`.
+    Floating { window: Rect },
+}
+
+/// The group a tab belongs to, for its menu and minimize gestures.
+pub(super) struct TabGroup<'a, P> {
+    pub(super) panels: &'a [P],
+    pub(super) selected: &'a P,
+    pub(super) minimized: bool,
+    pub(super) kind: GroupKind,
+    pub(super) rect: Rect,
+}
+
+/// Width of a floating window's move grip at the left of each strip.
+const GRIP_WIDTH: f32 = 12.0;
+/// The top band of a strip that drags the whole group.
+const BORDER_BAND: f32 = 4.0;
+
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
-    /// Groups stacked top to bottom in equal shares of `rect`.
-    pub(super) fn stacked_groups(&mut self, ui: &mut Ui, groups: &[crate::docking::Group<P>], rect: Rect, floating: bool) {
-        let share = rect.height() / groups.len().max(1) as f32;
-        for (index, group) in groups.iter().enumerate() {
-            let top = rect.top() + share * index as f32;
-            let group_rect = Rect::from_min_max(pos2(rect.left(), top), pos2(rect.right(), top + share));
-            self.group(ui, &group.panels, group.active, group_rect, floating);
+    /// Groups stacked top to bottom. Minimized groups take their strip; the others share the
+    /// rest equally.
+    pub(super) fn stacked_groups(&mut self, ui: &mut Ui, groups: &[Group<P>], rect: Rect, kind: GroupKind) {
+        let strip = self.style.tab_height;
+        let open = groups.iter().filter(|g| !g.minimized).count();
+        let fixed = groups.len().saturating_sub(open) as f32 * strip;
+        let share = if open > 0 { (rect.height() - fixed).max(0.0) / open as f32 } else { 0.0 };
+        let mut top = rect.top();
+        for group in groups {
+            let bottom = (top + if group.minimized { strip } else { share }).min(rect.bottom());
+            let group_rect = Rect::from_min_max(pos2(rect.left(), top), pos2(rect.right(), bottom));
+            self.group(ui, &group.panels, group.active, group.minimized, group_rect, kind);
+            top = bottom;
         }
     }
 
-    pub(super) fn group(&mut self, ui: &mut Ui, panels: &[P], active: usize, rect: Rect, floating: bool) {
+    pub(super) fn group(&mut self, ui: &mut Ui, panels: &[P], active: usize, minimized: bool, rect: Rect, kind: GroupKind) {
         let Some(selected) = panels.get(active) else { return };
         let policy = self.permissions(selected);
-        let bare = panels.len() == 1 && policy == Permissions::PROTECTED;
-        if bare {
+        let splits = kind == GroupKind::Frame;
+        if stripless(panels, &*self.content) {
             self.contents(ui, selected, rect);
             self.targets.push(DropTarget {
                 anchor: selected.clone(),
                 rect,
                 tab_strip: None,
-                tabs: Vec::new(),
-                allow_splits: !floating,
-                accepts_tabs: false,
+                tabs: vec![(selected.clone(), Rect::NOTHING)],
+                allow_splits: splits,
+                accepts_tabs: policy.accepts_tabs,
             });
             return;
         }
+        let movable = panels.iter().all(|p| self.permissions(p).movable);
         let mut strip = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.top() + self.style.tab_height).min(rect.bottom())));
         ui.painter().rect_filled(strip, 0.0, self.style.tab_background);
-        if floating {
-            let grip = Rect::from_min_max(strip.min, pos2((strip.left() + 12.0).min(strip.right()), strip.bottom()));
-            let response = ui.interact(grip, self.id.with(("move-group", panels.first())), Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
-            self.register_interaction(ui.ctx(), response.id);
-            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.move_label));
-            if panels.iter().all(|p| self.permissions(p).movable)
-                && response.drag_started()
-                && let Some(first) = panels.first()
-            {
-                ui.ctx().data_mut(|d| {
-                    d.insert_temp(
-                        self.id.with("group-drag"),
-                        GroupDrag { panel: first.clone(), original: [rect.left(), rect.top(), rect.width(), rect.height()] },
-                    )
-                });
-            }
-            if panels.iter().all(|p| self.permissions(p).movable)
-                && response.dragged()
-                && ui.ctx().data(|d| d.get_temp::<GroupDrag<P>>(self.id.with("group-drag"))).is_some()
-                && !ui.input(|i| i.key_pressed(Key::Escape) || !i.focused)
-            {
-                let moved = clamp_float(rect.translate(ui.input(|i| i.pointer.delta())), ui.ctx().content_rect());
-                if let Some(first) = panels.first() {
-                    self.output
-                        .actions
-                        .push(Action::MoveFloating { panel: first.clone(), rect: [moved.left(), moved.top(), moved.width(), moved.height()] });
-                }
-            }
-            ui.painter().line_segment([grip.center() - vec2(0.0, 5.0), grip.center() + vec2(0.0, 5.0)], self.style.border);
+        if let GroupKind::Floating { window } = kind {
+            let grip = Rect::from_min_max(strip.min, pos2((strip.left() + GRIP_WIDTH).min(strip.right()), strip.bottom()));
+            self.window_grip(ui, panels, grip, window, movable);
             strip.min.x = grip.right();
         }
+        let floating = matches!(kind, GroupKind::Floating { .. });
         let requested = self.content.group_header_width(panels, selected, floating);
         let header_width = if requested.is_finite() { requested.clamp(0.0, strip.width()) } else { 0.0 };
         if header_width > 0.0 {
@@ -74,6 +81,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             child.set_clip_rect(header.intersect(ui.clip_rect()));
             self.content.group_header(&mut child, panels, selected, floating);
         }
+        // The drag bar keeps its reserved width: tabs shrink, then overflow, before it narrows.
+        let bar_width = self.style.drag_bar_width.clamp(0.0, (strip.width() - header_width).max(0.0));
+        let tabs_width = (strip.width() - header_width - bar_width).max(0.0);
         let widths: Vec<f32> = panels
             .iter()
             .map(|p| {
@@ -85,19 +95,21 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     + TAB_PADDING
             })
             .collect();
-        let fit = tabs::fit(&widths, active, (strip.width() - header_width).max(0.0), 40.0, 22.0);
+        let fit = tabs::fit(&widths, active, tabs_width, 40.0, 22.0);
+        let owner = TabGroup { panels, selected, minimized, kind, rect };
         let mut x = strip.left();
-        let mut targets = Vec::new();
+        let mut shown = Vec::new();
         for (index, width) in &fit.shown {
             let Some(panel) = panels.get(*index) else { continue };
             let tab = Rect::from_min_size(pos2(x, strip.top()), vec2(*width, strip.height()));
-            self.tab(ui, panel, tab, *index == active, rect);
-            targets.push((panel.clone(), tab));
+            self.tab(ui, panel, tab, *index == active, rect, Some(&owner));
+            shown.push((panel.clone(), tab));
             x += width;
         }
         if !fit.overflow.is_empty() && fit.overflow_width > 0.0 {
             let overflow = Rect::from_min_size(pos2(x, strip.top()), vec2(fit.overflow_width, strip.height()));
             let response = ui.interact(overflow, self.id.with(("overflow", selected)), Sense::click());
+            self.register_interaction(ui.ctx(), response.id);
             response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.panels_label));
             ui.painter().with_clip_rect(overflow).text(overflow.center(), egui::Align2::CENTER_CENTER, "…", self.style.font.clone(), self.style.text);
             egui::Popup::menu(&response).show(|ui| {
@@ -113,23 +125,188 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     }
                 });
             });
+            x += fit.overflow_width;
         }
-        // Include hidden tab identities for source-group detection without creating hit areas.
-        for panel in panels {
-            if !targets.iter().any(|(p, _)| p == panel) {
-                targets.push((panel.clone(), Rect::NOTHING));
-            }
-        }
+        let bar = Rect::from_min_max(pos2(x.min(strip.right() - header_width), strip.top()), pos2(strip.right() - header_width, strip.bottom()));
+        self.group_handle(ui, "drag-bar", bar, &owner, movable);
+        // Registered last, so the band wins over the tabs below it.
+        let border = Rect::from_min_max(strip.min, pos2(strip.right() - header_width, (strip.top() + BORDER_BAND).min(strip.bottom())));
+        self.group_handle(ui, "drag-border", border, &owner, movable);
+        // Logical order, hidden tabs included without a hit area, for no-op detection.
+        let tabs =
+            panels.iter().map(|panel| (panel.clone(), shown.iter().find(|(p, _)| p == panel).map_or(Rect::NOTHING, |(_, rect)| *rect))).collect();
         self.targets.push(DropTarget {
             anchor: selected.clone(),
             rect,
             tab_strip: Some(strip),
-            tabs: targets,
-            allow_splits: !floating,
+            tabs,
+            allow_splits: splits,
             accepts_tabs: policy.accepts_tabs,
         });
-        self.contents(ui, selected, Rect::from_min_max(pos2(rect.left(), strip.bottom()), rect.max));
+        if !minimized {
+            self.contents(ui, selected, Rect::from_min_max(pos2(rect.left(), strip.bottom()), rect.max));
+        }
         ui.painter().rect_stroke(rect, 0.0, self.style.border, StrokeKind::Inside);
+    }
+
+    /// The floating window's own move: the window follows the pointer, every group included.
+    fn window_grip(&mut self, ui: &mut Ui, panels: &[P], grip: Rect, window: Rect, movable: bool) {
+        let Some(first) = panels.first() else { return };
+        let response = ui.interact(grip, self.id.with(("move-group", Some(first))), Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+        self.register_interaction(ui.ctx(), response.id);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.move_label));
+        if movable && response.drag_started() {
+            let origin = ui.input(|i| i.pointer.press_origin()).or_else(|| ui.ctx().pointer_interact_pos()).unwrap_or(grip.center());
+            let drag = GroupDrag {
+                panel: first.clone(),
+                original: [window.left(), window.top(), window.width(), window.height()],
+                gesture: GroupGesture::Window,
+                members: panels.to_vec(),
+                origin,
+                source: window,
+            };
+            ui.ctx().data_mut(|d| d.insert_temp(self.id.with("group-drag"), drag));
+        }
+        if movable
+            && response.dragged()
+            && let Some(drag) = ui.ctx().data(|d| d.get_temp::<GroupDrag<P>>(self.id.with("group-drag")))
+            && drag.gesture == GroupGesture::Window
+            && let Some(pointer) = ui.ctx().pointer_interact_pos()
+            && !ui.input(|i| i.key_pressed(Key::Escape) || !i.focused)
+        {
+            // From the press origin, so fractional pointer steps do not accumulate rounding.
+            let moved = clamp_float(drag.source.translate(pointer - drag.origin), ui.ctx().content_rect());
+            self.output.actions.push(Action::MoveFloating { panel: first.clone(), rect: [moved.left(), moved.top(), moved.width(), moved.height()] });
+        }
+        ui.painter().line_segment([grip.center() - vec2(0.0, 5.0), grip.center() + vec2(0.0, 5.0)], self.style.border);
+    }
+
+    /// The drag bar (`drag-bar`: click, double-click, menu and drag) or the top border band
+    /// (`drag-border`: drag only). Both move the whole group.
+    fn group_handle(&mut self, ui: &mut Ui, name: &'static str, hit: Rect, owner: &TabGroup<'_, P>, movable: bool) {
+        if !crate::docking::targets::usable(hit) {
+            return;
+        }
+        let bar = name == "drag-bar";
+        let sense = if bar { Sense::click_and_drag() } else { Sense::drag() };
+        let response = ui.interact(hit, self.id.with((name, owner.panels.first())), sense);
+        let response = if movable { response.on_hover_cursor(egui::CursorIcon::Grab) } else { response };
+        self.register_interaction(ui.ctx(), response.id);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.move_group_label));
+        if movable && response.drag_started() {
+            self.start_group_drag(ui, owner.panels, owner.rect);
+        }
+        if !bar {
+            return;
+        }
+        if owner.kind != GroupKind::Frame && response.double_clicked() {
+            self.output.actions.push(Action::SetMinimized { panel: owner.selected.clone(), minimized: !owner.minimized });
+        }
+        if response.has_focus() || response.hovered() {
+            ui.painter().with_clip_rect(hit).rect_stroke(
+                hit.shrink(1.0),
+                0.0,
+                Stroke::new(1.0, self.style.accent.gamma_multiply(0.5)),
+                StrokeKind::Inside,
+            );
+        }
+        let keyboard = response.has_focus() && ui.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space));
+        let command = if response.secondary_clicked() || keyboard {
+            Some(egui::SetOpenCommand::Bool(true))
+        } else if response.clicked() {
+            Some(egui::SetOpenCommand::Bool(false))
+        } else {
+            None
+        };
+        egui::Popup::menu(&response).open_memory(command).show(|ui| self.group_menu(ui, owner, owner.selected));
+    }
+
+    fn start_group_drag(&mut self, ui: &Ui, panels: &[P], rect: Rect) {
+        let Some(first) = panels.first() else { return };
+        let origin = ui.input(|i| i.pointer.press_origin()).or_else(|| ui.ctx().pointer_interact_pos()).unwrap_or(rect.center());
+        let drag = GroupDrag {
+            panel: first.clone(),
+            original: [rect.left(), rect.top(), rect.width(), rect.height()],
+            gesture: GroupGesture::Group,
+            members: panels.to_vec(),
+            origin,
+            source: rect,
+        };
+        ui.ctx().data_mut(|d| d.insert_temp(self.id.with("group-drag"), drag));
+    }
+
+    /// The group items of the menu tail: Close Tab Group, Minimize or Expand, Float Tab Group
+    /// and Group with. `panel` is the panel whose menu this is.
+    fn group_menu(&mut self, ui: &mut Ui, owner: &TabGroup<'_, P>, panel: &P) {
+        let all = |check: &dyn Fn(crate::docking::Permissions) -> bool| owner.panels.iter().all(|p| check(self.permissions(p)));
+        let closable = all(&|p| p.closable);
+        let movable = all(&|p| p.movable);
+        let floatable = movable && all(&|p| p.floatable);
+        if closable && self.menu_action(ui, &self.style.close_group_label.clone()) {
+            self.output.actions.push(Action::CloseGroup { panel: panel.clone() });
+        }
+        if owner.kind != GroupKind::Frame {
+            let label = if owner.minimized { self.style.expand_label.clone() } else { self.style.minimize_label.clone() };
+            if self.menu_action(ui, &label) {
+                self.output.actions.push(Action::SetMinimized { panel: panel.clone(), minimized: !owner.minimized });
+            }
+        }
+        if floatable && !matches!(owner.kind, GroupKind::Floating { .. }) && self.menu_action(ui, &self.style.float_group_label.clone()) {
+            let rect = clamp_float(owner.rect.translate(vec2(24.0, 24.0)), ui.ctx().content_rect());
+            self.output.actions.push(Action::MoveGroup {
+                panel: panel.clone(),
+                to: Target::Float { rect: Some([rect.left(), rect.top(), rect.width(), rect.height()]) },
+            });
+        }
+        let targets = if movable { self.group_targets(owner.panels) } else { Vec::new() };
+        if !targets.is_empty() {
+            let logical = self.style.group_with_label.clone();
+            let text = self.content.action_label(ui, &logical, &self.style.font, self.style.text);
+            let response = ui.menu_button(text, |ui| {
+                egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                    for target in &targets {
+                        if self.menu_label(ui, target).clicked() {
+                            self.output.actions.push(Action::MoveGroup {
+                                panel: panel.clone(),
+                                to: Target::At { anchor: target.clone(), placement: Placement::Tab { before: None } },
+                            });
+                            ui.close();
+                        }
+                    }
+                });
+            });
+            response.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &logical));
+        }
+    }
+
+    /// A stock menu button with shaped text and its logical accessibility label; true when
+    /// clicked, after closing the menu.
+    fn menu_action(&mut self, ui: &mut Ui, logical: &str) -> bool {
+        let text = self.content.action_label(ui, logical, &self.style.font, self.style.text);
+        let response = ui.button(text);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), logical));
+        if response.clicked() {
+            ui.close();
+        }
+        response.clicked()
+    }
+
+    /// One anchor per other group that accepts a whole group as tabs, in layout order.
+    fn group_targets(&self, members: &[P]) -> Vec<P> {
+        let Some(first) = members.first() else { return Vec::new() };
+        let mut places = Vec::new();
+        let mut anchors = Vec::new();
+        for anchor in self.layout.move_targets(first, |p| self.permissions(p)) {
+            if members.contains(anchor) {
+                continue;
+            }
+            let Some(place) = self.layout.place(anchor) else { continue };
+            if !places.contains(&place) {
+                places.push(place);
+                anchors.push(anchor.clone());
+            }
+        }
+        anchors
     }
 
     pub(super) fn menu_label(&mut self, ui: &mut Ui, panel: &P) -> egui::Response {
@@ -140,7 +317,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         response
     }
 
-    pub(super) fn tab(&mut self, ui: &mut Ui, panel: &P, rect: Rect, active: bool, group: Rect) {
+    pub(super) fn tab(&mut self, ui: &mut Ui, panel: &P, rect: Rect, active: bool, group: Rect, owner: Option<&TabGroup<'_, P>>) {
+        let minimized = owner.filter(|owner| owner.kind != GroupKind::Frame).map(|owner| owner.minimized);
         let policy = self.permissions(panel);
         let label = self.label_of(panel);
         let color = if active { self.style.text } else { self.style.inactive_text };
@@ -166,6 +344,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if response.clicked() {
             self.output.actions.push(Action::Activate { panel: panel.clone() });
             self.output.focused = Some(panel.clone());
+            if minimized == Some(true) && !active {
+                self.output.actions.push(Action::SetMinimized { panel: panel.clone(), minimized: false });
+            }
+        }
+        if let Some(minimized) = minimized
+            && response.double_clicked()
+        {
+            self.output.actions.push(Action::SetMinimized { panel: panel.clone(), minimized: !minimized });
         }
         if policy.movable && response.drag_started() {
             begin_drag(ui.ctx(), self.id, panel.clone(), group);
@@ -211,6 +397,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     self.output.actions.push(Action::Close { panel: panel.clone() });
                     ui.close();
                 }
+            }
+            if let Some(owner) = owner {
+                ui.separator();
+                self.group_menu(ui, owner, panel);
             }
         });
     }
