@@ -547,27 +547,115 @@ impl ImportPlan {
     /// [`ImportReport::skipped`].
     ///
     /// A change that finds the overrides full is left out and reported in
-    /// [`ImportReport::failed`]; the others still apply. With [`Start::Defaults`] that cannot
-    /// happen.
+    /// [`ImportReport::failed`]; the others still apply, and a chord it would have taken from an
+    /// earlier entry stays with that entry. With [`Start::Defaults`] that cannot happen.
     pub fn apply(&self, keymap: &mut Keymap) -> ImportReport {
-        let mut report = self.report.clone();
         let before: Vec<Vec<Binding>> = self.commands.iter().map(|p| keymap.bindings(&p.command)).collect();
         // Dropping every entry leaves room for all of them: each catalogue command takes at most one
         // entry, and the catalogue holds at most `MAX_COMMANDS`.
         if self.start == Start::Defaults {
             keymap.reset_all();
         }
-        let home_of = |km: &Keymap, c: &CommandRef| km.bindable(c).map_or_else(Scope::app, |b| b.scope.clone());
+        let start = keymap.clone();
+        // Commands whose bindings found the overrides full after taking a chord from an earlier
+        // entry. They are left out of the claims and the plan is applied again, so the earlier
+        // entry keeps the chord, as when the entries are applied in file order.
+        let mut dropped: HashMap<usize, Failed> = HashMap::new();
+        'attempt: loop {
+            let mut report = self.report.clone();
+            let (accepted, displaced) = self.resolve(keymap, &dropped, &mut report);
+            let home_of = |km: &Keymap, c: &CommandRef| km.bindable(c).map_or_else(Scope::app, |b| b.scope.clone());
+            let label_of = |km: &Keymap, c: &CommandRef| km.bindable(c).map(|b| b.label.clone()).unwrap_or_default();
+            let mut decided: HashSet<String> = HashSet::new();
+            for (c, (p, list)) in self.commands.iter().zip(&accepted).enumerate() {
+                let failed =
+                    |km: &Keymap, change, shortcuts| Failed { command: p.command.clone(), label: label_of(km, &p.command), change, shortcuts };
+                if let Some(f) = dropped.get(&c) {
+                    report.failed.push(f.clone());
+                    continue;
+                }
+                if !list.is_empty() {
+                    let list = in_default_order(keymap, &p.command, list);
+                    if keymap.set_bindings(&p.command, list.clone(), Policy::Keep).is_err() {
+                        let home = home_of(keymap, &p.command);
+                        let f = failed(keymap, FailedChange::Bind, list.iter().map(|b| b.text(&home)).collect());
+                        if displaced.contains(&c) {
+                            dropped.insert(c, f);
+                            *keymap = start.clone();
+                            continue 'attempt;
+                        }
+                        report.failed.push(f);
+                        continue;
+                    }
+                } else if p.none_defined && self.none_defined == NoneDefined::Clear {
+                    if !keymap.clear(&p.command) {
+                        report.failed.push(failed(keymap, FailedChange::Clear, Vec::new()));
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+                decided.insert(p.command.key());
+            }
 
+            for (p, list) in self.commands.iter().zip(&accepted) {
+                if list.is_empty() || !decided.contains(&p.command.key()) {
+                    continue;
+                }
+                for h in keymap.clashing(&p.command, list) {
+                    if decided.contains(&h.command.key()) {
+                        continue;
+                    }
+                    let home = home_of(keymap, &h.command);
+                    let label = label_of(keymap, &h.command);
+                    let shortcut = h.binding.text(&home);
+                    if keymap.remove(&h.command, &h.binding) {
+                        report.conflicts_cleared.push(Cleared { command: h.command, label, shortcut });
+                    } else {
+                        report.failed.push(Failed { command: h.command, label, change: FailedChange::Unbind, shortcuts: vec![shortcut] });
+                    }
+                }
+            }
+
+            for (p, from) in self.commands.iter().zip(&before) {
+                if !decided.contains(&p.command.key()) {
+                    continue;
+                }
+                let to = keymap.bindings(&p.command);
+                if to == *from {
+                    continue;
+                }
+                let home = home_of(keymap, &p.command);
+                let texts = |l: &[Binding]| l.iter().map(|b| b.text(&home)).collect::<Vec<_>>();
+                report.changed.push(Changed {
+                    command: p.command.clone(),
+                    label: label_of(keymap, &p.command),
+                    item: p.item.clone(),
+                    line: p.line,
+                    from: texts(from),
+                    to: texts(&to),
+                });
+            }
+            report.imported = report.changed.len();
+            return report;
+        }
+    }
+
+    /// Settles which command each claimed chord goes to, in entry order, leaving out the claims of
+    /// `dropped` commands. Returns each command's accepted bindings and the commands that took a
+    /// chord from an earlier entry; skipped keys go to `report`.
+    fn resolve(&self, keymap: &Keymap, dropped: &HashMap<usize, Failed>, report: &mut ImportReport) -> (Vec<Vec<Binding>>, HashSet<usize>) {
+        let home_of = |c: &CommandRef| keymap.bindable(c).map_or_else(Scope::app, |b| b.scope.clone());
         let mut claims: Vec<(usize, &PlannedBinding)> =
             self.commands.iter().enumerate().flat_map(|(c, p)| p.bindings.iter().map(move |b| (c, b))).collect();
         claims.sort_by_key(|(_, b)| b.order);
         let platform = keymap.platform();
         let mut taken: HashMap<Trigger, Vec<TakenGroup>> = HashMap::new();
         let mut accepted: Vec<Vec<&PlannedBinding>> = vec![Vec::new(); self.commands.len()];
+        let mut displaced: HashSet<usize> = HashSet::new();
         for (c, pb) in claims {
             let Some(p) = self.commands.get(c) else { continue };
-            let shortcut = || pb.binding.text(&home_of(keymap, &p.command));
+            let shortcut = || pb.binding.text(&home_of(&p.command));
             let skip =
                 |reason| Skipped { command: p.command.clone(), item: pb.item.clone(), line: pb.line, shortcut: shortcut(), kept_by: None, reason };
             if keymap.is_reserved(&pb.binding.trigger.chord) {
@@ -576,6 +664,9 @@ impl ImportPlan {
             }
             if pb.binding.scope.as_ref().is_some_and(|s| !keymap.knows_scope(s)) {
                 report.skipped.push(skip(SkipReason::UnknownScope));
+                continue;
+            }
+            if dropped.contains_key(&c) {
                 continue;
             }
             let effective = pb.binding.trigger.effective(platform);
@@ -596,6 +687,9 @@ impl ImportPlan {
                     !clash
                 });
             }
+            if !lost.is_empty() {
+                displaced.insert(c);
+            }
             for (k, earlier) in lost {
                 if let Some(list) = accepted.get_mut(k) {
                     list.retain(|b| !std::ptr::eq(*b, earlier));
@@ -605,7 +699,7 @@ impl ImportPlan {
                     command: other.command.clone(),
                     item: earlier.item.clone(),
                     line: earlier.line,
-                    shortcut: earlier.binding.text(&home_of(keymap, &other.command)),
+                    shortcut: earlier.binding.text(&home_of(&other.command)),
                     kept_by: Some(p.command.clone()),
                     reason: SkipReason::Taken,
                 });
@@ -618,70 +712,8 @@ impl ImportPlan {
                 list.push(pb);
             }
         }
-        let accepted: Vec<Vec<Binding>> = accepted.into_iter().map(|l| l.into_iter().map(|b| b.binding.clone()).collect()).collect();
-
-        let label_of = |km: &Keymap, c: &CommandRef| km.bindable(c).map(|b| b.label.clone()).unwrap_or_default();
-        let mut decided: HashSet<String> = HashSet::new();
-        for (p, list) in self.commands.iter().zip(&accepted) {
-            let failed = |km: &Keymap, change, shortcuts| Failed { command: p.command.clone(), label: label_of(km, &p.command), change, shortcuts };
-            if !list.is_empty() {
-                let list = in_default_order(keymap, &p.command, list);
-                if keymap.set_bindings(&p.command, list.clone(), Policy::Keep).is_err() {
-                    let home = home_of(keymap, &p.command);
-                    report.failed.push(failed(keymap, FailedChange::Bind, list.iter().map(|b| b.text(&home)).collect()));
-                    continue;
-                }
-            } else if p.none_defined && self.none_defined == NoneDefined::Clear {
-                if !keymap.clear(&p.command) {
-                    report.failed.push(failed(keymap, FailedChange::Clear, Vec::new()));
-                    continue;
-                }
-            } else {
-                continue;
-            }
-            decided.insert(p.command.key());
-        }
-
-        for (p, list) in self.commands.iter().zip(&accepted) {
-            if list.is_empty() || !decided.contains(&p.command.key()) {
-                continue;
-            }
-            for h in keymap.clashing(&p.command, list) {
-                if decided.contains(&h.command.key()) {
-                    continue;
-                }
-                let home = home_of(keymap, &h.command);
-                let label = label_of(keymap, &h.command);
-                let shortcut = h.binding.text(&home);
-                if keymap.remove(&h.command, &h.binding) {
-                    report.conflicts_cleared.push(Cleared { command: h.command, label, shortcut });
-                } else {
-                    report.failed.push(Failed { command: h.command, label, change: FailedChange::Unbind, shortcuts: vec![shortcut] });
-                }
-            }
-        }
-
-        for (p, from) in self.commands.iter().zip(before) {
-            if !decided.contains(&p.command.key()) {
-                continue;
-            }
-            let to = keymap.bindings(&p.command);
-            if to == from {
-                continue;
-            }
-            let home = home_of(keymap, &p.command);
-            let texts = |l: &[Binding]| l.iter().map(|b| b.text(&home)).collect::<Vec<_>>();
-            report.changed.push(Changed {
-                command: p.command.clone(),
-                label: label_of(keymap, &p.command),
-                item: p.item.clone(),
-                line: p.line,
-                from: texts(&from),
-                to: texts(&to),
-            });
-        }
-        report.imported = report.changed.len();
-        report
+        let accepted = accepted.into_iter().map(|l| l.into_iter().map(|b| b.binding.clone()).collect()).collect();
+        (accepted, displaced)
     }
 }
 

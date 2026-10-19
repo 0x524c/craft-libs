@@ -367,6 +367,19 @@ fn changes_that_find_the_overrides_full_are_reported() {
     has(&km, "view.goToPage", &[]);
     has(&km, "file.save", &["Cmd+Alt+S"]);
     has(&km, "edit.duplicate", &[]);
+
+    // A later entry whose change finds the overrides full leaves the chord with the earlier one.
+    let set = ForeignSet {
+        name: None,
+        entries: vec![win("File", &["Close"], &[("Default", "Ctrl+Alt+J")]), win("File", &["Save"], &[("Default", "Ctrl+Alt+J")])],
+    };
+    let mut km = keymap(Platform::Windows).with_overrides(full());
+    let r = plan(&set, &km, &options(Start::Current)).apply(&mut km);
+    has(&km, "file.close", &["Cmd+Alt+J"]);
+    has(&km, "file.save", &["Cmd+S"]);
+    assert_eq!(r.failed, [row("file.save", "Save", FailedChange::Bind, &["Cmd+Alt+J"])]);
+    assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+    assert_eq!(r.imported, 1);
 }
 
 #[test]
