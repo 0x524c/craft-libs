@@ -18,4 +18,6 @@ pub use targets::{DropProposal, DropTarget, drop_zone, resolve_drop, zone_rect};
 pub use workspace::Workspace;
 
 #[cfg(test)]
+mod model_tests;
+#[cfg(test)]
 mod tests;

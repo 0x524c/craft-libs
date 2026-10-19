@@ -253,35 +253,58 @@ fn pointer_targets_distinguish_reorder_center_split_and_occlusion() {
 
 #[test]
 fn long_action_sequence_never_loses_or_duplicates_a_panel() {
-    let mut layout = sample();
-    let mut seed = 72u64;
-    for step in 0..800 {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-        let panel = (seed % 6 + 1) as u32;
-        let anchor = ((seed >> 16) % 6 + 1) as u32;
-        let action = if step % 7 == 0 {
-            Action::Float { panel, rect: [10.0, 20.0, 200.0, 220.0] }
-        } else {
-            move_to(
-                panel,
-                anchor,
-                match seed % 5 {
-                    0 => Zone::Left,
-                    1 => Zone::Right,
-                    2 => Zone::Top,
-                    3 => Zone::Bottom,
-                    _ => Zone::Center,
-                },
-            )
-        };
-        let before = layout.clone();
-        if layout.apply(action).is_err() {
-            assert_eq!(layout, before);
+    for (start, ids) in [(sample(), vec![1, 2, 3, 4, 5, 6]), (super::model_tests::docked(), super::model_tests::ALL.to_vec())] {
+        let mut workspace = Workspace::new(start);
+        let mut seed = 72u64;
+        for step in 0..800 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let pick = |bits: u64| ids[(bits % ids.len() as u64) as usize];
+            let (panel, anchor) = (pick(seed >> 8), pick(seed >> 24));
+            let placement = match (seed >> 40) % 7 {
+                0 => Placement::Split(Zone::Left),
+                1 => Placement::Split(Zone::Right),
+                2 => Placement::Split(Zone::Top),
+                3 => Placement::Split(Zone::Bottom),
+                4 => Placement::Split(Zone::Center),
+                5 => Placement::Group { below: seed & 1 == 0 },
+                _ => Placement::Column { after: seed & 2 == 0 },
+            };
+            let to = match (seed >> 32) % 4 {
+                0 => Target::Float { rect: None },
+                1 => Target::NewDock { side: if seed & 4 == 0 { Side::Start } else { Side::End } },
+                _ => Target::At { anchor, placement: placement.clone() },
+            };
+            let action = match step % 13 {
+                0 => Action::Float { panel, rect: [10.0, 20.0, 200.0, 220.0] },
+                1 => Action::MoveGroup { panel, to },
+                2 => Action::MoveColumn { panel, to },
+                3 => Action::MoveWindow { panel, to },
+                4 => Action::CloseGroup { panel },
+                5 => Action::CloseWindow { panel },
+                6 => Action::CloseOthers { panel },
+                7 => Action::Close { panel },
+                8 => Action::SetMinimized { panel, minimized: seed & 8 == 0 },
+                9 => Action::SetIconic { panel, iconic: seed & 16 == 0 },
+                _ => Action::Move { panel, anchor, placement },
+            };
+            let before = workspace.clone();
+            if workspace.apply(action, |_| Permissions::default()).is_err() {
+                assert_eq!(workspace, before);
+            }
+            if step % 3 == 0
+                && let Some((hidden, _)) = workspace.hidden.first().cloned()
+            {
+                let fallback = workspace.layout.panels().first().map(|p| **p);
+                let before = workspace.clone();
+                if workspace.set_visible(hidden, true, fallback).is_err() {
+                    assert_eq!(workspace, before);
+                }
+            }
+            workspace.validate().unwrap();
+            let mut panels: Vec<u32> = workspace.layout.panels().into_iter().copied().chain(workspace.hidden.iter().map(|(p, _)| *p)).collect();
+            panels.sort_unstable();
+            assert_eq!(panels, ids, "step {step}");
         }
-        layout.validate().unwrap();
-        let mut panels: Vec<u32> = layout.panels().into_iter().copied().collect();
-        panels.sort_unstable();
-        assert_eq!(panels, vec![1, 2, 3, 4, 5, 6]);
     }
 }
 
