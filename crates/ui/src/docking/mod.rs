@@ -6,6 +6,8 @@
 //! input and commits only a valid result; a rejected move cannot lose the source panel.
 
 pub mod chrome;
+#[cfg(feature = "serde")]
+mod command;
 mod dock_model;
 mod hits;
 mod model;
@@ -17,6 +19,8 @@ mod targets;
 pub mod testing;
 mod workspace;
 
+#[cfg(feature = "serde")]
+pub use command::{DockCommand, DockOperation, UiDock, ZoneName};
 pub use hits::{Divider, Hit, ResizeEdge};
 pub use render::{close_flyout, flyout, open_flyout};
 pub use dock_model::{Column, ColumnLocation, Group, GroupLocation, PanelState, Side, Target};
@@ -30,6 +34,8 @@ pub use workspace::Workspace;
 
 use surface::{Drag, GroupDrag, GroupGesture};
 
+#[cfg(all(test, feature = "serde"))]
+mod command_tests;
 #[cfg(test)]
 mod dock_tests;
 #[cfg(test)]
