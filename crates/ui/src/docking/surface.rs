@@ -2,7 +2,7 @@ use std::{fmt::Debug, hash::Hash};
 
 use egui::{Color32, Context, FontId, Id, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-use super::{Action, DockError, Layout, Node, Permissions, render::Renderer};
+use super::{Action, DockError, DropTarget, Layout, Node, Permissions, render::Renderer};
 
 /// Horizontal room around a tab's label, both when measuring its natural width and when cutting it.
 pub(super) const TAB_PADDING: f32 = 24.0;
@@ -149,10 +149,47 @@ pub fn cancel_drag<P: Clone + Send + Sync + 'static>(ctx: &Context, area_id: Id)
     }
 }
 
-/// One mutable application adapter owns bodies, menus and shaped text, avoiding competing
-/// mutable closures. Logical labels remain separate and are used for tab accessibility.
+/// One mutable application adapter owns bodies, menus, shaped text and per-panel policy,
+/// avoiding competing mutable closures. Logical labels are used for tab accessibility.
+/// [`DockArea::show_content`] reads every policy from here; the closures passed to the older
+/// `show*` functions override `logical_label`, `permissions` and `limits`.
 pub trait DockContent<P> {
     fn body(&mut self, ui: &mut Ui, panel: &P);
+    /// Plain text name for accessibility, menus and the default visual label.
+    fn logical_label(&self, panel: &P) -> String
+    where
+        P: Debug,
+    {
+        format!("{panel:?}")
+    }
+    fn permissions(&self, _panel: &P) -> Permissions {
+        Permissions::default()
+    }
+    fn limits(&self, _panel: &P) -> PanelLimits {
+        PanelLimits::default()
+    }
+    /// Preferred floating size, independent of the current dock geometry. `None` falls back
+    /// to the panel limits.
+    fn floating_size(&self, _panel: &P) -> Option<Vec2> {
+        None
+    }
+    fn icon(&self, _panel: &P) -> Option<egui::ImageSource<'static>> {
+        None
+    }
+    /// Whether the panel may move to a native OS window (feature `native-windows`).
+    fn allow_native(&self, _panel: &P) -> bool {
+        false
+    }
+    /// A lone bare panel draws no tab strip and no drag bar, like a lone protected panel. It
+    /// still moves by command and menu.
+    fn bare(&self, _panel: &P) -> bool {
+        false
+    }
+    /// Host-owned drop resolution for targets the renderer cannot know about. Returning
+    /// feedback consumes the gesture, including no-op targets; the renderer then emits no move.
+    fn resolve_drag(&mut self, _ctx: &Context, _style: &DockStyle, _request: &DropRequest<'_, P>) -> Option<DropFeedback> {
+        None
+    }
     fn label(&mut self, _ui: &Ui, _panel: &P, logical: &str, _font: &FontId, _color: Color32) -> egui::WidgetText {
         logical.into()
     }
@@ -168,10 +205,81 @@ pub trait DockContent<P> {
     fn group_header(&mut self, _ui: &mut Ui, _panels: &[P], _active: &P, _floating: bool) {}
 }
 
+/// Host-owned drop resolution request, see [`DockContent::resolve_drag`].
+pub struct DropRequest<'a, P> {
+    pub panel: &'a P,
+    pub pointer: Pos2,
+    pub targets: &'a [DropTarget<P>],
+    pub floating_rect: Option<Rect>,
+    pub whole_group: bool,
+    pub released: bool,
+    pub workspace: Rect,
+    pub screen: Rect,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DropFeedback {
+    pub preview: Option<Rect>,
+    pub insertion: Option<Rect>,
+}
+
 struct BodyContent<F>(F);
 impl<P, F: FnMut(&mut Ui, &P)> DockContent<P> for BodyContent<F> {
     fn body(&mut self, ui: &mut Ui, panel: &P) {
         (self.0)(ui, panel);
+    }
+}
+
+/// The older `show*` closures in front of an application's content.
+struct Overrides<'a, P, C: ?Sized> {
+    label: &'a dyn Fn(&P) -> String,
+    permissions: &'a dyn Fn(&P) -> Permissions,
+    limits: &'a dyn Fn(&P) -> PanelLimits,
+    inner: &'a mut C,
+}
+
+impl<P, C: DockContent<P> + ?Sized> DockContent<P> for Overrides<'_, P, C> {
+    fn body(&mut self, ui: &mut Ui, panel: &P) {
+        self.inner.body(ui, panel);
+    }
+    fn logical_label(&self, panel: &P) -> String {
+        (self.label)(panel)
+    }
+    fn permissions(&self, panel: &P) -> Permissions {
+        (self.permissions)(panel)
+    }
+    fn limits(&self, panel: &P) -> PanelLimits {
+        (self.limits)(panel)
+    }
+    fn floating_size(&self, panel: &P) -> Option<Vec2> {
+        self.inner.floating_size(panel)
+    }
+    fn icon(&self, panel: &P) -> Option<egui::ImageSource<'static>> {
+        self.inner.icon(panel)
+    }
+    fn allow_native(&self, panel: &P) -> bool {
+        self.inner.allow_native(panel)
+    }
+    fn bare(&self, panel: &P) -> bool {
+        self.inner.bare(panel)
+    }
+    fn resolve_drag(&mut self, ctx: &Context, style: &DockStyle, request: &DropRequest<'_, P>) -> Option<DropFeedback> {
+        self.inner.resolve_drag(ctx, style, request)
+    }
+    fn label(&mut self, ui: &Ui, panel: &P, logical: &str, font: &FontId, color: Color32) -> egui::WidgetText {
+        self.inner.label(ui, panel, logical, font, color)
+    }
+    fn action_label(&mut self, ui: &Ui, logical: &str, font: &FontId, color: Color32) -> egui::WidgetText {
+        self.inner.action_label(ui, logical, font, color)
+    }
+    fn panel_menu(&mut self, ui: &mut Ui, panel: &P) {
+        self.inner.panel_menu(ui, panel);
+    }
+    fn group_header_width(&self, panels: &[P], active: &P, floating: bool) -> f32 {
+        self.inner.group_header_width(panels, active, floating)
+    }
+    fn group_header(&mut self, ui: &mut Ui, panels: &[P], active: &P, floating: bool) {
+        self.inner.group_header(ui, panels, active, floating);
     }
 }
 
@@ -296,25 +404,29 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<P> {
         limits: impl Fn(&P) -> PanelLimits,
         content: &mut impl DockContent<P>,
     ) -> DockOutput<P> {
+        let mut content = Overrides { label: &label, permissions: &permissions, limits: &limits, inner: content };
+        self.show_content(ui, layout, style, &mut content)
+    }
+
+    /// Render with every label, policy and size from `content`.
+    pub fn show_content(self, ui: &mut Ui, layout: &Layout<P>, style: &DockStyle, content: &mut dyn DockContent<P>) -> DockOutput<P> {
         let rect = ui.available_rect_before_wrap();
         if let Err(error) = layout.validate() {
             cancel_drag::<P>(ui.ctx(), self.id);
             return DockOutput { error: Some(error), ..Default::default() };
         }
-        if !style.valid() || !super::targets::usable(rect) || layout.panels().into_iter().any(|p| !limits(p).valid()) {
+        if !style.valid() || !super::targets::usable(rect) || layout.panels().into_iter().any(|p| !content.limits(p).valid()) {
             cancel_drag::<P>(ui.ctx(), self.id);
             return DockOutput { error: Some(DockError::InvalidGeometry), ..Default::default() };
         }
         let mut renderer = Renderer {
             id: self.id,
             style,
-            label: &label,
-            permissions: &permissions,
-            limits: &limits,
             content,
             activation: self.activation,
             blockers: self.blockers,
             layout,
+            workspace: rect,
             targets: Vec::new(),
             owned_interactions: Vec::new(),
             output: DockOutput::default(),

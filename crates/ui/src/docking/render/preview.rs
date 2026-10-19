@@ -8,7 +8,7 @@ use crate::docking::{Action, Drag, GroupDrag, cancel_drag, resolve_drop};
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     pub(in crate::docking) fn finish_group_drag(&mut self, ctx: &Context) {
         let Some(drag) = ctx.data(|d| d.get_temp::<GroupDrag<P>>(self.id.with("group-drag"))) else { return };
-        if !self.layout.floating.iter().any(|g| g.contains(&drag.panel) && g.panels().all(|p| (self.permissions)(p).movable)) {
+        if !self.layout.floating.iter().any(|g| g.contains(&drag.panel) && g.panels().all(|p| self.permissions(p).movable)) {
             ctx.data_mut(|d| d.remove::<GroupDrag<P>>(self.id.with("group-drag")));
             return;
         }
@@ -67,7 +67,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             let action = if let Some(proposal) = proposal.filter(|_| !gone) {
                 Some(Action::Move { panel: drag.panel.clone(), anchor: proposal.anchor, placement: proposal.placement })
-            } else if (self.permissions)(&drag.panel).floatable
+            } else if self.permissions(&drag.panel).floatable
                 && (gone || !drag.source.contains(pointer) || self.layout.floating.iter().any(|g| g.contains(&drag.panel)))
             {
                 let rect = clamp_float(Rect::from_min_size(pointer - drag.grab, drag.source.size()), ctx.content_rect());
@@ -79,7 +79,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 // Validate the proposed gesture against the same complete snapshot. The app
                 // still applies it via its own command path after body rendering finishes.
                 let mut candidate = self.layout.clone();
-                if candidate.apply_with_permissions(action.clone(), self.permissions).is_ok() {
+                if candidate.apply_with_permissions(action.clone(), |p| self.permissions(p)).is_ok() {
                     self.output.actions.push(action);
                     self.output.focused = Some(drag.panel);
                 }
@@ -98,7 +98,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             if let Some(marker) = proposal.insertion {
                 painter.rect_filled(marker, 0.0, self.style.accent);
             }
-        } else if (self.permissions)(&drag.panel).floatable {
+        } else if self.permissions(&drag.panel).floatable {
             let rect = clamp_float(Rect::from_min_size(pointer - drag.grab, drag.source.size()), ctx.content_rect());
             painter.rect_stroke(rect, 0.0, Stroke::new(2.0, self.style.accent), StrokeKind::Inside);
         }

@@ -13,19 +13,30 @@ mod preview;
 pub(super) struct Renderer<'a, P> {
     pub(super) id: Id,
     pub(super) style: &'a DockStyle,
-    pub(super) label: &'a dyn Fn(&P) -> String,
-    pub(super) permissions: &'a dyn Fn(&P) -> Permissions,
-    pub(super) limits: &'a dyn Fn(&P) -> PanelLimits,
     pub(super) content: &'a mut dyn DockContent<P>,
     pub(super) activation: Option<P>,
     pub(super) blockers: Vec<Rect>,
     pub(super) layout: &'a Layout<P>,
+    /// The docked area, for host drop requests.
+    pub(super) workspace: Rect,
     pub(super) targets: Vec<DropTarget<P>>,
     pub(super) owned_interactions: Vec<Id>,
     pub(super) output: DockOutput<P>,
 }
 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
+    pub(super) fn label_of(&self, panel: &P) -> String {
+        self.content.logical_label(panel)
+    }
+
+    pub(super) fn permissions(&self, panel: &P) -> Permissions {
+        self.content.permissions(panel)
+    }
+
+    pub(super) fn limits(&self, panel: &P) -> PanelLimits {
+        self.content.limits(panel)
+    }
+
     pub(super) fn register_interaction(&mut self, ctx: &Context, id: Id) {
         // A validated tree has at most 2*MAX_PANELS nodes. Tabs, stack dividers,
         // floating grips/corners and splits fit comfortably inside this fixed bound.
@@ -108,7 +119,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     let collapse = Rect::from_min_max(pos2((title_rect.right() - 18.0).max(title_rect.left()), title_rect.top()), title_rect.max);
                     let response = ui.interact(collapse, self.id.with(("collapse", &entry.panel)), Sense::click());
                     response.widget_info(|| {
-                        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), entry.open, (self.label)(&entry.panel))
+                        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), entry.open, self.label_of(&entry.panel))
                     });
                     ui.painter().with_clip_rect(collapse).text(
                         collapse.center(),
@@ -130,7 +141,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                         tab_strip: Some(title_rect),
                         tabs: vec![(entry.panel.clone(), title_rect)],
                         allow_splits: true,
-                        accepts_tabs: (self.permissions)(&entry.panel).accepts_tabs,
+                        accepts_tabs: self.permissions(&entry.panel).accepts_tabs,
                     });
                     top = panel_rect.bottom();
                     if entry.open && remaining > 0.0 {
@@ -148,7 +159,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     let first_size = (a * scale) as f32;
                     let pair_size = ((a + b) * scale) as f32;
                     let body_limits = |panel: &P| {
-                        let mut limits = (self.limits)(panel);
+                        let mut limits = self.limits(panel);
                         limits.min.y = limits.min.y.max(self.style.min_pane);
                         limits.max = limits.max.max(limits.min);
                         limits
@@ -181,12 +192,12 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             Node::Tabs { panels, .. } => {
                 let mut limits = PanelLimits::default();
                 for panel in panels {
-                    let policy = (self.limits)(panel);
+                    let policy = self.limits(panel);
                     limits.min = limits.min.max(policy.min).max(Vec2::splat(self.style.min_pane));
                     limits.max = limits.max.min(policy.max);
                 }
                 limits.max = limits.max.max(limits.min);
-                if panels.len() != 1 || panels.first().is_some_and(|p| (self.permissions)(p) != Permissions::PROTECTED) {
+                if panels.len() != 1 || panels.first().is_some_and(|p| self.permissions(p) != Permissions::PROTECTED) {
                     limits.min.y = (limits.min.y + self.style.tab_height).min(1_000_000.0);
                     limits.max.y = (limits.max.y + self.style.tab_height).min(1_000_000.0);
                 }
@@ -195,7 +206,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             Node::Stack { entries } => {
                 let mut limits = PanelLimits::default();
                 for entry in entries {
-                    let policy = (self.limits)(&entry.panel);
+                    let policy = self.limits(&entry.panel);
                     limits.min.x = limits.min.x.max(policy.min.x).max(self.style.min_pane);
                     limits.min.y += if entry.open { policy.min.y.max(self.style.min_pane) } else { 0.0 } + self.style.tab_height;
                     limits.max.x = limits.max.x.min(policy.max.x);

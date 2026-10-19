@@ -19,7 +19,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 
     pub(super) fn group(&mut self, ui: &mut Ui, panels: &[P], active: usize, rect: Rect, floating: bool) {
         let Some(selected) = panels.get(active) else { return };
-        let policy = (self.permissions)(selected);
+        let policy = self.permissions(selected);
         let bare = panels.len() == 1 && policy == Permissions::PROTECTED;
         if bare {
             self.contents(ui, selected, rect);
@@ -40,7 +40,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let response = ui.interact(grip, self.id.with(("move-group", panels.first())), Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
             self.register_interaction(ui.ctx(), response.id);
             response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.move_label));
-            if panels.iter().all(|p| (self.permissions)(p).movable)
+            if panels.iter().all(|p| self.permissions(p).movable)
                 && response.drag_started()
                 && let Some(first) = panels.first()
             {
@@ -51,7 +51,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     )
                 });
             }
-            if panels.iter().all(|p| (self.permissions)(p).movable)
+            if panels.iter().all(|p| self.permissions(p).movable)
                 && response.dragged()
                 && ui.ctx().data(|d| d.get_temp::<GroupDrag<P>>(self.id.with("group-drag"))).is_some()
                 && !ui.input(|i| i.key_pressed(Key::Escape) || !i.focused)
@@ -78,7 +78,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             .iter()
             .map(|p| {
                 self.content
-                    .label(ui, p, &(self.label)(p), &self.style.font, self.style.text)
+                    .label(ui, p, &self.label_of(p), &self.style.font, self.style.text)
                     .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, self.style.font.clone())
                     .size()
                     .x
@@ -133,7 +133,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     pub(super) fn menu_label(&mut self, ui: &mut Ui, panel: &P) -> egui::Response {
-        let logical = (self.label)(panel);
+        let logical = self.label_of(panel);
         let text = self.content.label(ui, panel, &logical, &self.style.font, self.style.text);
         let response = ui.button(text);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &logical));
@@ -141,8 +141,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     pub(super) fn tab(&mut self, ui: &mut Ui, panel: &P, rect: Rect, active: bool, group: Rect) {
-        let policy = (self.permissions)(panel);
-        let label = (self.label)(panel);
+        let policy = self.permissions(panel);
+        let label = self.label_of(panel);
         let color = if active { self.style.text } else { self.style.inactive_text };
         // A tab squeezed below its natural width cuts its label with '…' inside the padding its
         // natural width was measured with, instead of letting it run under its neighbours.
@@ -182,11 +182,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     ui.close();
                 }
             }
-            if policy.movable && !self.layout.move_targets(panel, self.permissions).is_empty() {
+            let targets: Vec<P> =
+                if policy.movable { self.layout.move_targets(panel, |p| self.permissions(p)).into_iter().cloned().collect() } else { Vec::new() };
+            if !targets.is_empty() {
                 let text = self.content.action_label(ui, &self.style.move_label, &self.style.font, self.style.text);
                 let response = ui.menu_button(text, |ui| {
                     egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                        for target in self.layout.move_targets(panel, self.permissions) {
+                        for target in &targets {
                             if self.menu_label(ui, target).clicked() {
                                 self.output.actions.push(Action::Move {
                                     panel: panel.clone(),
