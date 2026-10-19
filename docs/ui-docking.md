@@ -57,8 +57,8 @@ layout.apply(Action::Move {
 # Ok::<(), craft_ui::docking::DockError>(())
 ```
 
-- `Move`, `Float` and `Close` act on one panel. `MoveGroup`, `MoveColumn` and `MoveWindow` move a
-  group, a dock column or a floating window, named by any panel in it.
+- `Move`, `MovePanel`, `Float` and `Close` act on one panel. `MoveGroup`, `MoveColumn` and
+  `MoveWindow` move a group, a dock column or a floating window, named by any panel in it.
 - A `Target` is `At { anchor, placement }`, `Float { rect }` or `NewDock { side }`.
 - A `Placement` is a tab position, a split zone, a new group above or below (with an optional
   preferred `height`), a new column, or a new frame on an outer edge.

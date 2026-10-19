@@ -371,3 +371,13 @@ fn float_without_a_rect_takes_the_drag_size_inside_the_dock_area() {
 fn float_with(space: &FloatSpace<P>, panel: &str) -> Vec<Action<P>> {
     parse(json!({"command": "window.panel.float", "panel": panel})).unwrap().to_actions(&workspace(), false, space).unwrap()
 }
+
+#[test]
+fn dock_to_a_side_without_a_dock_takes_one_panel_out_of_a_shared_group() {
+    let params = json!({"command": "window.panel.dock", "panel": "layers", "side": "End"});
+    assert_eq!(actions(params.clone()), vec![Action::MovePanel { panel: s("layers"), to: Target::NewDock { side: Side::End } }]);
+    let (workspace, _) = applied(params);
+    let side = |panel: &str| workspace.layout.location(&s(panel)).unwrap().group.and_then(|g| g.column).map(|c| c.side);
+    assert_eq!(side("layers"), Some(Side::End));
+    assert_eq!(side("channels"), Some(Side::Start));
+}

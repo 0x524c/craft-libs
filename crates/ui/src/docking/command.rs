@@ -284,7 +284,7 @@ impl Unit {
         let panel = panel.clone();
         Ok(match (self, to) {
             (Self::Panel, Target::At { anchor, placement }) => Action::Move { panel, anchor, placement },
-            (Self::Panel, _) => return Err(DockError::InvalidPlacement),
+            (Self::Panel, to) => Action::MovePanel { panel, to },
             (Self::Group, to) => Action::MoveGroup { panel, to },
             (Self::Column, to) if floating => Action::MoveWindow { panel, to },
             (Self::Column, to) => Action::MoveColumn { panel, to },

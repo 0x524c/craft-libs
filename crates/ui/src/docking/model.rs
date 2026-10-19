@@ -310,6 +310,12 @@ pub enum Action<P> {
         panel: P,
         rect: Option<[f32; 4]>,
     },
+    /// Move one panel, without the rest of its group. `Target::At` is [`Action::Move`];
+    /// `NewDock` and `Float` give the panel a group of its own.
+    MovePanel {
+        panel: P,
+        to: Target<P>,
+    },
 }
 
 /// What may happen to a panel. [`Layout::apply_with_permissions`] enforces these for every
@@ -726,6 +732,18 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             Action::Close { panel } if !permissions(panel).closable => return Err(DockError::NotAllowed),
             Action::MoveFloating { panel, .. } if !permissions(panel).movable => return Err(DockError::NotAllowed),
             Action::Open { anchor: Some(anchor), .. } if !permissions(anchor).accepts_tabs => return Err(DockError::NotAllowed),
+            Action::MovePanel { panel, to } => {
+                let policy = permissions(panel);
+                let allowed = policy.movable
+                    && match to {
+                        Target::Float { .. } => policy.floatable,
+                        Target::At { anchor, placement } => placement_allowed(placement, permissions(anchor)),
+                        Target::NewDock { .. } => true,
+                    };
+                if !allowed {
+                    return Err(DockError::NotAllowed);
+                }
+            }
             Action::MoveGroup { panel, to } | Action::MoveColumn { panel, to } | Action::MoveWindow { panel, to } => {
                 let members = self.members(panel, unit_of(&action))?;
                 if members.iter().any(|p| !permissions(p).movable) {
@@ -899,6 +917,13 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                 let moving = self.take_unit(panel, unit)?;
                 self.insert_moving(moving, to.clone())
             }
+            Action::MovePanel { panel, to } => match to {
+                Target::At { anchor, placement } => self.apply_inner(Action::Move { panel, anchor, placement }),
+                to => {
+                    let entry = self.take(&panel).ok_or(DockError::MissingPanel)?;
+                    self.insert_moving(Moving::group(Group::new(vec![entry.panel], 0)), to)
+                }
+            },
             Action::CloseGroup { ref panel } | Action::CloseWindow { ref panel } => self.take_unit(panel, unit_of(&action)).map(|_| ()),
             Action::CloseOthers { panel } => {
                 for other in self.members(&panel, Unit::Group)? {
