@@ -282,6 +282,16 @@ fn group_dropped_on_the_window_edge_without_a_dock_makes_a_new_dock() {
 }
 
 #[test]
+fn tab_dragged_to_the_window_edge_without_a_dock_makes_a_dock_of_that_panel() {
+    let mut d = testing::DockDriver::new(docked(Side::Start, &[&[&[2, 3]]]), TestContent::default());
+    let tab = d.hit(&Hit::Tab(3)).unwrap_or_else(|| panic!("{:?}", d.hits()));
+    let out = d.drag(tab.center(), pos2(795.0, 300.0));
+    assert!(out.actions.contains(&Action::MovePanel { panel: 3, to: Target::NewDock { side: Side::End } }), "{:?}", out.actions);
+    assert_eq!(columns(&d.layout, Side::End), vec![vec![vec![3]]]);
+    assert_eq!(columns(&d.layout, Side::Start), vec![vec![vec![2]]]);
+}
+
+#[test]
 fn a_column_takes_groups_anywhere_in_it_and_as_tabs() {
     let windows = [(5, [400.0, 40.0, 150.0, 120.0]), (6, [400.0, 220.0, 150.0, 120.0]), (7, [400.0, 400.0, 150.0, 120.0])];
     let mut d = Driver::new(with_floating(docked(Side::Start, &[&[&[2], &[3]]]), &windows));

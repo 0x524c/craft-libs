@@ -461,8 +461,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         self.checked(action).map(|action| (action, drop.line))
     }
 
-    /// The dock target a single tab drag would take: a new group or column of that panel. A new
-    /// dock only takes a panel that is alone in its group.
+    /// The dock target a single tab drag would take: a new group, column or dock of that panel.
+    /// A panel alone in its group takes the group's state to a new dock; one that shares its
+    /// group leaves the other tabs behind (P6).
     pub(super) fn dock_tab_proposal(&self, ctx: &Context, panel: &P, pointer: Pos2) -> Option<(Option<Action<P>>, Rect)> {
         if self.dock_covered(ctx, pointer, None) {
             return None;
@@ -476,7 +477,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             {
                 Action::MoveGroup { panel: panel.clone(), to }
             }
-            Target::NewDock { .. } | Target::Float { .. } => return None,
+            to @ Target::NewDock { .. } => Action::MovePanel { panel: panel.clone(), to },
+            Target::Float { .. } => return None,
         };
         self.checked(action).map(|action| (action, drop.line))
     }
