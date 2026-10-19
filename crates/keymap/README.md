@@ -73,13 +73,17 @@ macOS it folds into `cmd` (`Chord::effective`).
 
 ## Storing overrides
 
-`Overrides` is a field of the app's craft-settings type. It is stored as an array of
-`{ command, keys }` tables (`shortcuts = [{ command = "file.save", keys = ["Cmd+Alt+S"] }]`, or
-`[[shortcuts]]` blocks), not as a table keyed by command: craft-settings merges tables key by key
-with what the file holds, but replaces an array whole, so a reset command (an entry removed)
-stays removed after saving. The map form `{ "<command>" = [keys] }` also loads; there a single
-text counts as a one-item list, and `""` means no shortcut, as in apps that store one text per
-command.
+`Overrides` is a field of the app's settings type. It is stored as a map of one text per command
+(`{ "file.save": "Cmd+Alt+S", "edit.copy": "" }`, `""` for no shortcut) while no command has more
+than one binding, so apps that stored that map before keep reading it in older builds. Once a
+command has several bindings it is stored as an array of `{ command, keys }` tables
+(`[{ command = "file.save", keys = ["Cmd+Alt+S", "F12"] }]`). Both forms load, and in the map form
+a list of texts loads too.
+
+In a craft-settings type, put `#[serde(with = "craft_keymap::keymap::overrides_list")]` on the
+field, which always writes the array: craft-settings merges tables key by key with what the file
+holds but replaces an array whole, so only the array lets a reset command (an entry removed) stay
+removed after saving. Hand-written `[[shortcuts]]` blocks load as the array.
 
 Texts the keymap cannot use (a key name from a newer version, an unknown scope, a reserved chord)
 stay in the entry when the command is edited, unless the edit leaves it without bindings.
@@ -93,6 +97,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Default, Clone, PartialEq)]
 #[serde(default)]
 struct Prefs {
+    #[serde(with = "craft_keymap::keymap::overrides_list")]
     shortcuts: Overrides,
 }
 

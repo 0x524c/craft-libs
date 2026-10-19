@@ -12,6 +12,7 @@ use crate::command::{CommandRef, MAX_KEY};
 use crate::scope::{Active, Scope, ScopeKind, Scopes};
 
 pub use overrides::Overrides;
+pub use overrides::list as overrides_list;
 
 /// Most commands a catalogue or an [`Overrides`] holds.
 pub const MAX_COMMANDS: usize = 4096;

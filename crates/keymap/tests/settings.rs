@@ -9,6 +9,7 @@ use serde_json::json;
 #[serde(default)]
 struct Prefs {
     general: General,
+    #[serde(with = "craft_keymap::keymap::overrides_list")]
     shortcuts: Overrides,
 }
 

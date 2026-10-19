@@ -14,8 +14,10 @@ const MAX_NOTES: usize = 64;
 /// The user's changes to the default bindings: binding key → the full list of binding texts
 /// that replaces the command's defaults (`[]` = no shortcut).
 ///
-/// Stored as an array of `{ command, keys }` items in key order, e.g. `[[shortcuts]]` blocks in
-/// craft-settings; the map form `{ "<key>": [texts] }` loads too. Loading never fails:
+/// Stored in key order as a map of one text per command (`{ "<key>": "Cmd+K" }`, `""` for no
+/// shortcut) while no entry has more than one text, and otherwise as an array of
+/// `{ command, keys }` items. [`list`] always writes the array, for craft-settings files. Both
+/// forms load, and in the map form a list of texts loads too. Loading never fails:
 /// entries for unknown commands and texts that do not parse are kept verbatim; values that are not
 /// text, overlong keys and texts, repeated keys (the first entry stays) and entries past the caps
 /// are dropped, and a value that is neither a list nor a map loads as no overrides. All of these
@@ -92,12 +94,43 @@ impl Overrides {
     }
 }
 
-// Written as an array of `{ command, keys }` items, not a map: craft-settings merges tables key
-// by key and keeps keys a value no longer has, but replaces arrays whole, so a reset entry leaves
-// the file only in this form.
+// The map form is what apps that store one text per command read, so a file stays readable by
+// their older builds while no command has more than one binding.
 impl Serialize for Overrides {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(self.map.iter().map(|(command, keys)| Item { command, keys }))
+        if self.map.values().all(|keys| single(keys).is_some()) {
+            serializer.collect_map(self.map.iter().map(|(command, keys)| (command, single(keys).unwrap_or_default())))
+        } else {
+            list::serialize(self, serializer)
+        }
+    }
+}
+
+/// An entry's text in the map form: `""` for no shortcut. `None` for several texts, and for one
+/// blank text, which the map form reads as no shortcut.
+fn single(keys: &[String]) -> Option<&str> {
+    match keys {
+        [] => Some(""),
+        [text] if !text.trim().is_empty() => Some(text.as_str()),
+        _ => None,
+    }
+}
+
+/// Serializes [`Overrides`] always as an array of `{ command, keys }` items, for
+/// `#[serde(with = "craft_keymap::keymap::overrides_list")]`. craft-settings merges a table key
+/// by key with what the file holds but replaces an array whole, so in a craft-settings file only
+/// this form lets a reset command (an entry removed) stay removed after saving.
+pub mod list {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use super::{Item, Overrides};
+
+    pub fn serialize<S: Serializer>(overrides: &Overrides, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(overrides.map.iter().map(|(command, keys)| Item { command, keys }))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Overrides, D::Error> {
+        Overrides::deserialize(deserializer)
     }
 }
 

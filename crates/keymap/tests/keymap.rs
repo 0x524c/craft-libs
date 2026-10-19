@@ -466,6 +466,38 @@ fn an_empty_text_in_the_map_form_removes_the_shortcut() {
 }
 
 #[test]
+fn overrides_write_the_map_form_unless_a_command_has_several_keys() {
+    let mut o = Overrides::new();
+    o.insert("edit.copy", vec!["Cmd+K".into()]);
+    o.insert("edit.paste", vec![]);
+    let text = serde_json::to_string(&o).unwrap();
+    assert_eq!(text, r#"{"edit.copy":"Cmd+K","edit.paste":""}"#, "older builds read one text per command");
+    assert_eq!(serde_json::from_str::<Overrides>(&text).unwrap(), o);
+
+    o.insert("edit.cut", vec!["Cmd+X".into(), "Shift+Delete".into()]);
+    let text = serde_json::to_string(&o).unwrap();
+    assert!(text.starts_with(r#"[{"command":"edit.copy","keys":["Cmd+K"]},"#), "{text}");
+    assert_eq!(serde_json::from_str::<Overrides>(&text).unwrap(), o);
+
+    // A blank text is kept verbatim (it loads as the defaults), which the map form cannot say.
+    let mut blank = Overrides::new();
+    blank.insert("edit.copy", vec![" ".into()]);
+    let text = serde_json::to_string(&blank).unwrap();
+    assert!(text.starts_with('['), "{text}");
+    assert_eq!(serde_json::from_str::<Overrides>(&text).unwrap(), blank);
+
+    #[derive(serde::Serialize)]
+    struct Prefs {
+        #[serde(with = "craft_keymap::keymap::overrides_list")]
+        shortcuts: Overrides,
+    }
+    let mut single = Overrides::new();
+    single.insert("edit.copy", vec!["Cmd+K".into()]);
+    let text = serde_json::to_string(&Prefs { shortcuts: single }).unwrap();
+    assert_eq!(text, r#"{"shortcuts":[{"command":"edit.copy","keys":["Cmd+K"]}]}"#);
+}
+
+#[test]
 fn ctrl_folds_into_cmd_off_macos() {
     let catalogue = vec![app("edit.cut", &["Cmd+X"]), app("mac.cut", &["Ctrl+X"])];
     let win = Keymap::new(catalogue.clone(), Scopes::new(), Platform::Windows);
