@@ -1,9 +1,9 @@
 # Craft Keymap
 
 `craft-keymap` holds the data and logic for keyboard bindings in the Craft apps: chords and their
-text forms, bindings from chords to commands, scopes, conflicts, user overrides, and an import
-pipeline for other applications' shortcut sets. Each application supplies its command catalogue,
-its file-format readers and its UI.
+text forms, bindings from chords to commands, scopes, conflicts, user overrides, named sets, an
+import pipeline for other applications' shortcut sets, and an editor model. Each application
+supplies its command catalogue, its file-format readers and its UI.
 
 ## Boundaries
 
@@ -90,7 +90,7 @@ stay in the entry when the command is edited, unless the edit leaves it without 
 `Keymap::problems` lists them.
 
 ```rust
-use craft_keymap::{Binding, Keymap, Overrides, Platform, Policy, Scopes};
+use craft_keymap::{Binding, Keymap, Overrides, Platform, Policy, Profiles, Scopes};
 use craft_settings::{Location, Settings, SettingsStore};
 use serde::{Deserialize, Serialize};
 
@@ -99,6 +99,7 @@ use serde::{Deserialize, Serialize};
 struct Prefs {
     #[serde(with = "craft_keymap::keymap::overrides_list")]
     shortcuts: Overrides,
+    shortcut_sets: Profiles,
 }
 
 impl Settings for Prefs {
@@ -129,6 +130,42 @@ store.update(|p| p.shortcuts = keymap.overrides().clone());
   `AssignError::Taken`.
 - `conflicts()` lists every pair of commands on one chord; `conflicts_with(&command)` lists the
   commands that share one command's chords, with that command as `a`.
+
+## Shortcut sets
+
+`Profiles` holds the user's named sets of overrides and which one is active. The app's built-in
+sets (`&[(&str, Overrides)]`, the first one the default) are passed to each call and never change.
+Put `Profiles` next to the `Overrides` in the app's settings type. The sets, and each set's
+overrides, are stored as arrays, so a deleted set or entry leaves a craft-settings file.
+
+- `names`, `get`, `active_name`, `active_overrides` (hand them to `Keymap::set_overrides`).
+- `select` switches sets; `duplicate(from, to)` copies a built-in or user set; `save_as`,
+  `rename` and `delete` work on user sets only.
+- `store(overrides, builtins, copy_name)` saves the editor's result to the active set. Editing a
+  built-in set makes a user copy named after `copy_name`, which becomes active.
+- New names are made unique (`Custom 2`, `Custom 3`) and compare without case. A user set named
+  like a built-in added later is renamed by `reconcile`.
+- `export(name)` writes one set as JSON
+  (`{"format":"craft-keymap","version":1,"name":…,"overrides":…}`); `import(text)` reads it into
+  a new set. A file from a newer version is refused (`ProfileError::NewerVersion`).
+- `import_plan(&plan, &keymap, name)` applies an import plan (see Importing a shortcut set) to a
+  copy of the keymap and keeps the result as a new set, so another application's set becomes one
+  the user can switch to and away from.
+
+```rust
+use craft_keymap::{Overrides, Profiles};
+
+let mut classic = Overrides::new();
+classic.insert("edit.copy", vec!["Cmd+Shift+C".into()]);
+let builtins = [("Craft", Overrides::new()), ("Classic", classic)];
+let mut sets = Profiles::default();
+assert_eq!(sets.active_name(&builtins), "Craft");
+
+sets.duplicate("Classic", "Mine", &builtins).unwrap();
+let text = sets.export("Mine", &builtins).unwrap();
+assert_eq!(sets.import(&text, &builtins), Ok("Mine 2".into()));
+assert_eq!(sets.active_overrides(&builtins), sets.get("Mine", &builtins).unwrap());
+```
 
 ## Importing a shortcut set
 
@@ -198,6 +235,44 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
   they are reported, never applied. Only the first 200 unmatched entries with keys get them, and
   only the first 200 characters of a name are compared. Keys in `ContextRule::Skip` contexts do
   not count: an unmatched entry with only such keys counts in `unmatched_without_shortcut`.
+
+## Editor
+
+`editor` is the model behind a shortcut dialog; the app draws it.
+
+- `EditSession::begin(&keymap)` when the dialog opens. Each change is one undo step:
+  `assign`, `replace` (record over one key of a command), `remove`, `clear`, `reset`, `reset_all`,
+  or any keymap edit through `session.edit(&mut keymap, |km| …)`. `undo`, `redo`, `cancel` (back
+  to the state at open) and `is_modified`.
+- Conflicts: `editor::holders(&keymap, &command, &binding)` lists the commands that hold the key
+  while the user records; `Keymap::conflicts_with(&command)` marks the rows whose keys are
+  shared after a `Keep`. Assigning with `Policy::Refuse` returns `AssignError::Taken` and changes
+  nothing; the user's answer is a second call with `Policy::Steal` or `Policy::Keep`.
+- `Recorder::press(chord, time)` gives `Single`, `Double` (the same chord again within
+  `DOUBLE_PRESS`, 0.6 s) or `Cancel` (Escape).
+- `editor::search(&keymap, query, platform)` filters the catalogue by label, alias, menu path,
+  command id and key text, canonical or as shown on `platform`.
+
+```rust
+use craft_keymap::editor::holders;
+use craft_keymap::{AssignError, Binding, Chord, EditSession, Policy, Recorded, Recorder};
+
+// `keymap` is the app's Keymap, `now` the input time in seconds.
+let mut session = EditSession::begin(&keymap);
+let mut recorder = Recorder::new();
+let save = "file.save".into();
+// The user presses Cmd+C in the shortcut field of Save.
+if let Recorded::Single(trigger) = recorder.press(Chord::parse("Cmd+C").unwrap(), now) {
+    let binding = Binding::new(trigger);
+    let _shown = holders(&keymap, &save, &binding);
+    if let Err(AssignError::Taken(_)) = session.assign(&mut keymap, &save, binding.clone(), Policy::Refuse) {
+        // The user chose to take the key from Copy.
+        session.assign(&mut keymap, &save, binding, Policy::Steal).ok();
+    }
+}
+// OK: store `keymap.overrides()` (`Profiles::store` for sets). Cancel:
+session.cancel(&mut keymap);
+```
 
 ## Features
 

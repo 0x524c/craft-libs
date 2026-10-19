@@ -6,10 +6,11 @@
 //! protocols store, display text per platform, and a reader for other applications' key text.
 //! [`command`] names what a binding runs, [`scope`] where it works, and [`keymap`] holds an app's
 //! catalogue with default bindings, the user's [`Overrides`], dispatch ([`Keymap::lookup`]),
-//! editing and conflicts. [`reserved`] lists the chords each operating system takes. [`import`]
-//! brings in other applications' shortcut sets. With the `egui` feature, the `egui` module
-//! converts to and from egui keys, matches key presses against bindings and dispatches a frame's
-//! key events.
+//! editing and conflicts. [`profiles`] keeps named sets of overrides; [`reserved`] lists the
+//! chords each operating system takes. [`import`] brings in other applications' shortcut sets.
+//! [`editor`] is the model of a shortcut editor: undo, a chord recorder, conflict queries and
+//! search. With the `egui` feature, the `egui` module converts to and from egui keys, matches key
+//! presses against bindings and dispatches a frame's key events.
 //!
 //! ```
 //! use craft_keymap::{Chord, Platform};
@@ -68,7 +69,7 @@
 //! removed) stays removed after saving.
 //!
 //! ```no_run
-//! use craft_keymap::{Binding, Keymap, Overrides, Platform, Policy, Scopes};
+//! use craft_keymap::{Binding, Keymap, Overrides, Platform, Policy, Profiles, Scopes};
 //! use craft_settings::{Location, Settings, SettingsStore};
 //! use serde::{Deserialize, Serialize};
 //!
@@ -76,6 +77,7 @@
 //! #[serde(default)]
 //! struct Prefs {
 //!     shortcuts: Overrides,
+//!     shortcut_sets: Profiles,
 //! }
 //!
 //! impl Settings for Prefs {
@@ -128,19 +130,23 @@
 
 pub mod chord;
 pub mod command;
+pub mod editor;
 #[cfg(feature = "egui")]
 pub mod egui;
 pub mod import;
 pub mod keymap;
+pub mod profiles;
 pub mod reserved;
 pub mod scope;
 
 pub use chord::foreign::Flavor;
 pub use chord::{Chord, Key, MAX_CHORD_TEXT, Mods, ParseError, Platform, Trigger};
 pub use command::{CommandRef, MAX_KEY};
+pub use editor::{DOUBLE_PRESS, EditSession, MAX_UNDO, MAX_UNDO_BYTES, Recorded, Recorder};
 pub use import::{ContextRule, ForeignEntry, ForeignKey, ForeignSet, ImportOptions, ImportPlan, ImportReport, NoneDefined, Start, plan};
 pub use keymap::{
     AssignError, Assigned, Bindable, Binding, BindingError, Conflict, ConflictKind, DropReason, Holder, Keymap, Kind, Lookup, MAX_BINDING_TEXT,
     MAX_BINDINGS, MAX_COMMANDS, MAX_CONFLICTS, Overrides, Policy, Problem, TypingRule,
 };
+pub use profiles::{Builtins, MAX_EXPORT_BYTES, MAX_SET_NAME, MAX_SETS, ProfileError, Profiles};
 pub use scope::{Active, MAX_SCOPE_NAME, Scope, ScopeKind, Scopes};

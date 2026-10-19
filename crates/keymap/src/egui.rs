@@ -135,8 +135,7 @@ fn candidates(pressed: Key, held: Mods, platform: Platform) -> Vec<Chord> {
     out
 }
 
-/// Seconds within which a second press of the same chord counts as a double press.
-pub const DOUBLE_PRESS: f64 = 0.6;
+pub use crate::editor::DOUBLE_PRESS;
 
 /// A command a key press runs.
 #[derive(Clone, Debug, PartialEq)]
