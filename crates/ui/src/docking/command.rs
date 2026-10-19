@@ -426,7 +426,14 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
             Self::CloseOthers { panel } => one(Action::CloseOthers { panel: panel.clone() }),
             Self::Minimize { panel, minimized } => {
                 let place = layout.place(panel).ok_or(DockError::MissingPanel)?;
-                let current = layout.group(&place).is_some_and(|g| g.minimized);
+                // An accordion entry is minimized while it is closed.
+                let current = match &place {
+                    Place::Node(path) => match layout.root.as_ref().and_then(|root| super::dock_model::node_at(root, path)) {
+                        Some(super::Node::Stack { entries }) => entries.iter().any(|e| &e.panel == panel && !e.open),
+                        _ => false,
+                    },
+                    place => layout.group(place).is_some_and(|g| g.minimized),
+                };
                 one(Action::SetMinimized { panel: panel.clone(), minimized: minimized.unwrap_or(!current) })
             }
             Self::Iconic { panel, iconic } => {

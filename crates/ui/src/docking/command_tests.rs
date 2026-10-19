@@ -381,3 +381,14 @@ fn dock_to_a_side_without_a_dock_takes_one_panel_out_of_a_shared_group() {
     assert_eq!(side("layers"), Some(Side::End));
     assert_eq!(side("channels"), Some(Side::Start));
 }
+
+#[test]
+fn minimize_without_a_value_toggles_an_accordion_entry_both_ways() {
+    let entry = |panel: &str| StackEntry { panel: s(panel), open: true, height: None };
+    let mut workspace = Workspace::new(Layout { root: Some(Node::Stack { entries: vec![entry("layers"), entry("history")] }), floating: Vec::new() });
+    let toggle = parse(json!({"command": "window.panel.minimize", "panel": "layers"})).unwrap();
+    toggle.apply(&mut workspace, false, &space(), permissions).unwrap();
+    assert_eq!(workspace.layout.panel_state(&s("layers")), PanelState::Open);
+    toggle.apply(&mut workspace, false, &space(), permissions).unwrap();
+    assert_eq!(workspace.layout.panel_state(&s("layers")), PanelState::Front);
+}
