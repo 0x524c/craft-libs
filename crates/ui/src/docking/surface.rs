@@ -59,6 +59,16 @@ pub struct DockStyle {
     pub seam_band: f32,
     /// [D] Width of the band along the docked area's left and right edges that makes a new dock.
     pub new_dock_band: f32,
+    /// [D] Side of a panel icon in an iconic column; each icon row is 10 pt taller.
+    pub icon_size: f32,
+    /// [D] Width of an iconic column without a saved width, and the narrowest it gets.
+    pub iconic_width: f32,
+    /// [D] Widest an iconic column gets by dragging its inner edge.
+    pub iconic_max_width: f32,
+    /// [D] An iconic column at least this wide shows panel names beside the icons.
+    pub iconic_label_width: f32,
+    /// [D] Column menu item that toggles Auto-Collapse Iconic Panels.
+    pub auto_collapse_label: String,
     /// [D] Lay docks out right to left: `Side::Start` is the right edge. egui has no app-wide
     /// layout direction, so the host sets this from its locale. Frame splits keep their sides.
     pub right_to_left: bool,
@@ -123,6 +133,11 @@ impl DockStyle {
             column_bar_height: 14.0,
             seam_band: 8.0,
             new_dock_band: 12.0,
+            icon_size: 20.0,
+            iconic_width: 36.0,
+            iconic_max_width: 240.0,
+            iconic_label_width: 96.0,
+            auto_collapse_label: "Auto-Collapse Iconic Panels".into(),
             right_to_left: false,
             move_column_label: "Move panel column".into(),
             collapse_to_icons_label: "Collapse to Icons".into(),
@@ -153,9 +168,14 @@ impl DockStyle {
             self.column_bar_height,
             self.seam_band,
             self.new_dock_band,
+            self.icon_size,
+            self.iconic_width,
+            self.iconic_max_width,
+            self.iconic_label_width,
         ]
         .iter()
         .all(|v| v.is_finite() && (0.0..=4096.0).contains(v))
+            && self.iconic_width <= self.iconic_max_width
             && self.tab_height > 0.0
             && self.font.size > 0.0
     }
@@ -187,6 +207,9 @@ pub enum DockEvent<P> {
     /// Maximize Frame: maximize the frame holding `panel`, or restore it when it is the one
     /// passed to [`DockArea::maximized`].
     ToggleMaximize { panel: P },
+    /// [D] Auto-Collapse Iconic Panels was chosen in a column menu. The host flips its
+    /// preference and passes it to [`DockArea::auto_collapse_iconic`].
+    ToggleAutoCollapse,
 }
 
 /// Which panels [`DockArea::hide_panels`] hides. Protected panels always stay.
@@ -448,11 +471,19 @@ pub struct DockArea<'a, P = ()> {
     blockers: Vec<Rect>,
     maximized: Option<P>,
     hide: HidePanels<'a, P>,
+    auto_collapse: bool,
 }
 
 impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
     pub fn new(id: Id) -> Self {
-        Self { id, activation: None, blockers: Vec::new(), maximized: None, hide: HidePanels::None }
+        Self { id, activation: None, blockers: Vec::new(), maximized: None, hide: HidePanels::None, auto_collapse: true }
+    }
+
+    /// [D] Auto-Collapse Iconic Panels (default on): a flyout closes on Escape or a press
+    /// outside it. Off, it stays open until its icon or another icon is clicked.
+    pub fn auto_collapse_iconic(mut self, on: bool) -> Self {
+        self.auto_collapse = on;
+        self
     }
 
     /// Maximize Frame: the docked frame holding `panel` fills the area; other frames and
@@ -620,14 +651,17 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             owned_interactions: Vec::new(),
             output: DockOutput::default(),
             frame,
+            iconic: super::render::Iconic::new(self.auto_collapse),
         };
         if let Some(root) = &view.root {
             renderer.node(ui, root, rect, &mut Vec::new());
             ui.allocate_rect(rect, Sense::hover());
         }
+        renderer.flyout(ui.ctx());
         renderer.floating(ui.ctx(), &view.floating);
         renderer.finish_group_drag(ui);
         renderer.finish_drag(ui.ctx());
+        super::hits::record(ui.ctx(), self.id, &view, &renderer.owned_interactions);
         ui.ctx().data_mut(|d| d.insert_temp(self.id.with("owned-interactions"), renderer.owned_interactions));
         renderer.output
     }

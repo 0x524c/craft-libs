@@ -9,12 +9,16 @@ use super::{Action, DockContent, DockOutput, DockStyle, DropTarget, Layout, Node
 mod dock;
 mod floating;
 mod frame;
+mod iconic;
 #[cfg(feature = "native-windows")]
 mod native;
 
 pub(in crate::docking) use frame::{FrameState, view};
 
 pub(in crate::docking) use group::GroupKind;
+
+pub(in crate::docking) use iconic::Iconic;
+pub use iconic::{close_flyout, flyout, open_flyout};
 
 pub(in crate::docking) use floating::RESIZE_HANDLES;
 mod group;
@@ -35,6 +39,8 @@ pub(super) struct Renderer<'a, P> {
     pub(super) owned_interactions: Vec<Id>,
     pub(super) output: DockOutput<P>,
     pub(super) frame: FrameState<P>,
+    /// [D] Flyout and iconic column state for this frame.
+    pub(super) iconic: Iconic<P>,
 }
 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
@@ -123,6 +129,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     self.tab(ui, &entry.panel, title_rect, entry.open, panel_rect, None);
                     let collapse = Rect::from_min_max(pos2((title_rect.right() - 18.0).max(title_rect.left()), title_rect.top()), title_rect.max);
                     let response = ui.interact(collapse, self.id.with(("collapse", &entry.panel)), Sense::click());
+                    self.register_interaction(ui.ctx(), response.id);
                     response.widget_info(|| {
                         egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), entry.open, self.label_of(&entry.panel))
                     });
@@ -222,7 +229,7 @@ pub(in crate::docking) fn stripless<P>(panels: &[P], content: &dyn DockContent<P
 pub(in crate::docking) fn node_limits<P>(node: &Node<P>, style: &DockStyle, content: &dyn DockContent<P>) -> PanelLimits {
     match node {
         Node::Dock { columns, .. } => {
-            let width: f32 = columns.iter().map(dock::column_width).sum();
+            let width: f32 = columns.iter().map(|c| dock::column_width(c, style)).sum();
             PanelLimits { min: vec2(width.clamp(style.min_pane, 1_000_000.0), style.min_pane), ..PanelLimits::default() }
         }
         Node::Tabs { panels, .. } => {

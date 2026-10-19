@@ -1,0 +1,497 @@
+//! The shared docking command vocabulary (feature `serde`).
+//!
+//! Applications deserialize a control command's JSON params, with its id under `"command"`,
+//! into [`DockCommand`] and apply it. craft-ui does not depend on `serde_json`.
+//!
+//! ```ignore
+//! let mut params = params.clone();
+//! params["command"] = json!(id);
+//! let command: DockCommand<PanelId> = serde_json::from_value(params)?;
+//! command.apply(&mut app.workspace, |p| app.permissions(p))?;
+//! ```
+
+use std::hash::Hash;
+
+use serde::{Deserialize, Deserializer, Serialize};
+
+use super::{Action, DockError, Layout, Permissions, Placement, Side, Target, Workspace, Zone, dock_model::Place};
+use crate::layout::SplitSize;
+
+/// Where a panel floats when a command gives no position or size.
+const DEFAULT_FLOAT: [f32; 4] = [48.0, 48.0, 260.0, 320.0];
+
+/// A docking command, tagged by its control id under `"command"`.
+///
+/// Ids and params (`?` marks optional ones):
+///
+/// | Id | Params |
+/// |---|---|
+/// | `window.panel.layout` | `{action}`: a serialized [`Action`] |
+/// | `window.panel.move` | `{panel, anchor, zone?, before?, group?, placement?}` |
+/// | `window.panel.float` | `{panel, x?, y?, width?, height?, group?, column?}` |
+/// | `window.panel.dock` | `{panel, anchor?, zone?, before?, group?, column?, side?}` |
+/// | `window.panel.activate`, `.close`, `.closeGroup`, `.closeOthers` | `{panel}` |
+/// | `window.panel.minimize` | `{panel, minimized?}`; without `minimized` it toggles |
+/// | `window.panel.iconic` | `{panel, iconic?}`; without `iconic` it toggles |
+/// | `window.panel.window` | `{panel, native?}` (desktop) |
+/// | `window.workspace`, `.new`, `.delete` | `{name}` |
+/// | `window.workspace.reset`, `ui.dock.reset` | `{}` |
+/// | `window.workspace.lock` | `{locked?}`; without `locked` it toggles |
+/// | `ui.dock` | `{action}`, or `{operation, …}`, see [`DockOperation`] |
+///
+/// `zone` is `tab` (the default for `move` and `dock`), `center`, `left`, `right`, `top`,
+/// `bottom`, `above` or `below` (a new group in a dock column or floating stack). `before`
+/// names the tab to insert before; `null` appends. `group` moves the panel's whole group,
+/// `column` its dock column. `side` is `Start` or `End`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "command", bound(serialize = "P: Serialize", deserialize = "P: Deserialize<'de>"))]
+#[non_exhaustive]
+pub enum DockCommand<P> {
+    #[serde(rename = "window.panel.layout")]
+    Layout { action: Action<P> },
+    #[serde(rename = "window.panel.move")]
+    Move {
+        panel: P,
+        anchor: P,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zone: Option<ZoneName>,
+        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+        before: Option<Option<P>>,
+        #[serde(default)]
+        group: bool,
+        /// A serialized [`Placement`]; it takes precedence over `zone` and `before`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        placement: Option<Placement<P>>,
+    },
+    #[serde(rename = "window.panel.float")]
+    Float {
+        panel: P,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        x: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        y: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height: Option<f32>,
+        #[serde(default)]
+        group: bool,
+        #[serde(default)]
+        column: bool,
+    },
+    /// To `anchor`; else to a new column of the dock on `side` (a new dock when it has none);
+    /// else a floating panel joins the first dock group (or frame) as a tab, and a docked one
+    /// stays. A hidden panel without `anchor` and `side` is shown at its last location.
+    #[serde(rename = "window.panel.dock")]
+    Dock {
+        panel: P,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchor: Option<P>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zone: Option<ZoneName>,
+        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+        before: Option<Option<P>>,
+        #[serde(default)]
+        group: bool,
+        #[serde(default)]
+        column: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        side: Option<Side>,
+    },
+    /// Select a panel; a hidden one is shown at its last location first.
+    #[serde(rename = "window.panel.activate")]
+    Activate { panel: P },
+    #[serde(rename = "window.panel.close")]
+    Close { panel: P },
+    #[serde(rename = "window.panel.closeGroup")]
+    CloseGroup { panel: P },
+    #[serde(rename = "window.panel.closeOthers")]
+    CloseOthers { panel: P },
+    #[serde(rename = "window.panel.minimize")]
+    Minimize {
+        panel: P,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        minimized: Option<bool>,
+    },
+    #[serde(rename = "window.panel.iconic")]
+    Iconic {
+        panel: P,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        iconic: Option<bool>,
+    },
+    /// Move the panel's floating window to its own OS window (`native`, the default) or back.
+    /// A docked panel's group floats first.
+    #[serde(rename = "window.panel.window")]
+    Window {
+        panel: P,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        native: Option<bool>,
+    },
+    /// Switch to a named workspace. The application owns named workspaces.
+    #[serde(rename = "window.workspace")]
+    Workspace { name: String },
+    #[serde(rename = "window.workspace.new")]
+    NewWorkspace { name: String },
+    #[serde(rename = "window.workspace.delete")]
+    DeleteWorkspace { name: String },
+    /// Reset the current workspace to its saved or built-in arrangement (application-owned).
+    #[serde(rename = "window.workspace.reset", alias = "ui.dock.reset")]
+    ResetWorkspace {},
+    #[serde(rename = "window.workspace.lock")]
+    Lock {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        locked: Option<bool>,
+    },
+    /// The `ui.dock` shape of LightCraft, PDFCraft, CADCraft and SoundCraft.
+    #[serde(rename = "ui.dock")]
+    UiDock(UiDock<P>),
+}
+
+/// `ui.dock` params: a raw action, or an operation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged, bound(serialize = "P: Serialize", deserialize = "P: Deserialize<'de>"))]
+pub enum UiDock<P> {
+    Action { action: Action<P> },
+    Operation(DockOperation<P>),
+}
+
+/// A `ui.dock` operation, tagged by `operation`. `move` takes `target` (the anchor), `zone`
+/// (default `center`) and `before`, which only applies to a centre move.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "camelCase", bound(serialize = "P: Serialize", deserialize = "P: Deserialize<'de>"))]
+#[non_exhaustive]
+pub enum DockOperation<P> {
+    /// Show a panel at its last location and select it.
+    Open {
+        panel: P,
+    },
+    Close {
+        panel: P,
+    },
+    Activate {
+        panel: P,
+    },
+    Float {
+        panel: P,
+        rect: [f32; 4],
+    },
+    MoveFloating {
+        panel: P,
+        rect: [f32; 4],
+    },
+    Move {
+        panel: P,
+        target: P,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zone: Option<ZoneName>,
+        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+        before: Option<Option<P>>,
+    },
+    SetStackOpen {
+        panel: P,
+        open: bool,
+    },
+    /// `height` is required; `null` clears it.
+    ResizeStack {
+        panel: P,
+        #[serde(deserialize_with = "required")]
+        height: Option<f32>,
+    },
+    ResizeSplit {
+        path: Vec<bool>,
+        size: SplitSize,
+    },
+}
+
+/// A drop zone by name, as control protocols write it. PascalCase [`Zone`] names also parse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ZoneName {
+    Tab,
+    #[serde(alias = "Center")]
+    Center,
+    #[serde(alias = "Left")]
+    Left,
+    #[serde(alias = "Right")]
+    Right,
+    #[serde(alias = "Top")]
+    Top,
+    #[serde(alias = "Bottom")]
+    Bottom,
+    Above,
+    Below,
+}
+
+/// A present field, `null` included: `Some(None)` for `null`, `None` when absent.
+fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(deserializer: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(deserializer).map(Some)
+}
+
+/// A required field that may be `null`.
+fn required<'de, D: Deserializer<'de>, T: Deserialize<'de>>(deserializer: D) -> Result<T, D::Error> {
+    T::deserialize(deserializer)
+}
+
+/// `zone` and `before` as a placement. `default` is the zone when none is given.
+fn placement<P: Clone>(zone: Option<ZoneName>, before: &Option<Option<P>>, default: ZoneName) -> Result<Placement<P>, DockError> {
+    let before = before.clone();
+    Ok(match (zone.unwrap_or(default), before) {
+        (ZoneName::Tab | ZoneName::Center, Some(before)) => Placement::Tab { before },
+        (ZoneName::Tab, None) => Placement::Tab { before: None },
+        (ZoneName::Center, None) => Placement::Split(Zone::Center),
+        (_, Some(_)) => return Err(DockError::InvalidPlacement),
+        (ZoneName::Left, None) => Placement::Split(Zone::Left),
+        (ZoneName::Right, None) => Placement::Split(Zone::Right),
+        (ZoneName::Top, None) => Placement::Split(Zone::Top),
+        (ZoneName::Bottom, None) => Placement::Split(Zone::Bottom),
+        (ZoneName::Above, None) => Placement::Group { below: false },
+        (ZoneName::Below, None) => Placement::Group { below: true },
+    })
+}
+
+/// How much of the layout a command moves.
+#[derive(Clone, Copy)]
+enum Unit {
+    Panel,
+    Group,
+    Column,
+}
+
+impl Unit {
+    fn of(group: bool, column: bool) -> Self {
+        if column {
+            Self::Column
+        } else if group {
+            Self::Group
+        } else {
+            Self::Panel
+        }
+    }
+
+    /// The action that moves this unit of `panel` to `to`. A floating panel's column is its
+    /// whole window.
+    fn to<P: Clone + Eq + Hash>(self, layout: &Layout<P>, panel: &P, to: Target<P>) -> Result<Action<P>, DockError> {
+        let floating = matches!(layout.place(panel), Some(Place::Floating { .. }));
+        let panel = panel.clone();
+        Ok(match (self, to) {
+            (Self::Panel, Target::At { anchor, placement }) => Action::Move { panel, anchor, placement },
+            (Self::Panel, _) => return Err(DockError::InvalidPlacement),
+            (Self::Group, to) => Action::MoveGroup { panel, to },
+            (Self::Column, to) if floating => Action::MoveWindow { panel, to },
+            (Self::Column, to) => Action::MoveColumn { panel, to },
+        })
+    }
+}
+
+impl<P> DockCommand<P> {
+    /// Every command id, for an application's command registry.
+    pub const IDS: &'static [&'static str] = &[
+        "window.panel.layout",
+        "window.panel.move",
+        "window.panel.float",
+        "window.panel.dock",
+        "window.panel.activate",
+        "window.panel.close",
+        "window.panel.closeGroup",
+        "window.panel.closeOthers",
+        "window.panel.minimize",
+        "window.panel.iconic",
+        "window.panel.window",
+        "window.workspace",
+        "window.workspace.new",
+        "window.workspace.delete",
+        "window.workspace.reset",
+        "window.workspace.lock",
+        "ui.dock",
+        "ui.dock.reset",
+    ];
+
+    /// Named workspaces and Reset belong to the application, which handles these commands
+    /// before [`Self::apply`].
+    pub fn is_app_owned(&self) -> bool {
+        matches!(self, Self::Workspace { .. } | Self::NewWorkspace { .. } | Self::DeleteWorkspace { .. } | Self::ResetWorkspace {})
+    }
+}
+
+impl<P: Clone + Eq + Hash> DockCommand<P> {
+    /// The layout actions this command makes on `workspace`, to apply all or none.
+    /// Showing a hidden panel and Lock change more than the layout, and named workspaces
+    /// belong to the application: those return [`DockError::NotAllowed`]; use [`Self::apply`].
+    /// A panel or anchor that is not shown returns [`DockError::MissingPanel`] or
+    /// [`DockError::MissingTarget`].
+    pub fn to_actions(&self, workspace: &Workspace<P>) -> Result<Vec<Action<P>>, DockError> {
+        let layout = &workspace.layout;
+        let shown = |panel: &P| if layout.contains(panel) { Ok(()) } else { Err(DockError::MissingPanel) };
+        let one = |action: Action<P>| Ok(vec![action]);
+        match self {
+            Self::Layout { action } | Self::UiDock(UiDock::Action { action }) => one(action.clone()),
+            Self::Move { panel, anchor, zone, before, group, placement: given } => {
+                shown(panel)?;
+                let placement = match given {
+                    Some(placement) => placement.clone(),
+                    None => placement(*zone, before, ZoneName::Tab)?,
+                };
+                one(Unit::of(*group, false).to(layout, panel, Target::At { anchor: anchor.clone(), placement })?)
+            }
+            Self::Float { panel, x, y, width, height, group, column } => {
+                shown(panel)?;
+                let given = [*x, *y, *width, *height];
+                let window = layout.floating.iter().find(|w| w.contains(panel)).map(|w| w.rect);
+                let rect = |base: [f32; 4]| {
+                    let mut rect = base;
+                    for (value, given) in rect.iter_mut().zip(given) {
+                        *value = given.unwrap_or(*value);
+                    }
+                    rect
+                };
+                let any = given.iter().any(Option::is_some);
+                match (Unit::of(*group, *column), window) {
+                    (Unit::Panel, Some(base)) if layout.floating.iter().any(|w| w.contains(panel) && w.panels().count() == 1) => {
+                        one(Action::MoveFloating { panel: panel.clone(), rect: rect(base) })
+                    }
+                    (Unit::Panel, _) => one(Action::Float { panel: panel.clone(), rect: rect(DEFAULT_FLOAT) }),
+                    (Unit::Column, Some(base)) => one(Action::MoveFloating { panel: panel.clone(), rect: rect(base) }),
+                    (unit, _) => one(unit.to(layout, panel, Target::Float { rect: any.then(|| rect(DEFAULT_FLOAT)) })?),
+                }
+            }
+            Self::Dock { panel, anchor, zone, before, group, column, side } => {
+                shown(panel)?;
+                let unit = Unit::of(*group, *column);
+                if let Some(anchor) = anchor {
+                    let placement = placement(*zone, before, ZoneName::Tab)?;
+                    return one(unit.to(layout, panel, Target::At { anchor: anchor.clone(), placement })?);
+                }
+                if let Some(side) = side {
+                    let to = match last_column(layout, *side) {
+                        Some(anchor) => Target::At { anchor, placement: Placement::Column { after: true } },
+                        None => Target::NewDock { side: *side },
+                    };
+                    let unit = match (unit, &to) {
+                        (Unit::Panel, Target::NewDock { .. }) if group_len(layout, panel) == Some(1) => Unit::Group,
+                        (unit, _) => unit,
+                    };
+                    return one(unit.to(layout, panel, to)?);
+                }
+                if !matches!(layout.place(panel), Some(Place::Floating { .. })) {
+                    return Ok(Vec::new());
+                }
+                let members = members(layout, panel, unit);
+                let panels = layout.panels();
+                let free = || panels.iter().copied().filter(|p| !members.contains(p));
+                let docked = free().find(|p| matches!(layout.place(p), Some(Place::Dock { .. })));
+                let framed = || free().find(|p| matches!(layout.place(p), Some(Place::Node(_))));
+                let anchor = docked.or_else(framed).cloned().ok_or(DockError::MissingTarget)?;
+                one(unit.to(layout, panel, Target::At { anchor, placement: Placement::Tab { before: None } })?)
+            }
+            Self::Activate { panel } => {
+                shown(panel)?;
+                one(Action::Activate { panel: panel.clone() })
+            }
+            Self::Close { panel } => one(Action::Close { panel: panel.clone() }),
+            Self::CloseGroup { panel } => one(Action::CloseGroup { panel: panel.clone() }),
+            Self::CloseOthers { panel } => one(Action::CloseOthers { panel: panel.clone() }),
+            Self::Minimize { panel, minimized } => {
+                let place = layout.place(panel).ok_or(DockError::MissingPanel)?;
+                let current = layout.group(&place).is_some_and(|g| g.minimized);
+                one(Action::SetMinimized { panel: panel.clone(), minimized: minimized.unwrap_or(!current) })
+            }
+            Self::Iconic { panel, iconic } => {
+                let location = layout.location(panel)?;
+                let current = location.group.and_then(|g| g.column).is_some_and(|c| c.iconic);
+                one(Action::SetIconic { panel: panel.clone(), iconic: iconic.unwrap_or(!current) })
+            }
+            Self::Window { panel, native } => {
+                shown(panel)?;
+                if !native.unwrap_or(true) {
+                    return one(Action::SetNative { panel: panel.clone(), rect: None });
+                }
+                let mut actions = Vec::new();
+                let mut scratch = layout.clone();
+                if !scratch.floating.iter().any(|w| w.contains(panel)) {
+                    let float = Action::MoveGroup { panel: panel.clone(), to: Target::Float { rect: None } };
+                    scratch.apply(float.clone())?;
+                    actions.push(float);
+                }
+                let rect = scratch.floating.iter().find(|w| w.contains(panel)).map(|w| w.rect).ok_or(DockError::MissingPanel)?;
+                actions.push(Action::SetNative { panel: panel.clone(), rect: Some(rect) });
+                Ok(actions)
+            }
+            Self::UiDock(UiDock::Operation(operation)) => match operation {
+                DockOperation::Open { panel } | DockOperation::Activate { panel } => {
+                    shown(panel)?;
+                    one(Action::Activate { panel: panel.clone() })
+                }
+                DockOperation::Close { panel } => one(Action::Close { panel: panel.clone() }),
+                DockOperation::Float { panel, rect } => one(Action::Float { panel: panel.clone(), rect: *rect }),
+                DockOperation::MoveFloating { panel, rect } => one(Action::MoveFloating { panel: panel.clone(), rect: *rect }),
+                DockOperation::Move { panel, target, zone, before } => {
+                    let placement = placement(*zone, before, ZoneName::Center)?;
+                    one(Action::Move { panel: panel.clone(), anchor: target.clone(), placement })
+                }
+                DockOperation::SetStackOpen { panel, open } => one(Action::SetStackOpen { panel: panel.clone(), open: *open }),
+                DockOperation::ResizeStack { panel, height } => one(Action::ResizeStack { panel: panel.clone(), height: *height }),
+                DockOperation::ResizeSplit { path, size } => one(Action::ResizeSplit { path: path.clone(), size: *size }),
+            },
+            Self::Workspace { .. } | Self::NewWorkspace { .. } | Self::DeleteWorkspace { .. } | Self::ResetWorkspace {} | Self::Lock { .. } => {
+                Err(DockError::NotAllowed)
+            }
+        }
+    }
+
+    /// Apply the command to `workspace`, all or nothing, and return the panels it closed so
+    /// the application can release their state. Showing a hidden panel restores its last
+    /// location; Lock sets [`Workspace::locked`]. Application-owned commands
+    /// ([`Self::is_app_owned`]) return [`DockError::NotAllowed`] and change nothing.
+    pub fn apply(&self, workspace: &mut Workspace<P>, permissions: impl Fn(&P) -> Permissions) -> Result<Vec<P>, DockError> {
+        let show = match self {
+            Self::Activate { panel }
+            | Self::Dock { panel, anchor: None, side: None, .. }
+            | Self::UiDock(UiDock::Operation(DockOperation::Open { panel } | DockOperation::Activate { panel })) => Some(panel),
+            _ => None,
+        };
+        if let Some(panel) = show.filter(|p| !workspace.layout.contains(p)) {
+            workspace.set_visible(panel.clone(), true, None)?;
+            return Ok(Vec::new());
+        }
+        if let Self::Lock { locked } = self {
+            workspace.locked = locked.unwrap_or(!workspace.locked);
+            return Ok(Vec::new());
+        }
+        let actions = self.to_actions(workspace)?;
+        workspace.apply_all(actions, permissions)
+    }
+}
+
+/// The first panel of the last column of the dock on `side`.
+fn last_column<P: Clone + Eq + Hash>(layout: &Layout<P>, side: Side) -> Option<P> {
+    let path = layout.dock_path(side)?;
+    let node = layout.root.as_ref().and_then(|root| super::dock_model::node_at(root, &path))?;
+    match node {
+        super::Node::Dock { columns, .. } => columns.last()?.groups.first()?.panels.first().cloned(),
+        _ => None,
+    }
+}
+
+fn group_len<P: Clone + Eq + Hash>(layout: &Layout<P>, panel: &P) -> Option<usize> {
+    layout.place(panel).and_then(|place| layout.group(&place)).map(|g| g.panels.len())
+}
+
+/// The panels that move with `panel`.
+fn members<P: Clone + Eq + Hash>(layout: &Layout<P>, panel: &P, unit: Unit) -> Vec<P> {
+    match unit {
+        Unit::Panel => vec![panel.clone()],
+        Unit::Group => layout.place(panel).and_then(|place| layout.group(&place)).map(|g| g.panels.clone()).unwrap_or_default(),
+        Unit::Column => match layout.place(panel) {
+            Some(Place::Dock { path, column, .. }) => match layout.root.as_ref().and_then(|root| super::dock_model::node_at(root, &path)) {
+                Some(super::Node::Dock { columns, .. }) => {
+                    columns.get(column).map(|c| c.groups.iter().flat_map(|g| g.panels.iter().cloned()).collect()).unwrap_or_default()
+                }
+                _ => Vec::new(),
+            },
+            Some(Place::Floating { .. }) => {
+                layout.floating.iter().find(|w| w.contains(panel)).map(|w| w.panels().cloned().collect()).unwrap_or_default()
+            }
+            _ => vec![panel.clone()],
+        },
+    }
+}
