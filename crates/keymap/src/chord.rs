@@ -178,7 +178,7 @@ impl Key {
     }
 
     /// The key as macOS menus show it: arrows and editing keys as glyphs.
-    fn mac_symbol(self) -> &'static str {
+    pub(crate) fn mac_symbol(self) -> &'static str {
         match self {
             Key::Up => "↑",
             Key::Down => "↓",
@@ -194,7 +194,7 @@ impl Key {
     }
 
     /// The key as Windows and Linux show it.
-    fn text_name(self) -> &'static str {
+    pub(crate) fn text_name(self) -> &'static str {
         match self {
             Key::PageUp => "Page Up",
             Key::PageDown => "Page Down",

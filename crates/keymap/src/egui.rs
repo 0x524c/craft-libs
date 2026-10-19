@@ -321,7 +321,7 @@ impl Dispatcher {
 
 /// A clipboard event: Copy, Cut or Paste.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Clip {
+pub(crate) enum Clip {
     Copy,
     Cut,
     Paste,
@@ -400,7 +400,7 @@ fn event_clip(event: &Event) -> Option<Clip> {
 }
 
 /// The clipboard event a backend sends for a press, if any.
-fn clipboard_kind(key: Key, held: Mods) -> Option<Clip> {
+pub(crate) fn clipboard_kind(key: Key, held: Mods) -> Option<Clip> {
     match key {
         Key::C if held.cmd => Some(Clip::Copy),
         Key::X if held.cmd => Some(Clip::Cut),
@@ -414,7 +414,7 @@ fn clipboard_kind(key: Key, held: Mods) -> Option<Clip> {
 
 /// The press a clipboard event stands for, with the modifiers held, and the event's kind. Off
 /// macOS egui-winit also sends Cut for Shift+Delete and Paste for Shift+Insert.
-fn clipboard_chord(event: &Event, held: Mods) -> (Key, Mods, Clip) {
+pub(crate) fn clipboard_chord(event: &Event, held: Mods) -> (Key, Mods, Clip) {
     let with_cmd = Mods { cmd: true, ..held };
     let shift_only = held.shift && !held.cmd;
     match event {

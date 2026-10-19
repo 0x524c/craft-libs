@@ -138,6 +138,8 @@ pub mod keymap;
 pub mod profiles;
 pub mod reserved;
 pub mod scope;
+#[cfg(feature = "ui")]
+pub mod ui;
 
 pub use chord::foreign::Flavor;
 pub use chord::{Chord, Key, MAX_CHORD_TEXT, Mods, ParseError, Platform, Trigger};
