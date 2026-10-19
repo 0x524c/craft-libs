@@ -146,6 +146,10 @@ pub struct Bindable {
     pub scope: Scope,
     #[serde(default)]
     pub kind: Kind,
+    /// The command shows and hides something (a panel, guides, rulers). Import matching reads a
+    /// foreign name without a leading `Show`, `Hide` or `Show/Hide` only for such commands.
+    #[serde(default)]
+    pub is_toggle: bool,
     #[serde(default)]
     pub defaults: Vec<Binding>,
 }
@@ -160,8 +164,15 @@ impl Bindable {
             aliases: Vec::new(),
             scope,
             kind: Kind::Command,
+            is_toggle: false,
             defaults: Vec::new(),
         }
+    }
+
+    /// Marks the command as showing and hiding something ([`Bindable::is_toggle`]).
+    pub fn toggle(mut self) -> Bindable {
+        self.is_toggle = true;
+        self
     }
 
     pub fn with_kind(mut self, kind: Kind) -> Bindable {

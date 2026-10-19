@@ -164,9 +164,23 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
 ```
 
 - Matching, most specific first, each step needing exactly one command: the user's remembered
-  answers, the full menu path, the joined submenu segments as a label in that menu, the label in
-  that menu, the label or an alias anywhere. Labels are compared after `import::normalize_label`.
-  Tool entries match only tools.
+  answers, the full menu path, the joined submenu segments as a label or alias in that menu, the
+  label in that menu, the joined segments as a label or alias anywhere, the label anywhere. An
+  entry with no menu and several segments matches only by its full path, unless the reader marks
+  it `in_panel_menu()`. Tool entries match only tools.
+- Names are compared after `import::normalize_label`: case, `…`, `...`, `&`, colons and extra
+  spaces aside, so the alias `Preferences: General…` matches `Edit > Preferences > General...`.
+  Aliases (`Bindable::with_alias`) count wherever labels do.
+- Panel menus: sources list panel-menu items with the panel's name in front (InDesign's Panel
+  Menus area writes `Character: All Caps`; Illustrator and Photoshop sets have similar areas).
+  The reader splits the name into segments and marks the entry `ForeignEntry::in_panel_menu()`.
+  Such an entry also matches a catalogue path that ends with its segments (with the command's
+  label or the path's last segment last), and its last segment alone as a label.
+- Show/Hide: a source often lists one toggle as two items, `Show Rulers` and `Hide Rulers`. Names
+  are matched as written first. When no step finds a command, the steps run again on commands
+  marked `Bindable::toggle()`, with a leading `Show `, `Hide ` or `Show/Hide ` dropped from the
+  entry's label and from the command's label, aliases and path labels. A command not marked as a
+  toggle never matches through a dropped prefix, so `Hide Conveyor` does not match `Conveyor`.
 - `ImportOptions.contexts` says what each source context becomes (home scope, another scope, the
   home scope only without a home entry, or skipped).
 - The set wins: a chord it gives to a command is taken from commands outside it (except twins
@@ -176,8 +190,9 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
 - Keys read approximately (a numeric keypad key bound as the main key) are listed in
   `approximated`.
 - With `ImportOptions.suggest`, unmatched entries get fuzzy candidates (`import::namematch`);
-  they are reported, never applied. Only the first 200 unmatched entries get them, and only the
-  first 200 characters of a name are compared.
+  they are reported, never applied. Only the first 200 unmatched entries with keys get them, and
+  only the first 200 characters of a name are compared. Keys in `ContextRule::Skip` contexts do
+  not count: an unmatched entry with only such keys counts in `unmatched_without_shortcut`.
 
 ## Features
 

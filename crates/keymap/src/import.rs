@@ -26,7 +26,7 @@ pub const MAX_IMPORT_TEXT: usize = 1024;
 /// Most path segments read per entry; the label (last segment) is always kept.
 pub const MAX_PATH_SEGMENTS: usize = 32;
 /// Most unmatched entries [`ImportOptions::suggest`] looks for commands for; the rest are counted
-/// in [`ImportReport::truncated`].
+/// in [`ImportReport::truncated`]. Entries without keys get no suggestion and do not count.
 pub const MAX_SUGGESTIONS: usize = 200;
 
 /// A shortcut set as an app's reader found it.
@@ -49,6 +49,12 @@ pub struct ForeignEntry {
     pub line: Option<usize>,
     /// The item selects a tool.
     pub is_tool: bool,
+    /// The entry belongs to a panel menu: its leading path segments name the panel, not a
+    /// submenu of [`ForeignEntry::menu`], which is usually `None`. Sources write such items as
+    /// `Character: All Caps` (InDesign's Panel Menus area, the panel-menu areas of Illustrator and
+    /// Photoshop sets); the reader splits them into segments. Such an entry also matches a
+    /// catalogue path that ends with its path, and its last segment alone.
+    pub panel_menu: bool,
 }
 
 impl ForeignEntry {
@@ -60,6 +66,12 @@ impl ForeignEntry {
     /// Marks the entry as selecting a tool.
     pub fn tool(mut self) -> ForeignEntry {
         self.is_tool = true;
+        self
+    }
+
+    /// Marks the entry as an item of a panel menu ([`ForeignEntry::panel_menu`]).
+    pub fn in_panel_menu(mut self) -> ForeignEntry {
+        self.panel_menu = true;
         self
     }
 
@@ -350,7 +362,8 @@ pub struct ImportReport {
     #[serde(default)]
     pub failed: Vec<Failed>,
     pub unmatched: Vec<Unmatched>,
-    /// Entries without keys that matched no command.
+    /// Entries that matched no command and have no keys, or keys only in
+    /// [`ContextRule::Skip`] contexts.
     pub unmatched_without_shortcut: usize,
     pub unreadable: Vec<Unreadable>,
     pub approximated: Vec<Approximated>,
@@ -360,13 +373,19 @@ pub struct ImportReport {
     pub truncated: usize,
 }
 
-/// The matching form of a label or menu name: lower case, no `…`, `...` or `&`, single spaces,
-/// and no leading `show/hide `, `show ` or `hide ` when something remains (sources name a toggle
-/// by what choosing it does now).
+/// The matching form of a label or menu name: lower case, no `…`, `...` or `&`, a colon read as
+/// a space (so the alias `Preferences: General…` matches the path `Preferences > General...`),
+/// single spaces.
 pub fn normalize_label(s: &str) -> String {
-    let s = s.replace('…', "").replace("...", "").replace('&', "");
-    let s = s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
-    ["show/hide ", "show ", "hide "].iter().find_map(|p| s.strip_prefix(p).filter(|r| !r.is_empty())).map_or_else(|| s.clone(), str::to_string)
+    let s = s.replace('…', "").replace("...", "").replace('&', "").replace(':', " ");
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// A normalised name without a leading `show/hide `, `show ` or `hide ` when something remains:
+/// sources name a toggle by what choosing it does now. Only toggle commands
+/// ([`Bindable::is_toggle`]) are matched by this form.
+fn toggle_name(s: &str) -> String {
+    ["show/hide ", "show ", "hide "].iter().find_map(|p| s.strip_prefix(p).filter(|r| !r.is_empty())).unwrap_or(s).to_string()
 }
 
 /// Matches `set` to the keymap's commands. Pure: the keymap is not changed.
@@ -380,12 +399,25 @@ pub fn plan(set: &ForeignSet, keymap: &Keymap, options: &ImportOptions) -> Impor
     let mut planned_at: HashMap<usize, usize> = HashMap::new();
     let mut to_suggest: Vec<ToSuggest> = Vec::new();
 
+    let rule_of = |k: &ForeignKey| -> Option<&ContextRule> {
+        match &k.context {
+            None => Some(&ContextRule::Home),
+            Some(c) => {
+                let c = c.to_lowercase();
+                contexts.iter().find(|(n, _)| *n == c).map(|(_, r)| *r)
+            }
+        }
+    };
+
     for (order, raw) in set.entries.iter().take(MAX_IMPORT_ENTRIES).enumerate() {
         let entry = capped(raw, &mut cut);
         let item = entry.item();
         let found = index.find(&entry, entry.is_tool, &options.remembered);
         let Found::One(i) = found else {
-            if entry.keys.is_empty() {
+            // Keys in skipped contexts would bind nothing, so they neither make a row nor count
+            // toward the suggestion cap.
+            let keys: Vec<&ForeignKey> = entry.keys.iter().filter(|k| rule_of(k) != Some(&ContextRule::Skip)).collect();
+            if keys.is_empty() {
                 report.unmatched_without_shortcut += 1;
                 continue;
             }
@@ -402,19 +434,10 @@ pub fn plan(set: &ForeignSet, keymap: &Keymap, options: &ImportOptions) -> Impor
                     cut += 1;
                 }
             }
-            report.unmatched.push(Unmatched { item, line: entry.line, keys: keys_text(entry.keys.iter()), reason });
+            report.unmatched.push(Unmatched { item, line: entry.line, keys: keys_text(keys.into_iter()), reason });
             continue;
         };
 
-        let rule_of = |k: &ForeignKey| -> Option<&ContextRule> {
-            match &k.context {
-                None => Some(&ContextRule::Home),
-                Some(c) => {
-                    let c = c.to_lowercase();
-                    contexts.iter().find(|(n, _)| *n == c).map(|(_, r)| *r)
-                }
-            }
-        };
         let has_home = entry.keys.iter().any(|k| rule_of(k) == Some(&ContextRule::Home));
         let mut unlisted = Vec::new();
         let mut unreadable = Vec::new();
@@ -700,7 +723,7 @@ fn capped(e: &ForeignEntry, cut: &mut usize) -> ForeignEntry {
             }),
         })
         .collect();
-    ForeignEntry { menu: e.menu.as_deref().map(|m| cap_text(m, cut)), path, keys, line: e.line, is_tool: e.is_tool }
+    ForeignEntry { menu: e.menu.as_deref().map(|m| cap_text(m, cut)), path, keys, line: e.line, is_tool: e.is_tool, panel_menu: e.panel_menu }
 }
 
 enum Found {
@@ -709,14 +732,15 @@ enum Found {
     None,
 }
 
-/// The catalogue by normalised path and label, for the match steps.
-struct Index {
-    tool: Vec<bool>,
-    /// Binding keys, for remembered answers.
-    keys: HashMap<String, usize>,
+/// Catalogue names in one form, for the match steps.
+#[derive(Default)]
+struct Names {
     /// Normalised paths joined by U+001F.
     paths: HashMap<String, Vec<usize>>,
-    /// (top menu, label) at any depth of that menu.
+    /// The last two or more segments of paths, also with the label as the last one, joined by
+    /// U+001F: for panel-menu entries.
+    ends: HashMap<String, Vec<usize>>,
+    /// (top menu, label, alias or path label) at any depth of that menu.
     in_menu: HashMap<(String, String), Vec<usize>>,
     /// Labels, aliases and path labels anywhere.
     anywhere: HashMap<String, Vec<usize>>,
@@ -729,26 +753,86 @@ fn add<K: std::hash::Hash + Eq>(map: &mut HashMap<K, Vec<usize>>, key: K, i: usi
     }
 }
 
+impl Names {
+    /// Adds command `i`, its label, aliases and the last segment of each path passed through `form`.
+    fn add(&mut self, i: usize, b: &Bindable, form: fn(&str) -> String) {
+        let label = form(&normalize_label(&b.label));
+        let names: Vec<String> = std::iter::once(label.clone()).chain(b.aliases.iter().map(|a| form(&normalize_label(a)))).collect();
+        for name in &names {
+            add(&mut self.anywhere, name.clone(), i);
+        }
+        for path in &b.paths {
+            let mut segs: Vec<String> = path.iter().map(|s| normalize_label(s)).collect();
+            if let [_, .., last] = segs.as_mut_slice() {
+                *last = form(last);
+            }
+            add(&mut self.paths, segs.join("\u{1f}"), i);
+            let Some(top) = segs.first() else { continue };
+            for name in &names {
+                add(&mut self.in_menu, (top.clone(), name.clone()), i);
+            }
+            let [_, .., last] = segs.as_slice() else { continue };
+            add(&mut self.in_menu, (top.clone(), last.clone()), i);
+            add(&mut self.anywhere, last.clone(), i);
+            let mut with_label = segs.clone();
+            if let Some(l) = with_label.last_mut() {
+                *l = label.clone();
+            }
+            for variant in [&segs, &with_label] {
+                for start in 0..variant.len().saturating_sub(1) {
+                    if let Some(end) = variant.get(start..) {
+                        add(&mut self.ends, end.join("\u{1f}"), i);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The lists the match steps look up for an entry's normalised menu and path, most specific
+    /// first.
+    fn steps(&self, menu: Option<&String>, segs: &[String], panel_menu: bool) -> Vec<Option<&Vec<usize>>> {
+        let Some(last) = segs.last() else { return Vec::new() };
+        let full = menu.into_iter().chain(segs).map(String::as_str).collect::<Vec<_>>().join("\u{1f}");
+        let mut steps = vec![self.paths.get(&full)];
+        let joined = (segs.len() > 1).then(|| segs.join(" "));
+        if let Some(m) = menu {
+            if let Some(j) = &joined {
+                steps.push(self.in_menu.get(&(m.clone(), j.clone())));
+            }
+            steps.push(self.in_menu.get(&(m.clone(), last.clone())));
+        }
+        if panel_menu && segs.len() > 1 {
+            steps.push(self.ends.get(&segs.join("\u{1f}")));
+        }
+        if let Some(j) = &joined {
+            steps.push(self.anywhere.get(j));
+        }
+        if menu.is_some() || segs.len() == 1 || panel_menu {
+            steps.push(self.anywhere.get(last));
+        }
+        steps
+    }
+}
+
+/// The catalogue by normalised path and label, for the match steps.
+struct Index {
+    tool: Vec<bool>,
+    /// Binding keys, for remembered answers.
+    keys: HashMap<String, usize>,
+    names: Names,
+    /// Toggle commands by their names without a leading Show/Hide ([`toggle_name`]).
+    toggles: Names,
+}
+
 impl Index {
     fn new(keymap: &Keymap) -> Index {
-        let mut ix = Index { tool: Vec::new(), keys: HashMap::new(), paths: HashMap::new(), in_menu: HashMap::new(), anywhere: HashMap::new() };
+        let mut ix = Index { tool: Vec::new(), keys: HashMap::new(), names: Names::default(), toggles: Names::default() };
         for (i, b) in keymap.catalogue().iter().enumerate() {
             ix.tool.push(matches!(b.kind, Kind::Tool { .. }));
             ix.keys.insert(b.command.key(), i);
-            let label = normalize_label(&b.label);
-            add(&mut ix.anywhere, label.clone(), i);
-            for a in &b.aliases {
-                add(&mut ix.anywhere, normalize_label(a), i);
-            }
-            for path in &b.paths {
-                let segs: Vec<String> = path.iter().map(|s| normalize_label(s)).collect();
-                add(&mut ix.paths, segs.join("\u{1f}"), i);
-                let Some(top) = segs.first() else { continue };
-                add(&mut ix.in_menu, (top.clone(), label.clone()), i);
-                if let [_, .., last] = segs.as_slice() {
-                    add(&mut ix.in_menu, (top.clone(), last.clone()), i);
-                    add(&mut ix.anywhere, last.clone(), i);
-                }
+            ix.names.add(i, b, str::to_string);
+            if b.is_toggle {
+                ix.toggles.add(i, b, toggle_name);
             }
         }
         ix
@@ -763,7 +847,9 @@ impl Index {
         }
     }
 
-    /// The match steps in order; the first that finds exactly one command decides.
+    /// The match steps in order; the first that finds exactly one command decides. The steps run
+    /// on the names as written, then on toggle commands with the entry's label and theirs
+    /// without a leading Show/Hide.
     fn find(&self, entry: &ForeignEntry, tool: bool, remembered: &BTreeMap<String, CommandRef>) -> Found {
         if let Some(c) = remembered.get(&entry.remember_key())
             && let Some(&i) = self.keys.get(&c.key())
@@ -772,21 +858,15 @@ impl Index {
             return Found::One(i);
         }
         let segs: Vec<String> = entry.path.iter().map(|s| normalize_label(s)).collect();
-        let Some(last) = segs.last() else { return Found::None };
+        let mut toggle_segs = segs.clone();
+        if let Some(last) = toggle_segs.last_mut() {
+            *last = toggle_name(last);
+        }
         let menu = entry.menu.as_deref().map(normalize_label);
-        let full = menu.iter().chain(&segs).map(String::as_str).collect::<Vec<_>>().join("\u{1f}");
-        let mut steps = vec![self.paths.get(&full)];
-        if let Some(m) = &menu {
-            if segs.len() > 1 {
-                steps.push(self.in_menu.get(&(m.clone(), segs.join(" "))));
-            }
-            steps.push(self.in_menu.get(&(m.clone(), last.clone())));
-        }
-        if menu.is_some() || segs.len() == 1 {
-            steps.push(self.anywhere.get(last));
-        }
+        let steps = self.names.steps(menu.as_ref(), &segs, entry.panel_menu);
+        let toggle_steps = self.toggles.steps(menu.as_ref(), &toggle_segs, entry.panel_menu);
         let mut many = false;
-        for list in steps {
+        for list in steps.into_iter().chain(toggle_steps) {
             match self.pick(list, tool) {
                 Found::One(i) => return Found::One(i),
                 Found::Many => many = true,

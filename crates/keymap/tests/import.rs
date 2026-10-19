@@ -49,7 +49,7 @@ fn catalogue() -> Vec<Bindable> {
         command("app.palette", "Command Palette", &[], &["Cmd+Alt+K"]),
         command(panel("layers"), "Layers", &["Window", "Layers"], &["F7"]),
         command(panel("pages"), "Pages", &["Window", "Pages"], &["F12"]),
-        command("view.guides", "Guides", &["View", "Grids & Guides", "Guides"], &["Cmd+;"]),
+        command("view.guides", "Guides", &["View", "Grids & Guides", "Guides"], &["Cmd+;"]).toggle(),
         command("view.goToPage", "Go to Page…", &["View", "Go to Page…"], &["Cmd+J"]),
         command("view.zoomIn", "Zoom In", &["View", "Zoom In"], &["Cmd+="]),
         command("object.textFrameOptions", "Text Frame Options…", &["Object", "Text Frame Options…"], &["Cmd+B"]),
@@ -143,9 +143,8 @@ fn labels_normalise_for_matching() {
     assert_eq!(normalize_label("Check Spelling..."), "check spelling");
     assert_eq!(normalize_label("Check  Spelling…"), "check spelling");
     assert_eq!(normalize_label("Grids && Guides"), "grids guides");
-    assert_eq!(normalize_label("SHOW/HIDE Guides"), "guides");
-    assert_eq!(normalize_label("Show Hidden Characters"), "hidden characters");
-    assert_eq!(normalize_label("Hide "), "hide", "nothing left after the prefix");
+    assert_eq!(normalize_label("SHOW/HIDE  Guides"), "show/hide guides");
+    assert_eq!(normalize_label("Preferences: General…"), "preferences general");
     assert_eq!(normalize_label("ÄRGER"), "ärger");
 }
 
@@ -153,7 +152,7 @@ fn labels_normalise_for_matching() {
 fn every_match_step_finds_its_command() {
     let (km, r) = import_windows();
     assert_eq!(r.set.as_deref(), Some("My Set"));
-    // 1: full path, with `&`, case, spacing and Show/Hide normalised.
+    // 1: full path, with `&`, case and spacing normalised, and Show/Hide dropped for a toggle.
     has(&km, "view.guides", &["Cmd+Alt+;"]);
     // 2: joined segments `Text Frame Options` in Object.
     has(&km, "object.textFrameOptions", &["Cmd+Alt+B"]);
@@ -543,4 +542,134 @@ fn report_json_uses_camel_case_names() {
     assert_eq!(sorted(&a["approximated"][0]), ["item", "keys", "line", "note"]);
     assert_eq!(a["approximated"][0]["note"], "numpad");
     assert_eq!(v["changed"][0]["from"], json!(["Cmd+W"]));
+}
+
+fn import_into(catalogue: Vec<Bindable>, entries: Vec<ForeignEntry>, options: &ImportOptions) -> (Keymap, ImportReport) {
+    let mut km = Keymap::new(catalogue, Scopes::new(), Platform::Windows);
+    let report = plan(&ForeignSet { name: None, entries }, &km, options).apply(&mut km);
+    (km, report)
+}
+
+fn default_context() -> ImportOptions {
+    ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() }
+}
+
+fn unmatched(r: &ImportReport) -> Vec<(&str, UnmatchedReason)> {
+    r.unmatched.iter().map(|u| (u.item.as_str(), u.reason)).collect()
+}
+
+#[test]
+fn panel_menu_entries_match_by_path_end_or_label() {
+    let catalogue = vec![
+        command("type.allCaps", "All Caps", &["Panels", "Character", "All Caps"], &[]),
+        command("pages.overrideAll", "Override All Parent Items", &["Pages", "Override All Parent Page Items"], &[]),
+        command("paragraph.justification", "Justification…", &[], &[]),
+        command("swatches.new", "New Swatch", &["Swatches", "New Swatch"], &[]),
+        command("gradient.new", "New Swatch", &["Gradient", "New Swatch"], &[]),
+        command("character.smallCaps", "Small Caps", &[], &[]).with_alias("Character: Small Caps"),
+    ];
+    let d = "Default";
+    let panel_entry = |path: &[&str], key: &str| entry(None, path, &[(d, key)], Flavor::Windows).in_panel_menu();
+    let entries = vec![
+        // The end of a path, label last.
+        panel_entry(&["Character", "All Caps"], "Ctrl+F1"),
+        // The end of a path whose last segment differs from the label.
+        panel_entry(&["Pages", "Override All Parent Page Items"], "Ctrl+F2"),
+        // The last segment alone, as one command's label.
+        panel_entry(&["Paragraph", "Justification..."], "Ctrl+F3"),
+        // The panel picks one of two commands with the label.
+        panel_entry(&["Swatches", "New Swatch"], "Ctrl+F4"),
+        // The joined segments as an alias.
+        panel_entry(&["Character", "Small Caps"], "Ctrl+F5"),
+        // No path end fits and the label alone fits two commands.
+        panel_entry(&["Color", "New Swatch"], "Ctrl+F6"),
+        // Without the mark, a path with no menu matches only a whole catalogue path.
+        entry(None, &["Character", "All Caps"], &[(d, "Ctrl+F7")], Flavor::Windows),
+    ];
+    let (km, r) = import_into(catalogue, entries, &default_context());
+    has(&km, "type.allCaps", &["Cmd+F1"]);
+    has(&km, "pages.overrideAll", &["Cmd+F2"]);
+    has(&km, "paragraph.justification", &["Cmd+F3"]);
+    has(&km, "swatches.new", &["Cmd+F4"]);
+    has(&km, "character.smallCaps", &["Cmd+F5"]);
+    has(&km, "gradient.new", &[]);
+    assert_eq!(unmatched(&r), [("Color > New Swatch", UnmatchedReason::Ambiguous), ("Character > All Caps", UnmatchedReason::NoMatch)]);
+}
+
+#[test]
+fn aliases_match_like_labels() {
+    let catalogue = vec![
+        command("app.quit", "Quit DesignCraft", &["File", "Quit DesignCraft"], &[]).with_alias("Exit"),
+        command("app.preferences", "Preferences…", &["Edit", "Preferences…"], &[]).with_alias("Preferences: General…"),
+        command("type.bold", "Bold", &["Type", "Style", "Bold"], &[]).with_alias("Apply bold"),
+        command("edit.paste", "Paste", &["Edit", "Paste"], &[]).with_alias("Einfügen"),
+    ];
+    let d = "Default";
+    let entries = vec![
+        win("File", &["Exit"], &[(d, "Ctrl+Q")]),
+        win("Edit", &["Preferences", "General..."], &[(d, "Ctrl+K")]),
+        entry(None, &["Apply Bold"], &[(d, "Ctrl+Shift+B")], Flavor::Windows),
+        win("Bearbeiten", &["Einfügen"], &[(d, "Ctrl+Shift+V")]),
+    ];
+    let (km, r) = import_into(catalogue, entries, &default_context());
+    has(&km, "app.quit", &["Cmd+Q"]);
+    has(&km, "app.preferences", &["Cmd+K"]);
+    has(&km, "type.bold", &["Cmd+Shift+B"]);
+    has(&km, "edit.paste", &["Cmd+Shift+V"]);
+    assert!(r.unmatched.is_empty(), "{:?}", r.unmatched);
+}
+
+#[test]
+fn show_and_hide_are_read_off_only_for_toggles() {
+    let catalogue = vec![
+        command(panel("conveyor"), "Conveyor", &["Window", "Conveyor"], &[]),
+        command("view.rulers", "Rulers", &["View", "Rulers"], &[]).toggle(),
+        command("view.frameEdges", "Show Frame Edges", &["View", "Extras", "Show Frame Edges"], &[]).toggle(),
+        command("view.hiddenCharacters", "Show Hidden Characters", &["Type", "Show Hidden Characters"], &[]),
+    ];
+    let d = "Default";
+    let entries = vec![
+        // Not a toggle: the name must fit as written.
+        win("View", &["Extras", "Hide Conveyor"], &[(d, "Ctrl+F1")]),
+        // One toggle for both of the source's items.
+        win("View", &["Show Rulers"], &[(d, "Ctrl+R")]),
+        win("View", &["Hide Rulers"], &[(d, "Ctrl+Shift+R")]),
+        win("View", &["Extras", "Hide Frame Edges"], &[(d, "Ctrl+H")]),
+        // Exact names match any command.
+        win("Type", &["Show Hidden Characters"], &[(d, "Ctrl+Alt+I")]),
+        win("Type", &["Hide Hidden Characters"], &[(d, "Ctrl+Alt+H")]),
+    ];
+    let (km, r) = import_into(catalogue, entries, &default_context());
+    has(&km, panel("conveyor"), &[]);
+    has(&km, "view.rulers", &["Cmd+R", "Cmd+Shift+R"]);
+    has(&km, "view.frameEdges", &["Cmd+H"]);
+    has(&km, "view.hiddenCharacters", &["Cmd+Alt+I"]);
+    assert_eq!(
+        unmatched(&r),
+        [("View > Extras > Hide Conveyor", UnmatchedReason::NoMatch), ("Type > Hide Hidden Characters", UnmatchedReason::NoMatch)]
+    );
+}
+
+#[test]
+fn only_entries_with_keys_to_bind_count_toward_suggestions() {
+    let catalogue = vec![command("edit.checkSpelling", "Check Spelling…", &["Edit", "Check Spelling…"], &[])];
+    let d = "Default";
+    // Twice the cap of unmatched entries without keys, or with keys only in a skipped context,
+    // before one with a key.
+    let mut entries: Vec<ForeignEntry> = (0..MAX_SUGGESTIONS)
+        .flat_map(|i| [win("Edit", &[&format!("Nothing {i}")], &[]), win("Edit", &[&format!("Tables {i}")], &[("Table", "Ctrl+T")])])
+        .collect();
+    entries.push(win("Edit", &["Chek Spelling Now"], &[(d, "Ctrl+K"), ("Table", "Ctrl+T")]));
+    let options = ImportOptions {
+        contexts: vec![(d.into(), ContextRule::Home), ("Table".into(), ContextRule::Skip)],
+        suggest: true,
+        ..ImportOptions::default()
+    };
+    let (_, r) = import_into(catalogue, entries, &options);
+    assert_eq!(r.unmatched_without_shortcut, 2 * MAX_SUGGESTIONS);
+    assert_eq!(r.unmatched.len(), 1);
+    assert_eq!(r.unmatched[0].keys, "Default: Ctrl+K", "keys in a skipped context are left out");
+    assert_eq!(r.suggestions.len(), 1);
+    assert_eq!(r.suggestions[0].candidates, [CommandRef::new("edit.checkSpelling")]);
+    assert_eq!(r.truncated, 0);
 }
