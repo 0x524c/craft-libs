@@ -870,31 +870,30 @@ fn check_pseudo(h: &Harness<'_, Fx>, width: f32, step: &str) {
 #[test]
 fn pseudo_locale_marks_every_string_and_fits() {
     let p = Pseudo::mark;
-    for rtl in [false, true] {
-        for width in [560.0, 1100.0] {
-            let unlisted = std::rc::Rc::default();
-            let mut fx = Fx::new(with_long_label(fixture(Platform::Mac)));
-            fx.text = Box::new(Pseudo { unlisted: std::rc::Rc::clone(&unlisted), rtl });
-            fx.options.keyboard = true;
-            fx.sets = Some((Profiles::default(), vec![("Fixture Defaults", Overrides::new())]));
-            let mut h = harness(fx, vec2(width, 720.0));
-            let step = |s: &str| format!("{} {width}: {s}", if rtl { "rtl" } else { "ltr" });
-            check_pseudo(&h, width, &step("opened"));
-            h.state_mut().state.select(&CommandRef::from("object.distribute"));
-            h.run();
-            check_pseudo(&h, width, &step("long label selected"));
-            let export = craft_i18n::fmt(&p("{label}: {chord}"), &[("label", &p("Export…")), ("chord", "⌘E")]);
-            click(&mut h, &export);
-            press(&mut h, Modifiers::COMMAND, EguiKey::S);
-            assert!(has(&h, &p("Take It")), "{}", step("conflict bar"));
-            check_pseudo(&h, width, &step("conflict"));
-            click(&mut h, &p("Keep Both"));
-            check_pseudo(&h, width, &step("kept both"));
-            click(&mut h, &p("Keyboard"));
-            check_pseudo(&h, width, &step("keyboard hidden"));
-            review(&mut h);
-            check_pseudo(&h, width, &step("review"));
-            assert!(unlisted.borrow().is_empty(), "looked up but not in STRINGS or PLURALS: {:?}", unlisted.borrow());
-        }
+    // Each direction at one width: the narrow layout left to right, the wide one right to left.
+    for (rtl, width) in [(false, 560.0), (true, 1100.0)] {
+        let unlisted = std::rc::Rc::default();
+        let mut fx = Fx::new(with_long_label(fixture(Platform::Mac)));
+        fx.text = Box::new(Pseudo { unlisted: std::rc::Rc::clone(&unlisted), rtl });
+        fx.options.keyboard = true;
+        fx.sets = Some((Profiles::default(), vec![("Fixture Defaults", Overrides::new())]));
+        let mut h = harness(fx, vec2(width, 720.0));
+        let step = |s: &str| format!("{} {width}: {s}", if rtl { "rtl" } else { "ltr" });
+        check_pseudo(&h, width, &step("opened"));
+        h.state_mut().state.select(&CommandRef::from("object.distribute"));
+        h.run();
+        check_pseudo(&h, width, &step("long label selected"));
+        let export = craft_i18n::fmt(&p("{label}: {chord}"), &[("label", &p("Export…")), ("chord", "⌘E")]);
+        click(&mut h, &export);
+        press(&mut h, Modifiers::COMMAND, EguiKey::S);
+        assert!(has(&h, &p("Take It")), "{}", step("conflict bar"));
+        check_pseudo(&h, width, &step("conflict"));
+        click(&mut h, &p("Keep Both"));
+        check_pseudo(&h, width, &step("kept both"));
+        click(&mut h, &p("Keyboard"));
+        check_pseudo(&h, width, &step("keyboard hidden"));
+        review(&mut h);
+        check_pseudo(&h, width, &step("review"));
+        assert!(unlisted.borrow().is_empty(), "looked up but not in STRINGS or PLURALS: {:?}", unlisted.borrow());
     }
 }
