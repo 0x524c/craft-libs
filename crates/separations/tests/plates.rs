@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use craft_cms::{Intent, Profile, Transform, builtin};
-use craft_separations::{Alternate, Conversion, Error, Fallback, Ink, InkId, MAX_SPOT_INKS, Options, Process, plates};
+use craft_separations::{Alternate, CmsConversion, Conversion, Error, Fallback, Ink, InkId, MAX_SPOT_INKS, Options, Process, plates};
 
 /// A 40 × 40 pt page with `content` and `resources`, `catalog` entries, and `objects`
 /// numbered from 5 (each a whole object body).
@@ -69,6 +69,19 @@ fn a_black_and_gold_page_separates_into_the_process_plates_and_gold() {
     assert_eq!(over.tint(black(), 20, 20), Some(255), "overprinted");
     let off = plates(&black_and_gold("/OP gs"), 0, 72.0, &Options { overprint: false, ..Options::default() }).unwrap();
     assert_eq!(off.tint(black(), 20, 20), Some(0), "overprint off: knocked out");
+
+    // The preview reads the plates: knocked-out Gold shows pale on paper, overprinted Gold
+    // darkens the black under it.
+    let cms = CmsConversion::fogra39();
+    let px = |rgb: &[u8], x: usize, y: usize| -> [u8; 3] { rgb[(y * 40 + x) * 3..][..3].try_into().unwrap() };
+    let (knockout, overprint) = (p.composite(&[], &cms), over.composite(&[], &cms));
+    let [r, g, b] = px(&knockout, 20, 20);
+    assert!(r > 200 && g > 180 && b < g, "50% Gold on paper: {:?}", [r, g, b]);
+    let k = px(&knockout, 2, 2);
+    assert!(k.iter().all(|c| *c < 80), "black: {k:?}");
+    assert_eq!(px(&overprint, 2, 2), k);
+    let dark = px(&overprint, 20, 20);
+    assert!(dark.iter().zip(k).all(|(d, k)| *d <= k) && dark[2] < k[2], "Gold over black: {dark:?}, black {k:?}");
 }
 
 /// What `profile` prints for sRGB red, as tint bytes.

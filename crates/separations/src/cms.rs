@@ -141,3 +141,21 @@ pub(crate) fn srgb8_to_lab(rgb: [u8; 3]) -> Option<[f32; 3]> {
     t.convert_f32(&rgb, 3, &mut lab, 3, false).ok()?;
     Some([lab[0] * 100.0, lab[1] * 255.0 - 128.0, lab[2] * 255.0 - 128.0])
 }
+
+/// sRGB of CIE L\*a\*b\* (D50) colours, relative colorimetric, three values per colour in
+/// both; `None` if craft-cms can't convert or the lengths disagree.
+pub(crate) fn lab_to_srgb8(lab: &[f32], rgb: &mut [u8]) -> Option<()> {
+    static T: OnceLock<Option<Arc<Transform>>> = OnceLock::new();
+    if !lab.len().is_multiple_of(3) || lab.len() != rgb.len() {
+        return None;
+    }
+    let t = CmsConversion::transform(&T, Builtin::LabD50.profile(), builtin::srgb(), false)?;
+    // The Lab D50 identity profile's device values (ICC v4 Lab encoding).
+    let encoded: Vec<f32> = lab.as_chunks::<3>().0.iter().flat_map(|[l, a, b]| [l / 100.0, (a + 128.0) / 255.0, (b + 128.0) / 255.0]).collect();
+    let mut out = vec![0.0_f32; encoded.len()];
+    t.convert_f32(&encoded, 3, &mut out, 3, false).ok()?;
+    for (byte, v) in rgb.iter_mut().zip(out) {
+        *byte = if v.is_finite() { (v.clamp(0.0, 1.0) * 255.0).round() as u8 } else { 0 };
+    }
+    Some(())
+}
