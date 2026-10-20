@@ -860,7 +860,7 @@ impl Names {
         for name in &names {
             add(&mut self.anywhere, name.clone(), i);
         }
-        for path in &b.paths {
+        for path in b.paths.iter().chain(&b.import_paths) {
             let mut segs: Vec<String> = path.iter().map(|s| normalize_label(s)).collect();
             if let [_, .., last] = segs.as_mut_slice() {
                 *last = form(last);
@@ -936,7 +936,7 @@ impl Index {
             ix.tool.push(matches!(b.kind, Kind::Tool { .. }));
             ix.keys.insert(b.command.key(), i);
             ix.names.add(i, b, str::to_string);
-            ix.segments.extend(b.paths.iter().flatten().map(|s| normalize_label(s)));
+            ix.segments.extend(b.paths.iter().chain(&b.import_paths).flatten().map(|s| normalize_label(s)));
             if b.is_toggle {
                 ix.toggles.add(i, b, toggle_name);
             }
@@ -1000,7 +1000,11 @@ fn suggest(keymap: &Keymap, entries: &[ToSuggest]) -> Vec<Suggestion> {
         let candidates: Vec<namematch::Candidate> = pool
             .iter()
             .map(|b| {
-                let labels = std::iter::once(&b.label).chain(&b.aliases).chain(b.paths.iter().filter_map(|p| p.last())).cloned().collect();
+                let labels = std::iter::once(&b.label)
+                    .chain(&b.aliases)
+                    .chain(b.paths.iter().chain(&b.import_paths).filter_map(|p| p.last()))
+                    .cloned()
+                    .collect();
                 namematch::Candidate { id: b.command.id.clone(), labels }
             })
             .collect();

@@ -242,7 +242,9 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
   it `in_panel_menu()`. Tool entries match only tools.
 - Names are compared after `import::normalize_label`: case, `…`, `...`, `&`, colons and extra
   spaces aside, so the alias `Preferences: General…` matches `Edit > Preferences > General...`.
-  Aliases (`Bindable::with_alias`) count wherever labels do.
+  Aliases (`Bindable::with_alias`) count wherever labels do, and import paths
+  (`Bindable::with_import_path`, such as `["Tools", label]` for a tool) wherever menu paths do;
+  the dialog makes no areas or groups from import paths.
 - Panel menus: sources list panel-menu items with the panel's name in front (InDesign's Panel
   Menus area writes `Character: All Caps`; Illustrator and Photoshop sets have similar areas).
   The reader splits the name into segments and marks the entry `ForeignEntry::in_panel_menu()`.

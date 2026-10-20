@@ -608,6 +608,21 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn import_paths_make_no_areas_or_groups() {
+        let tool = |id: &str, label: &str| {
+            Bindable::new(id, label, Scope::app())
+                .with_kind(Kind::Tool { group: None })
+                .with_import_path(vec!["Tools".into(), label.into()])
+                .with_default(key("P"))
+        };
+        let km = Keymap::new(vec![tool("tool.pen", "Pen Tool")], Scopes::new(), Platform::Mac);
+        let o = Options::default();
+        let names: Vec<String> = areas(&km, &o, &English).into_iter().map(|a| a.label).collect();
+        assert_eq!(names, ["All Commands", "Tools"]);
+        assert_eq!(lines(&km, &o, &English, "", AreaId::All, Filter::All), ["# Tools", "Pen Tool: P"]);
+    }
+
+    #[test]
     fn hidden_entries_are_not_listed_but_still_conflict() -> Result<(), crate::AssignError> {
         let mut km = fixture(Platform::Mac);
         let o = Options { visible: Some(|b| b.command.id != "file.export" && !b.command.id.starts_with("timeline.")), ..Options::default() };

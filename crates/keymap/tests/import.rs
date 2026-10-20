@@ -677,6 +677,20 @@ fn aliases_match_like_labels() {
 }
 
 #[test]
+fn import_paths_match_like_menu_paths() {
+    let catalog = vec![
+        command("object.color", "Apply Color", &["Object", "Apply Color"], &[]),
+        command("color.applyColor", "Apply Color", &[], &[]).with_import_path(vec!["Tools".into(), "Apply Color".into()]),
+    ];
+    let d = "Default";
+    let entries = vec![win("Tools", &["Apply Color"], &[(d, "Ctrl+,")])];
+    let (km, r) = import_into(catalog, entries, &default_context());
+    has(&km, "color.applyColor", &["Cmd+,"]);
+    has(&km, "object.color", &[]);
+    assert!(r.unmatched.is_empty(), "{:?}", r.unmatched);
+}
+
+#[test]
 fn show_and_hide_are_read_off_only_for_toggles() {
     let catalog = vec![
         command(panel("conveyor"), "Conveyor", &["Window", "Conveyor"], &[]),
