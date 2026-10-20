@@ -112,7 +112,8 @@ survives.
 `DockOutput` also has:
 
 - `focused`: the panel the user focused this frame: a clicked tab, a drop, or a press of any
-  pointer button in a panel body, bare and protected panels included. Commands, `raise_panel` and
+  pointer button in a panel body (bare and protected panels included) or in the group header,
+  which focuses the group's shown panel. Commands, `raise_panel` and
   workspace resets never set it; a host that tracks the last focused panel clears it when a reset
   or command hides, closes or moves that panel.
 - `events`: requests outside the layout, such as `DockEvent::ToggleMaximize` (Frame) and

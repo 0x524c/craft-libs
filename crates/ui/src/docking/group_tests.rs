@@ -284,7 +284,10 @@ fn top_border_drags_the_group_and_the_menu_button_only_clicks() {
     assert!(held.group_drag.is_none());
     let out = d.step(vec![button(menu + vec2(0.0, 200.0), false)]);
     assert!(out.actions.iter().all(|a| !matches!(a, Action::MoveGroup { .. } | Action::Move { .. } | Action::Float { .. })), "{:?}", out.actions);
-    d.click(menu);
+    // A press in the header focuses the group's shown panel, like a press on its tab.
+    let pressed = d.step(vec![Event::PointerMoved(menu), button(menu, true)]);
+    assert_eq!(pressed.focused, Some(3));
+    d.step(vec![button(menu, false)]);
     assert_eq!(d.content.header_clicks, 1);
 
     let out = d.drag(over_tab, d.tab(1).center());

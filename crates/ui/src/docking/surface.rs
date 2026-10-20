@@ -218,7 +218,8 @@ pub struct DockOutput<P> {
     pub actions: Vec<Action<P>>,
     pub error: Option<DockError>,
     /// The panel the user focused this frame: a clicked tab or menu entry, a drop, or a press
-    /// of any pointer button in a panel body, stripless panels included. Only user input sets
+    /// of any pointer button in a panel body (stripless panels included) or in a group header,
+    /// which focuses the group's shown panel. Only user input sets
     /// it; [`DockArea::raise_panel`] and host commands do not.
     pub focused: Option<P>,
     /// Whole-floating-group gesture identity; host may display its own group drop preview.

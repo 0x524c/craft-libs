@@ -75,6 +75,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let mut child = ui.new_child(UiBuilder::new().id(self.id.with(("header", selected))).max_rect(header));
             child.set_clip_rect(header.intersect(ui.clip_rect()));
             self.content.group_header(&mut child, panels, selected, floating);
+            // A press in the header focuses the shown panel, as a press on its tab does.
+            if child.rect_contains_pointer(header) && child.input(|i| i.pointer.any_pressed()) {
+                self.output.focused = Some(selected.clone());
+            }
         }
         // The drag bar keeps its reserved width: tabs overflow before it narrows.
         let bar_width = self.style.drag_bar_width.clamp(0.0, (strip.width() - header_width).max(0.0));
@@ -176,7 +180,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         let active = response.has_focus() || response.hovered();
         if movable {
-            // A grip mark at rest, centerd in the bar's reserved width beside the header.
+            // A grip mark at rest, centered in the bar's reserved width beside the header.
             let grip = if self.style.right_to_left {
                 Rect::from_min_max(hit.min, pos2((hit.left() + self.style.drag_bar_width).min(hit.right()), hit.bottom()))
             } else {
