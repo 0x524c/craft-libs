@@ -78,7 +78,7 @@ const CTRL: Modifiers = Modifiers { ctrl: true, command: true, ..Modifiers::NONE
 fn dispatch_keymap() -> Keymap {
     let app = |id: &str, keys: &[&str]| keys.iter().fold(Bindable::new(id, id, Scope::app()), |e, k| e.with_default(Binding::parse(k).unwrap()));
     let tool = |id: &str| app(id, &["M"]).with_kind(Kind::Tool { group: Some("select".into()) });
-    let catalogue = vec![
+    let catalog = vec![
         app("edit.copy", &["Cmd+C", "Cmd+Insert"]),
         app("edit.paste", &["Cmd+V", "Shift+Insert"]),
         app("app.quit", &["Cmd+Alt+Q"]),
@@ -94,7 +94,7 @@ fn dispatch_keymap() -> Keymap {
         app("reveal.one", &["U"]),
         app("reveal.all", &["U U"]),
     ];
-    Keymap::new(catalogue, Scopes::new().with_panel("Timeline"), Platform::Windows)
+    Keymap::new(catalog, Scopes::new().with_panel("Timeline"), Platform::Windows)
 }
 
 fn press(key: EguiKey, modifiers: Modifiers) -> Event {

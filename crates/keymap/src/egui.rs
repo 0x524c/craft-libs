@@ -164,7 +164,7 @@ pub const DOUBLE_PRESS: f64 = 0.6;
 pub struct Hit {
     /// The command to run; for tools sharing the chord, the first of `cycle`.
     pub command: CommandRef,
-    /// Tools of one group sharing the chord, in catalogue order (the app picks the next one);
+    /// Tools of one group sharing the chord, in catalog order (the app picks the next one);
     /// empty for a plain command.
     pub cycle: Vec<CommandRef>,
     /// The chord whose binding matched, with `double` set when the double binding ran.

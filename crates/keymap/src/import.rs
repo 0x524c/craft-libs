@@ -53,8 +53,8 @@ pub struct ForeignEntry {
     /// submenu of [`ForeignEntry::menu`], which is usually `None`. Sources write such items as
     /// `Character: All Caps` (InDesign's Panel Menus area, the panel-menu areas of Illustrator and
     /// Photoshop sets); the reader splits them into segments. Such an entry also matches a
-    /// catalogue path that ends with its path, and its last segment alone when its first segment
-    /// is a segment of some catalogue path. Without keys, an entry matched only these ways
+    /// catalog path that ends with its path, and its last segment alone when its first segment
+    /// is a segment of some catalog path. Without keys, an entry matched only these ways
     /// changes nothing ([`ImportReport::matched_without_change`]).
     pub panel_menu: bool,
 }
@@ -94,7 +94,7 @@ impl ForeignEntry {
         self.menu.iter().chain(&self.path).map(String::as_str).collect::<Vec<_>>().join(" > ")
     }
 
-    /// The key of [`ImportOptions::remembered`] for this entry: the normalised menu and path
+    /// The key of [`ImportOptions::remembered`] for this entry: the normalized menu and path
     /// joined by U+001F.
     pub fn remember_key(&self) -> String {
         self.menu.iter().chain(&self.path).map(|s| normalize_label(s)).collect::<Vec<_>>().join("\u{1f}")
@@ -344,7 +344,7 @@ pub struct MatchedWithoutChange {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NoChangeReason {
-    /// The entry matched only through a panel-menu rule (a catalogue path ending with its
+    /// The entry matched only through a panel-menu rule (a catalog path ending with its
     /// segments, or its last segment alone). Such a match is close enough to bind the entry's
     /// keys, not to take a command's shortcuts away.
     PanelMenu,
@@ -407,7 +407,7 @@ pub fn normalize_label(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
-/// A normalised name without a leading `show/hide `, `show ` or `hide ` when something remains:
+/// A normalized name without a leading `show/hide `, `show ` or `hide ` when something remains:
 /// sources name a toggle by what choosing it does now. Only toggle commands
 /// ([`Bindable::is_toggle`]) are matched by this form.
 fn toggle_name(s: &str) -> String {
@@ -466,7 +466,7 @@ pub fn plan(set: &ForeignSet, keymap: &Keymap, options: &ImportOptions) -> Impor
 
         if by_panel && entry.keys.is_empty() {
             let (command, label) =
-                keymap.catalogue().get(i).map(|b| (b.command.clone(), b.label.clone())).unwrap_or_else(|| (CommandRef::new(""), String::new()));
+                keymap.catalog().get(i).map(|b| (b.command.clone(), b.label.clone())).unwrap_or_else(|| (CommandRef::new(""), String::new()));
             report.matched_without_change.push(MatchedWithoutChange { command, label, item, line: entry.line, reason: NoChangeReason::PanelMenu });
             continue;
         }
@@ -511,7 +511,7 @@ pub fn plan(set: &ForeignSet, keymap: &Keymap, options: &ImportOptions) -> Impor
         }
 
         let at = *planned_at.entry(i).or_insert_with(|| {
-            let command = keymap.catalogue().get(i).map(|b| b.command.clone()).unwrap_or_else(|| CommandRef::new(""));
+            let command = keymap.catalog().get(i).map(|b| b.command.clone()).unwrap_or_else(|| CommandRef::new(""));
             commands.push(Planned { command, item: item.clone(), line, bindings: Vec::new(), none_defined: true });
             commands.len() - 1
         });
@@ -549,8 +549,8 @@ impl ImportPlan {
     /// both commands keep the bindings they had. With [`Start::Defaults`] that cannot happen.
     pub fn apply(&self, keymap: &mut Keymap) -> ImportReport {
         let before: Vec<Vec<Binding>> = self.commands.iter().map(|p| keymap.bindings(&p.command)).collect();
-        // Dropping every entry leaves room for all of them: each catalogue command takes at most one
-        // entry, and the catalogue holds at most `MAX_COMMANDS`.
+        // Dropping every entry leaves room for all of them: each catalog command takes at most one
+        // entry, and the catalog holds at most `MAX_COMMANDS`.
         if self.start == Start::Defaults {
             keymap.reset_all();
         }
@@ -814,10 +814,10 @@ enum Found {
     None,
 }
 
-/// Catalogue names in one form, for the match steps.
+/// Catalog names in one form, for the match steps.
 #[derive(Default)]
 struct Names {
-    /// Normalised paths joined by U+001F.
+    /// Normalized paths joined by U+001F.
     paths: HashMap<String, Vec<usize>>,
     /// The last two or more segments of paths, also with the label as the last one, joined by
     /// U+001F: for panel-menu entries.
@@ -870,9 +870,9 @@ impl Names {
         }
     }
 
-    /// The lists the match steps look up for an entry's normalised menu and path, most specific
+    /// The lists the match steps look up for an entry's normalized menu and path, most specific
     /// first, each with whether it is a panel-menu step. `panel` is `Some(known)` for a panel-menu
-    /// entry, `known` saying whether the catalogue has its panel; only then does its last segment
+    /// entry, `known` saying whether the catalog has its panel; only then does its last segment
     /// alone match.
     fn steps(&self, menu: Option<&String>, segs: &[String], panel: Option<bool>) -> Vec<(Option<&Vec<usize>>, bool)> {
         let Some(last) = segs.last() else { return Vec::new() };
@@ -900,7 +900,7 @@ impl Names {
     }
 }
 
-/// The catalogue by normalised path and label, for the match steps.
+/// The catalog by normalized path and label, for the match steps.
 struct Index {
     tool: Vec<bool>,
     /// Binding keys, for remembered answers.
@@ -908,14 +908,14 @@ struct Index {
     names: Names,
     /// Toggle commands by their names without a leading Show/Hide ([`toggle_name`]).
     toggles: Names,
-    /// Every normalised segment of every catalogue path: the panels and menus the app has.
+    /// Every normalized segment of every catalog path: the panels and menus the app has.
     segments: HashSet<String>,
 }
 
 impl Index {
     fn new(keymap: &Keymap) -> Index {
         let mut ix = Index { tool: Vec::new(), keys: HashMap::new(), names: Names::default(), toggles: Names::default(), segments: HashSet::new() };
-        for (i, b) in keymap.catalogue().iter().enumerate() {
+        for (i, b) in keymap.catalog().iter().enumerate() {
             ix.tool.push(matches!(b.kind, Kind::Tool { .. }));
             ix.keys.insert(b.command.key(), i);
             ix.names.add(i, b, str::to_string);
@@ -939,7 +939,7 @@ impl Index {
     /// The match steps in order; the first that finds exactly one command decides. The steps run
     /// on the names as written, then on toggle commands with the entry's label and theirs
     /// without a leading Show/Hide. A panel-menu entry's last segment alone matches only when
-    /// its first segment, the panel, is a segment of some catalogue path.
+    /// its first segment, the panel, is a segment of some catalog path.
     fn find(&self, entry: &ForeignEntry, tool: bool, remembered: &BTreeMap<String, CommandRef>) -> Found {
         if let Some(c) = remembered.get(&entry.remember_key())
             && let Some(&i) = self.keys.get(&c.key())
@@ -978,7 +978,7 @@ struct ToSuggest {
 
 /// Fuzzy candidates for unmatched entries, among commands of the same kind.
 fn suggest(keymap: &Keymap, entries: &[ToSuggest]) -> Vec<Suggestion> {
-    let pool = |tool: bool| -> Vec<&Bindable> { keymap.catalogue().iter().filter(|b| matches!(b.kind, Kind::Tool { .. }) == tool).collect() };
+    let pool = |tool: bool| -> Vec<&Bindable> { keymap.catalog().iter().filter(|b| matches!(b.kind, Kind::Tool { .. }) == tool).collect() };
     let matcher = |pool: &[&Bindable]| {
         let candidates: Vec<namematch::Candidate> = pool
             .iter()

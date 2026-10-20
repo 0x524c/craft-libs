@@ -2,12 +2,12 @@
 
 `craft-keymap` holds the data and logic for keyboard bindings in the Craft apps: chords and their
 text forms, bindings from chords to commands, scopes, conflicts, user overrides, and an import
-pipeline for other applications' shortcut sets. Each application supplies its command catalogue,
+pipeline for other applications' shortcut sets. Each application supplies its command catalog,
 its file-format readers and its UI.
 
 ## Boundaries
 
-- Data and logic only. The apps keep the command catalogue (ids, labels, menu paths, defaults),
+- Data and logic only. The apps keep the command catalog (ids, labels, menu paths, defaults),
   the readers for other applications' files, the shortcut editor UI and running the commands.
 - Never crashes: no panics, no `unsafe`. Loading settings never fails; what cannot be used is
   kept or reported (`Keymap::problems`, the import report).
@@ -18,7 +18,7 @@ its file-format readers and its UI.
   switching and closing chords. A reserved chord cannot be assigned or bound.
 - Dependencies: `serde` and `serde_json`; `egui` with the `egui` feature.
 
-## A catalogue and dispatch
+## A catalog and dispatch
 
 A command with parameters has the key `window.panel {"panel":"layers"}` in settings and reports.
 Tools of one group share a key and cycle. A binding can name a scope other than the command's
@@ -31,7 +31,7 @@ use serde_json::json;
 let key = |text: &str| Binding::parse(text).unwrap();
 let layers = CommandRef::with_params("window.panel", json!({"panel": "layers"}));
 let select = Kind::Tool { group: Some("select".into()) };
-let catalogue = vec![
+let catalog = vec![
     Bindable::new("file.save", "Save", Scope::app()).with_path(vec!["File".into(), "Save".into()]).with_default(key("Cmd+S")),
     Bindable::new(layers.clone(), "Layers", Scope::app()).with_path(vec!["Window".into(), "Layers".into()]).with_default(key("F7")),
     Bindable::new("tool.marquee", "Marquee Tool", Scope::app()).with_kind(select.clone()).with_default(key("M")),
@@ -42,7 +42,7 @@ let catalogue = vec![
     // An app command whose binding works only in the Text context.
     Bindable::new("type.bold", "Bold", Scope::app()).with_default(key("Text: Cmd+B")),
 ];
-let keymap = Keymap::new(catalogue, Scopes::new().with_panel("Timeline").with_context("Text"), Platform::Mac);
+let keymap = Keymap::new(catalog, Scopes::new().with_panel("Timeline").with_context("Text"), Platform::Mac);
 
 // Dispatch: the chord pressed, whether it is a double press, and what has the keyboard.
 let press = |text: &str, active: &Active| keymap.lookup(&Chord::parse(text).unwrap(), false, active);
@@ -109,9 +109,9 @@ impl Settings for Prefs {
     const SCHEMA_VERSION: u32 = 1;
 }
 
-// `catalogue` is the app's Vec<Bindable>.
+// `catalog` is the app's Vec<Bindable>.
 let (mut store, _report) = SettingsStore::<Prefs>::open(Location::Auto);
-let mut keymap = Keymap::new(catalogue, Scopes::new(), Platform::current()).with_overrides(store.get().shortcuts.clone());
+let mut keymap = Keymap::new(catalog, Scopes::new(), Platform::current()).with_overrides(store.get().shortcuts.clone());
 // Entries for unknown commands and texts that do not parse are kept and listed here.
 let _problems = keymap.problems();
 
@@ -177,9 +177,9 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
 - Panel menus: sources list panel-menu items with the panel's name in front (InDesign's Panel
   Menus area writes `Character: All Caps`; Illustrator and Photoshop sets have similar areas).
   The reader splits the name into segments and marks the entry `ForeignEntry::in_panel_menu()`.
-  Such an entry also matches a catalogue path that ends with its segments (with the command's
+  Such an entry also matches a catalog path that ends with its segments (with the command's
   label or the path's last segment last), and its last segment alone as a label. The last
-  segment alone counts only when the first segment, the panel, is a segment of some catalogue
+  segment alone counts only when the first segment, the panel, is a segment of some catalog
   path, so `History: New Document` matches nothing in an app without a History panel. An entry
   without keys that matched only these ways leaves the command's shortcuts alone and is listed
   in `matched_without_change` (reason `PanelMenu`).
