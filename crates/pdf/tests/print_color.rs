@@ -989,6 +989,21 @@ fn print_settings_blend_in_cmyk_and_name_the_profile_as_the_output_intent() {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
+fn cmyk_blending_writes_no_output_intent_or_trapped() {
+    let settings = print::cmyk_blending(FOGRA39).unwrap();
+    assert_eq!(settings.group_color_space, GroupColorSpace::Cmyk);
+    assert!(settings.output_intent.is_none() && settings.trapped.is_none());
+
+    let bytes = sample(settings.clone(), placed(&settings).as_deref()).unwrap();
+    let cmyk_group = Some(Some("DeviceCMYK".to_owned()));
+    assert_eq!(groups(&bytes).pages, vec![cmyk_group.clone(), None, cmyk_group]);
+    assert!(output_intents(&bytes).is_empty());
+    assert!(!String::from_utf8_lossy(&bytes).contains("Trapped"));
+    assert!(matches!(print::cmyk_blending(b"not a profile"), Err(WriteError::InvalidProfile)));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
 fn print_settings_reject_a_profile_that_is_not_cmyk() {
     assert!(matches!(print::settings(PrintColor::fogra39(b"not a profile")), Err(WriteError::InvalidProfile)));
 }

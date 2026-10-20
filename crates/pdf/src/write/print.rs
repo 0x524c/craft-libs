@@ -1,8 +1,9 @@
 //! Serialization settings for CMYK print output.
 //!
-//! The document's CMYK profile, its working space, describes the printing condition: the
-//! settings write it as the `GTS_PDFX` output intent, and DeviceCMYK content and the CMYK
-//! blending groups are interpreted through it. This module takes the profile bytes and has no
+//! The document's CMYK profile, its working space, describes the printing condition.
+//! [`cmyk_blending`] blends transparency in CMYK and writes no output intent, like a plain
+//! print PDF; [`settings`] also writes the profile as the `GTS_PDFX` output intent, through
+//! which DeviceCMYK content and the CMYK blending groups are interpreted, as PDF/X needs. This module takes the profile bytes and has no
 //! color-management dependency; craft-cms's `builtin::COATED_FOGRA39_ICC` is a suitable
 //! default profile, described by [`PrintColor::fogra39`].
 //!
@@ -42,28 +43,41 @@ impl<'a> PrintColor<'a> {
     }
 }
 
-/// Settings for CMYK print output: DeviceCMYK color, CMYK blending groups, the profile as
-/// the `GTS_PDFX` output intent (and as `cmyk_profile`) and `/Trapped /False`. Other fields
-/// keep their defaults; override them with struct update syntax.
+/// Settings for a CMYK print PDF without an output intent: DeviceCMYK color and CMYK
+/// blending groups, with `profile` as `cmyk_profile`. Other fields keep their defaults;
+/// override them with struct update syntax.
+///
+/// Fails with [`WriteError::InvalidProfile`] when `profile` is not a readable CMYK ICC
+/// profile.
+pub fn cmyk_blending(profile: &[u8]) -> Result<SerializeSettings, WriteError> {
+    guard(|| {
+        let profile = ICCProfile::<4>::new(profile).ok_or(WriteError::InvalidProfile)?;
+        Ok(SerializeSettings {
+            no_device_cs: false,
+            cmyk_profile: Some(profile),
+            group_color_space: GroupColorSpace::Cmyk,
+            ..SerializeSettings::default()
+        })
+    })
+}
+
+/// [`cmyk_blending`] plus the profile as the `GTS_PDFX` output intent and `/Trapped /False`,
+/// for PDF/X export.
 ///
 /// Fails with [`WriteError::InvalidProfile`] when `profile` is not a readable CMYK ICC
 /// profile.
 pub fn settings(color: PrintColor<'_>) -> Result<SerializeSettings, WriteError> {
-    guard(|| {
-        let profile = ICCProfile::<4>::new(color.profile).ok_or(WriteError::InvalidProfile)?;
-        Ok(SerializeSettings {
-            no_device_cs: false,
-            cmyk_profile: Some(profile.clone()),
-            group_color_space: GroupColorSpace::Cmyk,
-            output_intent: Some(OutputIntent {
-                profile,
-                condition_identifier: color.condition_identifier.to_owned(),
-                condition: color.condition.map(str::to_owned),
-                registry_name: color.registry_name.map(str::to_owned),
-                info: color.info.map(str::to_owned),
-            }),
-            trapped: Some(Trapped::False),
-            ..SerializeSettings::default()
-        })
+    let settings = cmyk_blending(color.profile)?;
+    let profile = settings.cmyk_profile.clone().ok_or(WriteError::InvalidProfile)?;
+    Ok(SerializeSettings {
+        output_intent: Some(OutputIntent {
+            profile,
+            condition_identifier: color.condition_identifier.to_owned(),
+            condition: color.condition.map(str::to_owned),
+            registry_name: color.registry_name.map(str::to_owned),
+            info: color.info.map(str::to_owned),
+        }),
+        trapped: Some(Trapped::False),
+        ..settings
     })
 }
