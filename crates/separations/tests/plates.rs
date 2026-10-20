@@ -1,0 +1,147 @@
+use std::sync::Arc;
+
+use craft_cms::{Intent, Profile, Transform, builtin};
+use craft_separations::{Alternate, Conversion, Error, Fallback, Ink, InkId, MAX_SPOT_INKS, Options, Process, plates};
+
+/// A 40 × 40 pt page with `content` and `resources`, `catalog` entries, and `objects`
+/// numbered from 5 (each a whole object body).
+fn page_pdf(content: &str, resources: &str, catalog: &str, objects: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = b"%PDF-1.7\n".to_vec();
+    out.extend_from_slice(format!("1 0 obj << /Type /Catalog /Pages 2 0 R {catalog} >> endobj\n").as_bytes());
+    out.extend_from_slice(b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n");
+    out.extend_from_slice(
+        format!("3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 40 40] /Contents 4 0 R /Resources << {resources} >> >> endobj\n").as_bytes(),
+    );
+    out.extend_from_slice(format!("4 0 obj << /Length {} >> stream\n{content}\nendstream endobj\n", content.len()).as_bytes());
+    for (i, body) in objects.iter().enumerate() {
+        out.extend_from_slice(format!("{} 0 obj ", i + 5).as_bytes());
+        out.extend_from_slice(body);
+        out.extend_from_slice(b" endobj\n");
+    }
+    out.extend_from_slice(b"trailer << /Root 1 0 R >>\n%%EOF");
+    out
+}
+
+fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
+    let mut out = format!("<< {dict} /Length {} >> stream\n", data.len()).into_bytes();
+    out.extend_from_slice(data);
+    out.extend_from_slice(b"\nendstream");
+    out
+}
+
+/// A spot colour whose alternate is a yellowish CMYK.
+const GOLD: &str = "[/Separation /Gold /DeviceCMYK << /FunctionType 2 /Domain [0 1] /C0 [0 0 0 0] /C1 [0 0.3 1 0] /N 1 >>]";
+
+/// Black over the page, Gold at 50% in the middle square, overprinting when `gs` sets `op`.
+fn black_and_gold(gs: &str) -> Vec<u8> {
+    let resources = format!("/ColorSpace << /CS0 {GOLD} >> /ExtGState << /OP << /op true >> >>");
+    page_pdf(&format!("0 0 0 1 k 0 0 40 40 re f {gs} /CS0 cs 0.5 scn 10 10 20 20 re f"), &resources, "", &[])
+}
+
+fn black() -> InkId {
+    InkId::process(Process::Black)
+}
+
+#[test]
+fn a_black_and_gold_page_separates_into_the_process_plates_and_gold() {
+    let p = plates(&black_and_gold(""), 0, 72.0, &Options::default()).unwrap();
+    assert_eq!((p.width, p.height, p.dpi), (40, 40, 72.0));
+    let names: Vec<&str> = p.inks.iter().map(|(_, ink)| ink.name()).collect();
+    assert_eq!(names, ["Cyan", "Magenta", "Yellow", "Black", "Gold"]);
+    assert_eq!(p.planes.len(), 5);
+    assert!(p.unseparated.is_empty());
+    let gold = p.inks.lookup("Gold").unwrap();
+    let Some(Ink::Spot(spot)) = p.inks.get(gold) else { panic!("Gold is a spot ink") };
+    let Alternate::Lab([l, _, b]) = spot.alternate else { panic!("a Lab alternate") };
+    assert!(l > 60.0 && b > 40.0, "Gold looks yellow: {:?}", spot.alternate);
+
+    let half = |t: Option<u8>| t.is_some_and(|t| t.abs_diff(128) <= 1);
+    assert!(half(p.tint(gold, 20, 20)), "Gold at 50%");
+    assert_eq!(p.tint(black(), 20, 20), Some(0), "Gold knocks out black");
+    assert_eq!(p.tint(black(), 2, 2), Some(255));
+    assert_eq!(p.tint(gold, 2, 2), Some(0));
+    for c in [Process::Cyan, Process::Magenta, Process::Yellow] {
+        assert!(p.plane(InkId::process(c)).unwrap().iter().all(|t| *t == 0), "{c:?} is empty");
+    }
+
+    let over = plates(&black_and_gold("/OP gs"), 0, 72.0, &Options::default()).unwrap();
+    assert!(half(over.tint(gold, 20, 20)));
+    assert_eq!(over.tint(black(), 20, 20), Some(255), "overprinted");
+    let off = plates(&black_and_gold("/OP gs"), 0, 72.0, &Options { overprint: false, ..Options::default() }).unwrap();
+    assert_eq!(off.tint(black(), 20, 20), Some(0), "overprint off: knocked out");
+}
+
+/// What `profile` prints for sRGB red, as tint bytes.
+fn red_in(profile: &[u8]) -> [u8; 4] {
+    let t = Transform::new(builtin::srgb(), &Profile::parse(profile).unwrap(), Intent::RelativeColorimetric, false).unwrap();
+    let mut cmyk = [0.0_f32; 4];
+    t.convert_f32(&[1.0, 0.0, 0.0], 3, &mut cmyk, 4, false).unwrap();
+    cmyk.map(|v| (v * 255.0).round() as u8)
+}
+
+fn red_tints(p: &craft_separations::Plates) -> [u8; 4] {
+    Process::ALL.map(|c| p.tint(InkId::process(c), 20, 20).unwrap())
+}
+
+fn near(got: [u8; 4], expected: [u8; 4]) -> bool {
+    got.iter().zip(expected).all(|(g, e)| g.abs_diff(e) <= 3)
+}
+
+#[test]
+fn process_colour_converts_through_the_output_intent_else_the_fallback() {
+    let synthetic = builtin::COATED_CMYK_ICC;
+    let intent = "/OutputIntents [<< /Type /OutputIntent /S /GTS_PDFX /OutputConditionIdentifier (Synthetic press) /DestOutputProfile 5 0 R >>]";
+    let red = |catalog: &str| page_pdf("1 0 0 rg 0 0 40 40 re f", "", catalog, &[stream("/N 4", synthetic)]);
+
+    let p = plates(&red(intent), 0, 72.0, &Options::default()).unwrap();
+    let profile = craft_cms::synth::DESCRIPTION.to_string();
+    assert_eq!(p.conversion, Conversion::OutputIntent { profile: profile.clone(), condition: Some("Synthetic press".into()) });
+    let expected = red_in(synthetic);
+    assert!(near(red_tints(&p), expected), "{:?}, the output intent prints {expected:?}", red_tints(&p));
+
+    let fogra = plates(&red(""), 0, 72.0, &Options::default()).unwrap();
+    assert_eq!(fogra.conversion, Conversion::Fallback { profile: builtin::COATED_FOGRA39_DESCRIPTION.into() });
+    let expected = red_in(builtin::COATED_FOGRA39_ICC);
+    assert!(near(red_tints(&fogra), expected), "{:?}, FOGRA39 prints {expected:?}", red_tints(&fogra));
+
+    let callers = Options { fallback: Fallback::Profile(Arc::from(synthetic)), ..Options::default() };
+    assert_eq!(plates(&red(""), 0, 72.0, &callers).unwrap().conversion, Conversion::Fallback { profile });
+
+    let formulas = Options { fallback: Fallback::DeviceFormulas, ..Options::default() };
+    let device = plates(&red(""), 0, 72.0, &formulas).unwrap();
+    assert_eq!((device.conversion.clone(), red_tints(&device)), (Conversion::DeviceFormulas, [0, 255, 255, 0]));
+
+    let broken = Options { fallback: Fallback::Profile(Arc::from(&b"not a profile"[..])), ..Options::default() };
+    assert!(matches!(plates(&red(""), 0, 72.0, &broken), Err(Error::Profile(_))));
+}
+
+#[test]
+fn spot_inks_past_the_cap_are_listed_not_separated_and_bad_input_is_refused() {
+    let n = MAX_SPOT_INKS + 2;
+    let spaces: String =
+        (0..n).map(|i| format!("/S{i} [/Separation /Spot{i} /DeviceGray << /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>] ")).collect();
+    let content: String = (0..n).map(|i| format!("/S{i} cs 1 scn {i} 0 1 1 re f ")).collect();
+    let pdf = page_pdf(&content, &format!("/ColorSpace << {spaces} >>"), "", &[]);
+    let p = plates(&pdf, 0, 72.0, &Options::default()).unwrap();
+    assert_eq!((p.inks.len(), p.planes.len()), (4 + MAX_SPOT_INKS, 4 + MAX_SPOT_INKS));
+    assert_eq!(p.unseparated, [format!("Spot{}", n - 2), format!("Spot{}", n - 1)]);
+
+    assert!(matches!(plates(&pdf, 1, 72.0, &Options::default()), Err(Error::NoPage(1))));
+    assert!(matches!(plates(&pdf, 0, f32::NAN, &Options::default()), Err(Error::InvalidDpi)));
+    assert!(matches!(plates(b"not a pdf", 0, 72.0, &Options::default()), Err(Error::Open(_))));
+}
+
+#[test]
+fn lab_colours_convert_through_the_profile_and_lab_white_is_paper() {
+    let resources = "/ColorSpace << /D50 [/Lab << /WhitePoint [0.9642 1 0.8249] >>] /D65 [/Lab << /WhitePoint [0.9505 1 1.089] >>] >>";
+    let pdf = page_pdf("/D50 cs 50 20 -10 scn 0 0 20 40 re f /D65 cs 100 0 0 scn 20 0 20 40 re f", resources, "", &[]);
+    let p = plates(&pdf, 0, 72.0, &Options::default()).unwrap();
+    let at = |x| Process::ALL.map(|c| p.tint(InkId::process(c), x, 20).unwrap());
+    let fogra = Profile::parse(builtin::COATED_FOGRA39_ICC).unwrap();
+    let t = Transform::new(craft_cms::Builtin::LabD50.profile(), &fogra, Intent::RelativeColorimetric, false).unwrap();
+    let mut cmyk = [0.0_f32; 4];
+    t.convert_f32(&[0.5, 148.0 / 255.0, 118.0 / 255.0], 3, &mut cmyk, 4, false).unwrap();
+    let expected = cmyk.map(|v| (v * 255.0).round() as u8);
+    assert!(near(at(10), expected), "{:?}, FOGRA39 prints {expected:?}", at(10));
+    assert_eq!(at(30), [0, 0, 0, 0], "a Lab space's own white prints as paper");
+}
