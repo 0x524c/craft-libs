@@ -220,11 +220,20 @@ struct LastPress {
 ///   Windows and some Linux setups report AltGr as Ctrl+Alt, so AltGr+Q (`@` on a German layout)
 ///   arrives as Ctrl+Alt+Q, and egui-winit sends no Text event while Ctrl is held, so the press
 ///   cannot be told from a command chord. Ctrl+Alt with other keys (F-keys, arrows) still runs.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Dispatcher {
     last: Option<LastPress>,
     repeat: bool,
     clipboard: bool,
+    /// Whether a press's Text event comes before it when no text field has focus, as eframe's
+    /// web build sends them.
+    text_first: bool,
+}
+
+impl Default for Dispatcher {
+    fn default() -> Dispatcher {
+        Dispatcher { last: None, repeat: false, clipboard: false, text_first: cfg!(target_arch = "wasm32") }
+    }
 }
 
 impl Dispatcher {
@@ -269,10 +278,9 @@ impl Dispatcher {
         let frame_mods = Mods::from_egui(&input.modifiers, platform);
         let mut hits = Vec::new();
         let mut kept = Vec::with_capacity(input.events.len());
-        // The Text event egui sends after a key press belongs to that press.
-        let mut drop_text = false;
         let events = std::mem::take(&mut input.events);
-        let typed = if active.typing { typed_text(&events) } else { Vec::new() };
+        let text_of = text_of_press(&events, self.text_first && !active.typing);
+        let mut drop = vec![false; events.len()];
         // The web build sends both a clipboard key press and the clipboard event it causes. The
         // press decides: its event goes with it when it runs a command and stays otherwise.
         let causes = clipboard_event_follows(&events, platform);
@@ -280,17 +288,16 @@ impl Dispatcher {
         for (i, event) in events.into_iter().enumerate() {
             match &event {
                 Event::Key { key, pressed: true, repeat, modifiers, .. } if !*repeat || self.repeat => {
-                    drop_text = false;
                     let held = Mods::from_egui(modifiers, platform);
                     if let Some(key) = Key::from_egui(*key) {
                         let clip = clipboard_kind(key, held);
                         let keep = if active.typing {
-                            typed.get(i) == Some(&true) || clip.is_some() || may_be_alt_gr(key, held, platform)
+                            text_of[i].is_some() || clip.is_some() || may_be_alt_gr(key, held, platform)
                         } else {
                             !self.clipboard && causes[i].is_some()
                         };
                         if keep {
-                            kept.push(event);
+                            kept.push((i, event));
                             continue;
                         }
                         let caused = causes[i].clone();
@@ -304,7 +311,9 @@ impl Dispatcher {
                         }
                         if let Some(hit) = hit {
                             hits.push(hit);
-                            drop_text = !(held.cmd || held.ctrl);
+                            if let Some(j) = text_of[i].filter(|_| !(held.cmd || held.ctrl)) {
+                                drop[j] = true;
+                            }
                             continue;
                         }
                     }
@@ -314,10 +323,6 @@ impl Dispatcher {
                     if let Some((j, _)) = causes[i] {
                         caused_taken[j] = Some(false);
                     }
-                }
-                Event::Text(_) if drop_text => {
-                    drop_text = false;
-                    continue;
                 }
                 // A focused text field copies and pastes on these events itself.
                 Event::Copy | Event::Cut | Event::Paste(_) if self.clipboard && !active.typing => {
@@ -338,9 +343,9 @@ impl Dispatcher {
                 }
                 _ => {}
             }
-            kept.push(event);
+            kept.push((i, event));
         }
-        input.events = kept;
+        input.events = kept.into_iter().filter(|(i, _)| !drop[*i]).map(|(_, e)| e).collect();
         hits
     }
 
@@ -390,17 +395,29 @@ fn clipboard_event_follows(events: &[Event], platform: Platform) -> Vec<Option<(
     out
 }
 
-/// For each event, whether it is a key press followed by a Text event before the next press.
-fn typed_text(events: &[Event]) -> Vec<bool> {
-    let mut out = vec![false; events.len()];
-    let mut text_ahead = false;
-    for (event, typed) in events.iter().zip(out.iter_mut()).rev() {
-        match event {
-            Event::Text(t) if !t.is_empty() => text_ahead = true,
-            Event::Key { pressed: true, .. } => {
-                *typed = text_ahead;
-                text_ahead = false;
+/// For each key press, the index of the Text event it typed. egui-winit, and eframe's web text
+/// agent while a text field has focus, send the Text after the press, before the next one.
+/// With `text_first`, eframe's web build with no text field focused, the Text comes right before
+/// its press, and only for a press without Ctrl or Cmd.
+fn text_of_press(events: &[Event], text_first: bool) -> Vec<Option<usize>> {
+    let is_text = |e: Option<&Event>| matches!(e, Some(Event::Text(t)) if !t.is_empty());
+    let mut out = vec![None; events.len()];
+    if text_first {
+        for (i, event) in events.iter().enumerate().skip(1) {
+            if let Event::Key { pressed: true, modifiers, .. } = event
+                && !(modifiers.ctrl || modifiers.command || modifiers.mac_cmd)
+                && is_text(events.get(i - 1))
+            {
+                out[i] = Some(i - 1);
             }
+        }
+        return out;
+    }
+    let mut text_ahead = None;
+    for (i, event) in events.iter().enumerate().rev() {
+        match event {
+            Event::Key { pressed: true, .. } => out[i] = text_ahead.take(),
+            _ if is_text(Some(event)) => text_ahead = Some(i),
             _ => {}
         }
     }
@@ -467,5 +484,27 @@ fn clipboard_chord(event: &Event, held: Mods) -> (Key, Mods) {
         Event::Paste(_) if shift_only => (Key::Insert, held),
         Event::Paste(_) => (Key::V, with_cmd),
         _ => (Key::C, with_cmd),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Bindable, Binding, Scope, Scopes};
+
+    #[test]
+    fn web_text_before_its_press_goes_with_that_press() {
+        let km = Keymap::new(
+            vec![Bindable::new("tool.marquee", "Marquee", Scope::app()).with_default(Binding::parse("M").unwrap())],
+            Scopes::new(),
+            Platform::Windows,
+        );
+        let press = |key| Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers: Modifiers::NONE };
+        let mut input = InputState::default();
+        input.events = vec![Event::Text("m".into()), press(EguiKey::M), Event::Text("q".into()), press(EguiKey::Q)];
+        let mut d = Dispatcher { text_first: true, ..Dispatcher::new() };
+        let hits = d.dispatch(&mut input, &km, &Active::NONE);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(input.events, [Event::Text("q".into()), press(EguiKey::Q)]);
     }
 }
