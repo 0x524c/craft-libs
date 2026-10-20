@@ -189,11 +189,13 @@ impl Hit {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct LastPress {
     chord: Chord,
     at: f64,
     ran_double: bool,
+    /// The focused panel: a press in another panel never completes the pair.
+    panel: Option<String>,
 }
 
 /// Runs a keymap against egui's input, one call per frame before the UI reads its keys.
@@ -251,8 +253,9 @@ impl Dispatcher {
 
     /// The commands this frame's key presses run with `active` focus, in press order.
     ///
-    /// A chord pressed again within [`DOUBLE_PRESS`] runs its double binding when it has one;
-    /// the first press has already run the single binding. The press after a double starts over.
+    /// A chord pressed again within [`DOUBLE_PRESS`] in the same panel runs its double binding
+    /// when it has one; the first press has already run the single binding. The press after a
+    /// double starts over.
     pub fn dispatch(&mut self, input: &mut InputState, keymap: &Keymap, active: &Active) -> Vec<Hit> {
         self.dispatch_filtered(input, keymap, active, |_| true)
     }
@@ -351,9 +354,11 @@ impl Dispatcher {
         if repeat {
             return find(false);
         }
-        let again = self.last.is_some_and(|l| l.chord == first && !l.ran_double && now >= l.at && now - l.at < DOUBLE_PRESS);
+        let again = self.last.as_ref().is_some_and(|l| {
+            l.chord == first && !l.ran_double && l.panel.as_deref() == active.panel && now >= l.at && now - l.at < DOUBLE_PRESS
+        });
         let double = if again { find(true) } else { None };
-        self.last = Some(LastPress { chord: first, at: now, ran_double: double.is_some() });
+        self.last = Some(LastPress { chord: first, at: now, ran_double: double.is_some(), panel: active.panel.map(str::to_owned) });
         double.or_else(|| find(false))
     }
 }

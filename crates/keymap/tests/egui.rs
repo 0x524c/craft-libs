@@ -355,6 +355,24 @@ fn a_second_press_runs_the_double_binding() {
 }
 
 #[test]
+fn a_double_press_needs_both_presses_in_one_panel() {
+    let km = Keymap::new(
+        vec![
+            Bindable::new("x.one", "One", Scope::new("X").unwrap()).with_default(Binding::parse("A").unwrap()),
+            Bindable::new("y.one", "One", Scope::new("Y").unwrap()).with_default(Binding::parse("A").unwrap()),
+            Bindable::new("y.two", "Two", Scope::new("Y").unwrap()).with_default(Binding::parse("A A").unwrap()),
+        ],
+        Scopes::new().with_panel("X").with_panel("Y").with_panel_fallthrough(false),
+        Platform::Windows,
+    );
+    let mut d = Dispatcher::new();
+    let a = |d: &mut Dispatcher, panel, t| run(d, &km, &Active::panel(panel), frame(t, Modifiers::NONE, vec![press(EguiKey::A, Modifiers::NONE)])).0;
+    assert_eq!(a(&mut d, "X", 1.0), ["x.one"]);
+    assert_eq!(a(&mut d, "Y", 1.2), ["y.one"]);
+    assert_eq!(a(&mut d, "Y", 1.4), ["y.two"]);
+}
+
+#[test]
 fn two_presses_in_one_frame_make_a_double() {
     let km = dispatch_keymap();
     let mut d = Dispatcher::new();
