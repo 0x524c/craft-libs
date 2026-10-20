@@ -174,8 +174,9 @@ fn resize_handle_preserves_pointer_drag_lifecycle_and_reports_per_frame_delta() 
     assert!(response.response.has_focus(), "a pointer drag leaves keyboard focus on the handle");
     let (_, output) = h.frame(vec![Event::PointerMoved(pos2(300.0, 180.0))]);
     let handle = h.rect;
-    let highlighted =
-        |output: &FullOutput| output.shapes.iter().any(|shape| matches!(&shape.shape, egui::epaint::Shape::Rect(rect) if rect.rect == handle && rect.fill == Color32::BLUE));
+    let highlighted = |output: &FullOutput| {
+        output.shapes.iter().any(|shape| matches!(&shape.shape, egui::epaint::Shape::Rect(rect) if rect.rect == handle && rect.fill == Color32::BLUE))
+    };
     assert!(!highlighted(&output), "focus from the pointer draws no highlight");
     let (response, output) = h.frame(vec![key(Key::ArrowRight)]);
     assert_eq!(response.delta, 8.0, "arrow keys resize right after the drag");

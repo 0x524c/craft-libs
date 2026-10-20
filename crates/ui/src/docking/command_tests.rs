@@ -402,6 +402,10 @@ fn dock_with_a_side_zone_and_no_anchor_makes_an_outer_edge_frame() {
     let (moved, _) = applied(json!({"command": "window.panel.dock", "panel": "color", "zone": "right"}));
     assert!(matches!(moved.layout.place(&s("color")), Some(crate::docking::dock_model::Place::Node(_))), "{:?}", moved.layout);
     let (shown, _) = applied(json!({"command": "window.panel.dock", "panel": "swatches", "zone": "top"}));
-    assert!(matches!(shown.layout.place(&s("swatches")), Some(crate::docking::dock_model::Place::Node(_))) && shown.hidden.is_empty(), "{:?}", shown.layout);
+    assert!(
+        matches!(shown.layout.place(&s("swatches")), Some(crate::docking::dock_model::Place::Node(_))) && shown.hidden.is_empty(),
+        "{:?}",
+        shown.layout
+    );
     rejected(json!({"command": "window.panel.dock", "panel": "color", "zone": "left", "before": null}), DockError::InvalidPlacement);
 }
