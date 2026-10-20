@@ -10,7 +10,8 @@ use egui::{Context, Key, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, p
 
 use super::{GroupKind, Renderer};
 use crate::docking::{
-    Action, Column, DockEvent, DockStyle, Group, GroupDrag, GroupGesture, Node, Profile, Side, Target,
+    Action, Column, DockEvent, DockStyle, Group, GroupDrag, GroupGesture, Node, Placement, Profile, Side, Target,
+    dock_model::Unit,
     targets::{DockDrop, DockTarget, column_edge, horizontal_line, resolve_dock, usable, vertical_line},
 };
 use crate::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis};
@@ -471,6 +472,15 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let candidates = self.dock_candidates();
         let drop = resolve_dock(pointer, &candidates)?;
         let action = match drop.target.to() {
+            // A target named by the dragged panel is its own group or column: another panel
+            // there names the same one. With none, the drop leaves the panel where it is.
+            Target::At { anchor, placement } if &anchor == panel => {
+                let unit = if matches!(placement, Placement::Column { .. }) { Unit::Column } else { Unit::Group };
+                match self.layout.members(panel, unit).ok()?.into_iter().find(|p| p != panel) {
+                    Some(anchor) => Action::Move { panel: panel.clone(), anchor, placement },
+                    None => return Some((None, drop.line)),
+                }
+            }
             Target::At { anchor, placement } => Action::Move { panel: panel.clone(), anchor, placement },
             to @ Target::NewDock { .. }
                 if self.layout.place(panel).and_then(|place| self.layout.group(&place)).is_some_and(|g| g.panels.len() == 1) =>

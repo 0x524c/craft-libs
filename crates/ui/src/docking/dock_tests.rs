@@ -481,3 +481,26 @@ fn right_to_left_mirrors_docks_their_edges_and_new_docks() {
     d.settle();
     assert_eq!(d.rect("column-collapse", 5).left(), 0.0);
 }
+
+#[test]
+fn a_column_s_first_tab_dropped_on_its_own_column_edge_anchors_on_another_panel() {
+    // Two columns, 0..240 and 240..480; the dragged tab is the first panel of the last one.
+    let wide = |columns: &[&[&[u32]]]| {
+        let mut layout = docked(Side::Start, columns);
+        if let Some(Node::Split { size, .. }) = &mut layout.root {
+            *size = SplitSize::FixedFirst(480.0);
+        }
+        layout
+    };
+    let mut d = Driver::new(wide(&[&[&[2]], &[&[3, 4]]]));
+    let out = d.drag(d.tab(3).center(), pos2(484.0, 300.0));
+    assert_eq!(out.actions, vec![Action::Move { panel: 3, anchor: 4, placement: Placement::Column { after: true } }]);
+    assert_eq!(columns(&d.layout, Side::Start), vec![vec![vec![2]], vec![vec![4]], vec![vec![3]]]);
+
+    // Alone in its column, the panel stays where it is.
+    let layout = wide(&[&[&[2]], &[&[3]]]);
+    let mut d = Driver::new(layout.clone());
+    let out = d.drag(d.tab(3).center(), pos2(484.0, 300.0));
+    assert_eq!(out.actions, vec![]);
+    assert_eq!(d.layout, layout);
+}
