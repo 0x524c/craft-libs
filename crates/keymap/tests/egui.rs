@@ -81,7 +81,10 @@ fn dispatch_keymap() -> Keymap {
     let catalog = vec![
         app("edit.copy", &["Cmd+C", "Cmd+Insert"]),
         app("edit.paste", &["Cmd+V", "Shift+Insert"]),
+        app("edit.pasteInPlace", &["Cmd+Shift+V"]),
+        app("edit.copyMerged", &["Cmd+Shift+C"]),
         app("app.quit", &["Cmd+Alt+Q"]),
+        app("type.pageNumber", &["Cmd+Alt+Shift+N"]),
         app("view.refresh", &["Cmd+Alt+F5"]),
         app("file.save", &["Cmd+S"]),
         app("view.zoomIn", &["="]),
@@ -165,6 +168,39 @@ fn clipboard_events_stay_with_the_app_by_default() {
     // A clipboard press with no clipboard event after it is an ordinary press.
     let (ran, _) = run(&mut d, &km, &Active::NONE, frame(3.0, CTRL, vec![press(EguiKey::Insert, CTRL)]));
     assert_eq!(ran, ["edit.copy"]);
+}
+
+#[test]
+fn clipboard_chords_with_more_modifiers_run_their_bindings() {
+    let km = dispatch_keymap();
+    let mut d = Dispatcher::new();
+    let typing = Active { typing: true, ..Active::NONE };
+    let ctrl_shift = Modifiers { shift: true, ..CTRL };
+    // The desktop: egui-winit sends the Paste event in place of Ctrl+Shift+V.
+    let mut input = frame(1.0, ctrl_shift, vec![Event::Paste("text".into())]);
+    let hits = d.dispatch(&mut input, &km, &Active::NONE);
+    let ran: Vec<_> = hits.iter().map(|h| (h.command.id.as_str(), h.pasted.as_deref())).collect();
+    assert_eq!(ran, [("edit.pasteInPlace", Some("text"))]);
+    assert!(input.events.is_empty());
+    let (ran, left) = run(&mut d, &km, &typing, frame(2.0, ctrl_shift, vec![Event::Copy]));
+    assert_eq!(ran, ["edit.copyMerged"]);
+    assert!(left.is_empty());
+    // Ctrl+Shift+X has no binding: the event stays.
+    let (ran, left) = run(&mut d, &km, &Active::NONE, frame(3.0, ctrl_shift, vec![Event::Cut]));
+    assert!(ran.is_empty());
+    assert_eq!(left, [Event::Cut]);
+
+    // The web: the press decides for itself and its event, also while typing.
+    for (time, active) in [(4.0, &Active::NONE), (5.0, &typing)] {
+        let events = vec![press(EguiKey::C, ctrl_shift), Event::Copy];
+        let (ran, left) = run(&mut d, &km, active, frame(time, ctrl_shift, events));
+        assert_eq!(ran, ["edit.copyMerged"]);
+        assert!(left.is_empty(), "{left:?}");
+    }
+    let events = vec![press(EguiKey::X, ctrl_shift), Event::Cut];
+    let (ran, left) = run(&mut d, &km, &Active::NONE, frame(6.0, ctrl_shift, events.clone()));
+    assert!(ran.is_empty());
+    assert_eq!(left, events);
 }
 
 #[test]
@@ -283,31 +319,23 @@ fn a_press_that_types_text_stays_with_the_text_field() {
 }
 
 #[test]
-fn ctrl_alt_on_a_printable_key_is_left_to_the_text_field() {
+fn ctrl_alt_is_left_to_the_text_field_only_when_it_types() {
     let km = dispatch_keymap();
     let mut d = Dispatcher::new();
     let typing = Active { typing: true, ..Active::NONE };
-    // AltGr+Q on a German layout types `@`; Windows reports it as Ctrl+Alt+Q, and egui-winit sends
-    // no Text event while Ctrl is held.
+    // AltGr+Q on a German layout types `@`: the browser on Windows reports Ctrl+Alt+Q and the text
+    // agent sends the text after it.
     let alt_gr = Modifiers { alt: true, ..CTRL };
-    let events = vec![press(EguiKey::Q, alt_gr)];
+    let events = vec![press(EguiKey::Q, alt_gr), Event::Text("@".into())];
     let (ran, left) = run(&mut d, &km, &typing, frame(1.0, alt_gr, events.clone()));
     assert!(ran.is_empty(), "{ran:?}");
     assert_eq!(left, events);
-    let (ran, _) = run(&mut d, &km, &typing, frame(2.0, alt_gr, vec![press(EguiKey::F5, alt_gr)]));
-    assert_eq!(ran, ["view.refresh"], "a key that types nothing");
-    let (ran, left) = run(&mut d, &km, &Active::NONE, frame(3.0, alt_gr, events));
-    assert_eq!(ran, ["app.quit"], "outside a text field");
+    // A real Ctrl+Alt chord types nothing, so it runs while typing.
+    let all = Modifiers { shift: true, ..alt_gr };
+    let (ran, left) = run(&mut d, &km, &typing, frame(2.0, all, vec![press(EguiKey::N, all)]));
+    assert_eq!(ran, ["type.pageNumber"]);
     assert!(left.is_empty());
-
-    // macOS has no AltGr: Cmd+Option+Q is a command chord while typing.
-    let mac = Keymap::new(
-        vec![Bindable::new("app.quit", "Quit", Scope::app()).with_default(Binding::parse("Cmd+Alt+Q").unwrap())],
-        Scopes::new(),
-        Platform::Mac,
-    );
-    let cmd_opt = Modifiers { alt: true, mac_cmd: true, command: true, ..Modifiers::NONE };
-    let (ran, _) = run(&mut Dispatcher::new(), &mac, &typing, frame(4.0, cmd_opt, vec![press(EguiKey::Q, cmd_opt)]));
+    let (ran, _) = run(&mut d, &km, &typing, frame(3.0, alt_gr, vec![press(EguiKey::Q, alt_gr)]));
     assert_eq!(ran, ["app.quit"]);
 }
 
@@ -324,6 +352,23 @@ fn typing_blocks_plain_keys_but_not_command_chords() {
 }
 
 #[test]
+fn undo_goes_to_the_text_field_and_save_still_runs() {
+    let km = Keymap::new(
+        vec![
+            Bindable::new("edit.undo", "Undo", Scope::app()).with_default(Binding::parse("Cmd+Z").unwrap()),
+            Bindable::new("file.save", "Save", Scope::app()).with_default(Binding::parse("Cmd+S").unwrap()),
+        ],
+        Scopes::new(),
+        Platform::Windows,
+    );
+    let typing = Active { typing: true, ..Active::NONE };
+    let events = vec![press(EguiKey::Z, CTRL), press(EguiKey::S, CTRL)];
+    let (ran, left) = run(&mut Dispatcher::new(), &km, &typing, frame(1.0, CTRL, events));
+    assert_eq!(ran, ["file.save"]);
+    assert_eq!(left, [press(EguiKey::Z, CTRL)]);
+}
+
+#[test]
 fn the_focused_panel_wins_and_tool_groups_cycle() {
     let km = dispatch_keymap();
     let mut d = Dispatcher::new();
@@ -335,7 +380,8 @@ fn the_focused_panel_wins_and_tool_groups_cycle() {
     let hits = d.dispatch(&mut input, &km, &Active::NONE);
     let tools = vec![CommandRef::new("tool.marquee"), CommandRef::new("tool.ellipse")];
     let trigger = Trigger::single(chord("M"));
-    assert_eq!(hits, [Hit { command: tools[0].clone(), cycle: tools, trigger, exact: true, pasted: None }]);
+    let got: Vec<_> = hits.iter().map(|h: &Hit| (&h.command, &h.cycle, h.trigger, h.exact, h.pasted.as_deref())).collect();
+    assert_eq!(got, [(&tools[0], &tools, trigger, true, None)]);
 }
 
 #[test]
@@ -352,6 +398,24 @@ fn a_second_press_runs_the_double_binding() {
     // B in between breaks the pair.
     key(&mut d, EguiKey::B, 2.6);
     assert_eq!(u(&mut d, 2.7), ["reveal.one"]);
+}
+
+#[test]
+fn a_double_press_needs_both_presses_in_one_panel() {
+    let km = Keymap::new(
+        vec![
+            Bindable::new("x.one", "One", Scope::new("X").unwrap()).with_default(Binding::parse("A").unwrap()),
+            Bindable::new("y.one", "One", Scope::new("Y").unwrap()).with_default(Binding::parse("A").unwrap()),
+            Bindable::new("y.two", "Two", Scope::new("Y").unwrap()).with_default(Binding::parse("A A").unwrap()),
+        ],
+        Scopes::new().with_panel("X").with_panel("Y").with_panel_fallthrough(false),
+        Platform::Windows,
+    );
+    let mut d = Dispatcher::new();
+    let a = |d: &mut Dispatcher, panel, t| run(d, &km, &Active::panel(panel), frame(t, Modifiers::NONE, vec![press(EguiKey::A, Modifiers::NONE)])).0;
+    assert_eq!(a(&mut d, "X", 1.0), ["x.one"]);
+    assert_eq!(a(&mut d, "Y", 1.2), ["y.one"]);
+    assert_eq!(a(&mut d, "Y", 1.4), ["y.two"]);
 }
 
 #[test]

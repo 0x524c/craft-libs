@@ -15,6 +15,7 @@ pub const MAX_CHORD_TEXT: usize = 64;
 /// The platform a keymap is used on. It decides display text and whether `ctrl` folds into `cmd`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum Platform {
     Mac,
     Windows,
@@ -45,6 +46,7 @@ macro_rules! keys {
         ///
         /// Digits are the main row; numeric keypad keys map to the same keys.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[non_exhaustive]
         pub enum Key {
             $($variant),*
         }
@@ -265,6 +267,7 @@ pub struct Chord {
 /// Why chord or trigger text was refused.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum ParseError {
     Empty,
     /// Longer than [`MAX_CHORD_TEXT`].

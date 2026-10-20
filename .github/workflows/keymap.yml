@@ -3,9 +3,9 @@ name: Keymap
 on:
   push:
     branches: [main]
-    paths: ["crates/keymap/**", "crates/ui/**", "crates/i18n/**", "Cargo.toml", "Cargo.lock", ".github/workflows/keymap.yml"]
+    paths: ["crates/keymap/**", "crates/settings/**", "crates/ui/**", "crates/i18n/**", "Cargo.toml", "Cargo.lock", ".github/workflows/keymap.yml"]
   pull_request:
-    paths: ["crates/keymap/**", "crates/ui/**", "crates/i18n/**", "Cargo.toml", "Cargo.lock", ".github/workflows/keymap.yml"]
+    paths: ["crates/keymap/**", "crates/settings/**", "crates/ui/**", "crates/i18n/**", "Cargo.toml", "Cargo.lock", ".github/workflows/keymap.yml"]
   workflow_dispatch:
 
 permissions:

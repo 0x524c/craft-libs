@@ -181,6 +181,7 @@ pub struct ImportOptions {
 /// One planned binding, with the entry it came from.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct PlannedBinding {
     pub binding: Binding,
     pub item: String,
@@ -192,6 +193,7 @@ pub struct PlannedBinding {
 /// What the set says about one command, over every entry matched to it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Planned {
     pub command: CommandRef,
     /// The first entry matched to it, and its line.
@@ -209,6 +211,7 @@ pub struct Planned {
 /// [`plan`] and keeps its caps.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct ImportPlan {
     /// In the order of their first entry.
     pub commands: Vec<Planned>,
@@ -223,6 +226,7 @@ pub struct ImportPlan {
 /// A command whose bindings the import changed. Shortcuts are binding texts.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Changed {
     pub command: CommandRef,
     pub label: String,
@@ -236,6 +240,7 @@ pub struct Changed {
 /// A binding taken from a command outside the set.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Cleared {
     pub command: CommandRef,
     pub label: String,
@@ -245,6 +250,7 @@ pub struct Cleared {
 /// Why a key of the set was not bound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum SkipReason {
     /// A later entry of the set takes the chord.
     Taken,
@@ -258,6 +264,7 @@ pub enum SkipReason {
 /// A key of the set that was not bound.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Skipped {
     pub command: CommandRef,
     pub item: String,
@@ -275,6 +282,7 @@ pub struct Skipped {
 /// [`AssignError::Full`]: crate::AssignError::Full
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Failed {
     pub command: CommandRef,
     pub label: String,
@@ -286,6 +294,7 @@ pub struct Failed {
 /// What a [`Failed`] change was.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum FailedChange {
     /// Giving the command the set's bindings, or taking one of them from another command.
     Bind,
@@ -297,6 +306,7 @@ pub enum FailedChange {
 /// Why keys of an entry were not used.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum UnmatchedReason {
     NoMatch,
     /// Several commands fit and no match step picked one.
@@ -310,6 +320,7 @@ pub enum UnmatchedReason {
 /// An entry with keys that was not used, or keys of a matched entry in unlisted contexts.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Unmatched {
     pub item: String,
     pub line: Option<usize>,
@@ -321,6 +332,7 @@ pub struct Unmatched {
 /// Keys of a matched entry that could not be read.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Unreadable {
     pub item: String,
     pub line: Option<usize>,
@@ -332,6 +344,7 @@ pub struct Unreadable {
 /// An entry without keys that matched a command and left its shortcuts alone.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct MatchedWithoutChange {
     pub command: CommandRef,
     pub label: String,
@@ -343,6 +356,7 @@ pub struct MatchedWithoutChange {
 /// Why a [`MatchedWithoutChange`] entry did not clear its command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum NoChangeReason {
     /// The entry matched only through a panel-menu rule (a catalog path ending with its
     /// segments, or its last segment alone). Such a match is close enough to bind the entry's
@@ -353,6 +367,7 @@ pub enum NoChangeReason {
 /// Likely commands for an unmatched entry, best first. Never applied.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Suggestion {
     pub item: String,
     pub line: Option<usize>,
@@ -363,6 +378,7 @@ pub struct Suggestion {
 /// the main key of the same name.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Approximated {
     pub item: String,
     pub line: Option<usize>,
@@ -375,6 +391,7 @@ pub struct Approximated {
 /// `line` the entry's [`ForeignEntry::line`].
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct ImportReport {
     pub set: Option<String>,
     /// Commands of the set whose bindings changed.

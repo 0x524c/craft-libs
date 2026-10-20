@@ -98,6 +98,35 @@ fn typing_rules_decide_what_fires_in_a_text_field() {
 }
 
 #[test]
+fn text_editing_chords_go_to_the_text_field_under_every_rule() {
+    let catalog = vec![app("edit.undo", &["Cmd+Z"]), app("file.save", &["Cmd+S"]), app("nav.word", &["Alt+Left"]), app("nav.start", &["Cmd+Home"])];
+    let typing = Active { typing: true, ..Active::NONE };
+    for rule in [TypingRule::PlainKeysWait, TypingRule::CommandKeysOnly] {
+        for platform in [Platform::Mac, Platform::Windows] {
+            let km = Keymap::new(catalog.clone(), Scopes::new(), platform).with_typing_rule(rule);
+            assert_eq!(press(&km, "Cmd+Z", &typing), Lookup::None, "{rule:?} {platform:?}");
+            assert_eq!(press(&km, "Cmd+Z", &Active::NONE), run("edit.undo"));
+            assert_eq!(press(&km, "Cmd+S", &typing), run("file.save"), "{rule:?} {platform:?}");
+        }
+    }
+    // Word and line keys follow the platform.
+    let mac = Keymap::new(catalog.clone(), Scopes::new(), Platform::Mac);
+    let windows = Keymap::new(catalog.clone(), Scopes::new(), Platform::Windows);
+    assert_eq!(press(&mac, "Alt+Left", &typing), Lookup::None);
+    assert_eq!(press(&windows, "Alt+Left", &typing), run("nav.word"));
+    assert_eq!(press(&windows, "Ctrl+Home", &typing), Lookup::None);
+    assert_eq!(press(&mac, "Cmd+Home", &typing), run("nav.start"));
+
+    // A binding in an active context takes the chord from the field.
+    let catalog = vec![app("edit.undo", &["Cmd+Z"]), app("text.undo", &["Text: Cmd+Z"])];
+    let km = Keymap::new(catalog, scopes(), Platform::Windows);
+    let editing = Active { contexts: &["Text"], typing: true, ..Active::NONE };
+    assert_eq!(press(&km, "Cmd+Z", &editing), run("text.undo"));
+    assert_eq!(press(&km, "Cmd+Z", &typing), Lookup::None);
+    assert!(!TypingRule::PlainKeysWait.fires(&chord("Ctrl+Z"), Platform::Linux));
+}
+
+#[test]
 fn bindings_of_an_active_context_fire_while_typing_under_every_rule() {
     let catalog = vec![
         app("text.bold", &["Text: Cmd+B", "Text: B"]),
@@ -373,6 +402,15 @@ fn binding_text_round_trips_for_every_key() {
         }
     }
     assert_eq!(Binding::parse(": :"), Ok(Binding::new(Trigger::double(Chord::plain(Key::Colon)))));
+}
+
+#[test]
+fn scope_names_with_outer_whitespace_are_refused() {
+    for name in [" Timeline", "Timeline ", "\u{a0}Timeline", ""] {
+        assert_eq!(Scope::new(name), None, "{name:?}");
+    }
+    assert_eq!(Scope::new("Time line").map(|s| s.to_string()).as_deref(), Some("Time line"));
+    assert_eq!(Binding::parse(" Timeline :  K").map(|b| b.scope), Ok(Some(scope("Timeline"))));
 }
 
 #[test]

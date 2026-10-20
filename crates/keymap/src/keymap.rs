@@ -7,7 +7,7 @@ use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::chord::{Chord, ParseError, Platform, Trigger};
+use crate::chord::{Chord, Key, Mods, ParseError, Platform, Trigger};
 use crate::command::{CommandRef, MAX_KEY};
 use crate::scope::{Active, Scope, ScopeKind, Scopes};
 
@@ -26,6 +26,7 @@ pub const MAX_CONFLICTS: usize = 4096;
 /// What a binding does when pressed.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum Kind {
     #[default]
     Command,
@@ -44,6 +45,7 @@ pub struct Binding {
 /// Why binding text was refused.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum BindingError {
     TooLong,
     /// The part before `": "` is not a scope name.
@@ -196,10 +198,12 @@ impl Bindable {
     }
 }
 
-/// Which chords work while a text field has the keyboard. Bindings in an active context always
-/// work: a `Text: Cmd+B` binding is meant for typing.
+/// Which chords work while a text field has the keyboard. Under every rule, the
+/// [`text_editing_chords`] go to the text field too. Bindings in an active context always work: a
+/// `Text: Cmd+B` binding is meant for typing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum TypingRule {
     /// Plain chords (no cmd, ctrl or alt) go to the text; function keys still fire.
     #[default]
@@ -211,8 +215,11 @@ pub enum TypingRule {
 }
 
 impl TypingRule {
-    /// Whether `chord` may fire while typing.
-    pub fn fires(self, chord: &Chord) -> bool {
+    /// Whether `chord` may fire while typing on `platform`.
+    pub fn fires(self, chord: &Chord, platform: Platform) -> bool {
+        if text_editing_chords(platform).contains(&chord.effective(platform)) {
+            return false;
+        }
         match self {
             TypingRule::PlainKeysWait => !chord.is_plain() || chord.is_function_key(),
             TypingRule::CommandKeysOnly => chord.has_command() || chord.is_function_key(),
@@ -221,8 +228,88 @@ impl TypingRule {
     }
 }
 
+const CMD: Mods = Mods::CMD;
+const CMD_SHIFT: Mods = Mods { shift: true, ..Mods::CMD };
+const ALT: Mods = Mods::ALT;
+const ALT_SHIFT: Mods = Mods { shift: true, ..Mods::ALT };
+const CTRL: Mods = Mods::CTRL;
+
+// The chords egui's TextEdit acts on that follow the platform's conventions. egui also takes
+// Ctrl+H, Ctrl+K, Ctrl+U and Ctrl+W everywhere, but off macOS those are app commands.
+const MAC_EDITING: &[Chord] = &[
+    // Undo, redo, select all.
+    Chord::new(CMD, Key::Z),
+    Chord::new(CMD_SHIFT, Key::Z),
+    Chord::new(CMD, Key::A),
+    // Words.
+    Chord::new(ALT, Key::Left),
+    Chord::new(ALT, Key::Right),
+    Chord::new(ALT_SHIFT, Key::Left),
+    Chord::new(ALT_SHIFT, Key::Right),
+    Chord::new(ALT, Key::Backspace),
+    Chord::new(ALT, Key::Delete),
+    // Line start and end.
+    Chord::new(CMD, Key::Left),
+    Chord::new(CMD, Key::Right),
+    Chord::new(CMD_SHIFT, Key::Left),
+    Chord::new(CMD_SHIFT, Key::Right),
+    Chord::new(CMD, Key::Backspace),
+    Chord::new(CMD, Key::Delete),
+    // Text start and end.
+    Chord::new(CMD, Key::Up),
+    Chord::new(CMD, Key::Down),
+    Chord::new(CMD_SHIFT, Key::Up),
+    Chord::new(CMD_SHIFT, Key::Down),
+    // The Control keys of Cocoa text fields: line start and end, character and line moves,
+    // deletion.
+    Chord::new(CTRL, Key::A),
+    Chord::new(CTRL, Key::E),
+    Chord::new(CTRL, Key::B),
+    Chord::new(CTRL, Key::F),
+    Chord::new(CTRL, Key::P),
+    Chord::new(CTRL, Key::N),
+    Chord::new(CTRL, Key::H),
+    Chord::new(CTRL, Key::K),
+    Chord::new(CTRL, Key::U),
+    Chord::new(CTRL, Key::W),
+];
+
+const PC_EDITING: &[Chord] = &[
+    // Undo, redo, select all.
+    Chord::new(CMD, Key::Z),
+    Chord::new(CMD, Key::Y),
+    Chord::new(CMD_SHIFT, Key::Z),
+    Chord::new(CMD, Key::A),
+    // Words.
+    Chord::new(CMD, Key::Left),
+    Chord::new(CMD, Key::Right),
+    Chord::new(CMD_SHIFT, Key::Left),
+    Chord::new(CMD_SHIFT, Key::Right),
+    Chord::new(CMD, Key::Backspace),
+    Chord::new(CMD, Key::Delete),
+    // Text start and end.
+    Chord::new(CMD, Key::Home),
+    Chord::new(CMD, Key::End),
+    Chord::new(CMD_SHIFT, Key::Home),
+    Chord::new(CMD_SHIFT, Key::End),
+    Chord::new(CMD, Key::Up),
+    Chord::new(CMD, Key::Down),
+    Chord::new(CMD_SHIFT, Key::Up),
+    Chord::new(CMD_SHIFT, Key::Down),
+];
+
+/// The chords with modifiers that edit text on `platform`, as effective chords: undo, redo,
+/// select all, and moving and deleting by word, line and text. While typing they go to the text
+/// field under every [`TypingRule`]; only a binding in an active context takes one. Plain keys
+/// (arrows, Home, End, Backspace, Delete, with or without Shift) are not listed, since every rule
+/// holds them already. The `egui` dispatcher keeps the clipboard chords for the field itself.
+pub fn text_editing_chords(platform: Platform) -> &'static [Chord] {
+    if platform.is_mac() { MAC_EDITING } else { PC_EDITING }
+}
+
 /// What a key press runs.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Lookup {
     None,
     Run(CommandRef),
@@ -254,6 +341,7 @@ pub struct Holder {
 /// The result of an assignment.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Assigned {
     /// Bindings removed from other commands ([`Policy::Steal`]).
     pub taken_from: Vec<Holder>,
@@ -264,6 +352,7 @@ pub struct Assigned {
 /// Why an assignment was refused.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum AssignError {
     UnknownCommand,
     /// The system takes this chord.
@@ -296,6 +385,7 @@ impl std::error::Error for AssignError {}
 /// Why loading dropped part of an [`Overrides`] entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum DropReason {
     KeyTooLong,
     /// The value is not a list of texts.
@@ -310,6 +400,7 @@ pub enum DropReason {
 /// Something wrong in the stored overrides. Load reports these instead of failing.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum Problem {
     /// No command in the catalog has this key; the entry is kept.
     UnknownCommand { key: String },
@@ -330,6 +421,7 @@ pub enum Problem {
 /// How two bindings on one chord relate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum ConflictKind {
     /// Only one of the two can run.
     Clash,
@@ -340,6 +432,7 @@ pub enum ConflictKind {
 /// Two commands on one chord.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Conflict {
     /// The effective trigger on the keymap's platform.
     pub chord: Trigger,
@@ -500,7 +593,7 @@ impl Keymap {
     /// The command `chord` (pressed twice when `double`) runs with `active` focus.
     pub fn lookup(&self, chord: &Chord, double: bool, active: &Active) -> Lookup {
         let want = Trigger { chord: chord.effective(self.platform), double };
-        let held = active.typing && !self.typing.fires(&want.chord);
+        let held = active.typing && !self.typing.fires(&want.chord, self.platform);
         let Some(holders) = self.by_trigger.get(&want) else { return Lookup::None };
         // Each command's nearest rank; `holders` is in catalog order.
         let mut ranks: Vec<(usize, u8)> = Vec::new();
