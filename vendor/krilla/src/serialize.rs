@@ -341,6 +341,9 @@ pub(crate) enum MaybeDeviceColorSpace {
 pub(crate) struct SerializeContext {
     /// An unfinished or failed page/surface must never serialize as a complete document.
     pub(crate) poisoned: bool,
+    /// Where the first mesh gradient whose corner colors share no color space was drawn;
+    /// [`SerializeContext::finish`] fails with [`KrillaError::MixedMeshColorSpaces`].
+    pub(crate) mixed_mesh_colors: Option<Option<Location>>,
     /// The ref of the page tree.
     page_tree_ref: Ref,
     /// PDF 2.0 namespaces.
@@ -401,6 +404,7 @@ impl SerializeContext {
 
         Self {
             poisoned: false,
+            mixed_mesh_colors: None,
             cached_mappings: HashMap::new(),
             pdf2_ns,
             global_objects: GlobalObjects::default(),
@@ -593,6 +597,9 @@ impl SerializeContext {
             && settings.cmyk_profile.is_none()
         {
             return Err(KrillaError::MissingGroupCmykProfile);
+        }
+        if let Some(location) = self.mixed_mesh_colors {
+            return Err(KrillaError::MixedMeshColorSpaces(location));
         }
 
         // We need to be careful here that we serialize the objects in the right order,

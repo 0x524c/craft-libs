@@ -16,7 +16,7 @@ use backend::image::{BitsPerComponent, CustomImage, Image, ImageColorspace};
 use backend::mask::{Mask, MaskType, TransferFunction};
 use backend::num::NormalizedF32;
 use backend::page::PageSettings;
-use backend::paint::{Fill, LinearGradient, SpreadMethod, Stop, SweepGradient};
+use backend::paint::{Fill, LinearGradient, MeshGradient, MeshPatch, SpreadMethod, Stop, SweepGradient};
 use backend::surface::Surface;
 use backend::{GroupColorSpace, SerializeSettings, Trapped};
 use craft_pdf::write::print::{self, PrintColor};
@@ -808,6 +808,120 @@ fn device_n_shading_keeps_a_spot_to_paper_as_separation() {
         assert_eq!(cs, ("Separation".to_owned(), vec!["Gold".to_owned()]));
         assert_eq!((range, domain), (2, vec![0.0, 1.0]));
     }
+}
+
+// Mesh gradients (`paint::MeshGradient`, Type 6 shadings).
+
+/// A square Coons patch with straight edges, corners clockwise from the top left at (x, y).
+fn square(x: f32, y: f32, size: f32, colors: [backend::color::Color; 4], opacities: [f32; 4]) -> MeshPatch {
+    let corners = [(x, y), (x + size, y), (x + size, y + size), (x, y + size)];
+    let mut points = [(0.0, 0.0); 12];
+    for (i, &(ax, ay)) in corners.iter().enumerate() {
+        let (bx, by) = corners[(i + 1) % 4];
+        for step in 0..3 {
+            let t = step as f32 / 3.0;
+            points[3 * i + step] = (ax + (bx - ax) * t, ay + (by - ay) * t);
+        }
+    }
+    MeshPatch { points, colors, opacities: opacities.map(|o| NormalizedF32::new(o).unwrap()) }
+}
+
+fn mesh(patches: Vec<MeshPatch>) -> backend::paint::Paint {
+    MeshGradient { patches, transform: Transform::identity(), anti_alias: false }.into()
+}
+
+/// Each Type 6 shading in the file: color space family and colorant names, components a
+/// corner (from `/Decode`), and the corner color bytes of each patch.
+type MeshSummary = ((String, Vec<String>), usize, Vec<Vec<u8>>);
+
+fn mesh_shadings(bytes: &[u8]) -> Vec<MeshSummary> {
+    let pdf = hayro_syntax::Pdf::new(Arc::new(bytes.to_vec())).unwrap();
+    let mut out = Vec::new();
+    for object in pdf.objects() {
+        let Object::Stream(stream) = object else { continue };
+        let dict = stream.dict();
+        if dict.get::<i32>(b"ShadingType".as_slice()) != Some(6) {
+            continue;
+        }
+        assert_eq!(dict.get::<i32>(b"BitsPerCoordinate".as_slice()), Some(32));
+        assert_eq!(dict.get::<i32>(b"BitsPerComponent".as_slice()), Some(8));
+        assert_eq!(dict.get::<i32>(b"BitsPerFlag".as_slice()), Some(8));
+        let cs = dict.get::<Object<'_>>(b"ColorSpace".as_slice()).unwrap();
+        let decode = dict.get::<Array<'_>>(b"Decode".as_slice()).unwrap().iter::<f32>().count();
+        let components = (decode - 4) / 2;
+        let data = stream.decoded().unwrap();
+        let patch_len = 1 + 12 * 8 + 4 * components;
+        assert_eq!(data.len() % patch_len, 0, "whole patches of {components} components a corner");
+        let corners = data.chunks(patch_len).map(|patch| patch[1 + 12 * 8..].to_vec()).collect();
+        out.push((colorant_names(&cs), components, corners));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+fn gold_spot(tint: u8) -> backend::color::Color {
+    use backend::color::separation::{self, SeparationColorant, SeparationSpace};
+    separation::Color::new(tint, SeparationSpace::new(SeparationColorant::Custom("Gold".to_owned()), gold().into())).into()
+}
+
+/// Mesh corner colors follow the gradient stop rule across every patch: CMYK, gray and a
+/// spot become one DeviceN space with process colorants first, so a later patch's spot is
+/// written as itself. Corner opacities below 1 add the same mesh in gray as a soft mask.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn mesh_mixing_process_and_spot_corners_is_a_device_n_shading() {
+    let cyan = || -> backend::color::Color { cmyk::Color::new(255, 0, 0, 0).into() };
+    let paper = || -> backend::color::Color { cmyk::Color::new(0, 0, 0, 0).into() };
+    let patches = |opacity: f32| {
+        vec![
+            square(10.0, 10.0, 40.0, [cyan(), cyan(), luma::Color::black().into(), paper()], [1.0; 4]),
+            square(50.0, 10.0, 40.0, [gold_spot(255), gold_spot(128), cyan(), cyan()], [1.0, 1.0, 1.0, opacity]),
+        ]
+    };
+    let names = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    let expected = vec![vec![255, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 0], vec![0, 0, 255, 0, 0, 128, 255, 0, 0, 255, 0, 0]];
+
+    let opaque = page_with(|surface| fill_rect(surface, 0.0, mesh(patches(1.0))));
+    assert_eq!(mesh_shadings(&opaque), vec![(("DeviceN".to_owned(), names(&["Cyan", "Black", "Gold"])), 3, expected.clone())]);
+
+    let translucent = page_with(|surface| fill_rect(surface, 0.0, mesh(patches(0.5))));
+    let found = mesh_shadings(&translucent);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert_eq!(found[0], (("DeviceGray".to_owned(), vec![]), 1, vec![vec![255; 4], vec![255, 255, 255, 128]]));
+    assert_eq!(found[1], (("DeviceN".to_owned(), names(&["Cyan", "Black", "Gold"])), 3, expected));
+    assert_eq!(soft_masks(&translucent).len(), 1);
+}
+
+/// RGB corners can't share a space with CMYK ones: the document fails instead of writing
+/// one patch's colors in the other's space.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn mesh_mixing_rgb_and_cmyk_corners_is_refused() {
+    let red: backend::color::Color = backend::color::rgb::Color::new(255, 0, 0).into();
+    let cyan: backend::color::Color = cmyk::Color::new(255, 0, 0, 0).into();
+    let patches = vec![
+        square(10.0, 10.0, 40.0, [red.clone(), red.clone(), red.clone(), red.clone()], [1.0; 4]),
+        square(50.0, 10.0, 40.0, [cyan.clone(), cyan.clone(), red.clone(), red], [1.0; 4]),
+    ];
+    let mut writer = Writer::new(cmyk_settings(), Metadata::default());
+    let mut page = writer.document_mut().start_page_with(PageSettings::new(Size::from_wh(300.0, 60.0).unwrap()));
+    let mut surface = page.surface();
+    fill_rect(&mut surface, 0.0, mesh(patches));
+    surface.finish();
+    page.finish();
+    let Err(WriteError::Serialization(error)) = writer.finish() else { panic!("a mixed RGB and CMYK mesh was written") };
+    assert!(matches!(*error, backend::error::KrillaError::MixedMeshColorSpaces(_)), "{error:?}");
+}
+
+/// A mesh in one color space is written in that space, three bytes a corner for RGB.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn rgb_mesh_is_a_device_rgb_shading() {
+    let rgb = |r, g, b| -> backend::color::Color { backend::color::rgb::Color::new(r, g, b).into() };
+    let patch = square(10.0, 10.0, 40.0, [rgb(255, 0, 0), rgb(0, 255, 0), rgb(0, 0, 255), rgb(255, 255, 255)], [1.0; 4]);
+    let bytes = page_with(|surface| fill_rect(surface, 0.0, mesh(vec![patch])));
+    let corners = vec![vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255]];
+    assert_eq!(mesh_shadings(&bytes), vec![(("DeviceRGB".to_owned(), vec![]), 3, corners)]);
 }
 
 const FOGRA39: &[u8] = include_bytes!("../../cms/profiles/craft-coated-fogra39.icc");

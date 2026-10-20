@@ -137,7 +137,7 @@
     {
       "path": "src/error.rs",
       "upstream_sha256": "656b260bd99d250535099f17f2db8e6e6135e72c74fb6dff304371db9f646be5",
-      "sha256": "cedd848f73d9414bf70fb73e310ddc03331dc5b6bd1372e2a212070550e66580"
+      "sha256": "fdc6eaecce55bfd689f5034b57e9afaa3a3a21ea0444b95c409ac41190b61a4c"
     },
     {
       "path": "src/geom.rs",
@@ -192,7 +192,7 @@
     {
       "path": "src/graphics/paint.rs",
       "upstream_sha256": "c3de4b7056f3f952009f39f0e0d0311bc9af54807660f9e46f67c177572edf45",
-      "sha256": "78db7aee7e93670b63272ba7e04b55057520cfcc314c7ccac26f35224efe9fa9"
+      "sha256": "4154beecc810f3d609d2c46ce82ec63b3421c199f01d922f28b9ed9fa4c7a1e5"
     },
     {
       "path": "src/graphics/separation.rs",
@@ -202,7 +202,7 @@
     {
       "path": "src/graphics/shading_function.rs",
       "upstream_sha256": "0e0fc8bb1a32272457ef560fa80933972d0f5ef5fb7046424c6de48093cfd978",
-      "sha256": "84eab9895c6ead8787b9a95f245cbb345ed88cfb132a35c931902ceb91a8c5c3"
+      "sha256": "2831ec0d78a755db9311a16d01afd5c9f714e4d43bdf69b42c0cb291387ca743"
     },
     {
       "path": "src/graphics/shading_pattern.rs",
@@ -312,7 +312,7 @@
     {
       "path": "src/serialize.rs",
       "upstream_sha256": "4f2c439dbd20006eea112e056b2f1a5ba98a1ede9227a45f66a6df46fb1a07e8",
-      "sha256": "9e3d5bf6bde7da3e4cd4dcb6305a9c0b74c64977987f3136b91efcc2cf5a64df"
+      "sha256": "bbff10ecb0cb48683d567021405ed2b2c83cf259d2c02d4dfaccfe683eedd5d4"
     },
     {
       "path": "src/stream.rs",

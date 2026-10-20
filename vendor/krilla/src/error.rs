@@ -29,6 +29,11 @@ pub enum KrillaError {
     ///
     /// [`GroupColorSpace::Cmyk`]: crate::GroupColorSpace::Cmyk
     MissingGroupCmykProfile,
+    /// A mesh gradient's corner colors are in color spaces that can't be written as one
+    /// (see [`MeshGradient`]), for example RGB with CMYK.
+    ///
+    /// [`MeshGradient`]: crate::paint::MeshGradient
+    MixedMeshColorSpaces(Option<Location>),
     /// An error while attempting to embed a font.
     Font(Font, String),
     /// A list of validation errors. Can only occur if you set the `validator` in
@@ -69,6 +74,10 @@ impl Display for KrillaError {
             KrillaError::Poisoned => f.write_str("document contains a failed page or surface"),
             KrillaError::MissingGroupCmykProfile => {
                 f.write_str("a CMYK group color space with no_device_cs needs a CMYK profile")
+            }
+            KrillaError::MixedMeshColorSpaces(location) => {
+                f.write_str("a mesh gradient mixes color spaces that can't be written as one")?;
+                write_location(f, *location)
             }
             KrillaError::Font(_, message) => write!(f, "failed to embed font: {message}"),
             KrillaError::Validation(errors) => {

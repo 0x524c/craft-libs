@@ -236,8 +236,8 @@ impl ShadingFunction {
 }
 
 impl GradientProperties {
-    /// Rewrite stops in different ink-based color spaces into one space (see
-    /// [`common_color_space`]); other gradients are returned unchanged.
+    /// Rewrite stops, or mesh corner colors, in different ink-based color spaces into one
+    /// space (see [`common_color_space`]); other gradients are returned unchanged.
     fn with_common_color_space(self) -> Self {
         fn convert(stops: &mut [Stop]) {
             let colors: Vec<Color> = stops.iter().map(|s| s.color.clone()).collect();
@@ -257,7 +257,22 @@ impl GradientProperties {
                 convert(&mut psg.stops);
                 GradientProperties::PostScriptGradient(psg)
             }
-            mesh @ GradientProperties::MeshGradient(_) => mesh,
+            GradientProperties::MeshGradient(mesh) => {
+                let colors: Vec<Color> = mesh
+                    .patches
+                    .iter()
+                    .flat_map(|p| p.colors.iter().cloned())
+                    .collect();
+                let Some(colors) = common_color_space(&colors) else {
+                    return GradientProperties::MeshGradient(mesh);
+                };
+                let mut mesh = Arc::unwrap_or_clone(mesh);
+                let corners = mesh.patches.iter_mut().flat_map(|p| p.colors.iter_mut());
+                for (corner, color) in corners.zip(colors) {
+                    *corner = color;
+                }
+                GradientProperties::MeshGradient(Arc::new(mesh))
+            }
         }
     }
 }
@@ -488,6 +503,18 @@ impl Cacheable for ShadingFunction {
                     .patches
                     .first()
                     .map_or_else(|| luma::Color::black().into(), |p| p.colors[0].clone());
+                // `ShadingFunction::new` has brought ink-based colors into one space; any
+                // others left can't share the stream's one color space.
+                if !self.0.use_opacities
+                    && sc.mixed_mesh_colors.is_none()
+                    && !mg
+                        .patches
+                        .iter()
+                        .flat_map(|p| p.colors.iter())
+                        .all(|c| same_color_space(&first, c))
+                {
+                    sc.mixed_mesh_colors = Some(sc.location);
+                }
                 let shading_cs = shading_color_space(sc, first, self.0.use_opacities);
                 let registered_cs = sc.register_colorspace(chunk_container, shading_cs);
                 serialize_mesh_shading(
@@ -520,7 +547,7 @@ fn shading_color_space(sc: &mut SerializeContext, color: Color, use_opacities: b
 
 /// A mesh gradient as a Type 6 (Coons patch mesh) shading: per patch an 8-bit edge flag (0, no
 /// shared edge), the twelve points as 32-bit coordinates over the mesh's bounds (`Decode`), and
-/// the four corner colours (with `use_opacities`, the opacities as gray) at 8 bits a component,
+/// the four corner colors (with `use_opacities`, the opacities as gray) at 8 bits a component,
 /// Flate-compressed. 32-bit coordinates keep the patches where they are to well under a printer
 /// dot, as Illustrator writes its meshes.
 fn serialize_mesh_shading(
@@ -570,7 +597,7 @@ fn serialize_mesh_shading(
                 data.push(byte(opacity.get()));
             } else {
                 let values = color.to_pdf_color();
-                // A colour from another space can't be written in this one: never misread bytes.
+                // Mixed spaces fail the document (`mixed_mesh_colors`); still never misread bytes.
                 for i in 0..components {
                     data.push(byte(values.get(i).copied().unwrap_or(0.0)));
                 }

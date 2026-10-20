@@ -19,7 +19,7 @@ itself omits those texts. Its examples and four CC0 ICC profiles are retained wi
 | `patches/07-device-n-images-shadings.patch` | DeviceN images and shadings | `graphics/{image,paint,shading_function}.rs` |
 | `patches/08-print-output-intent.patch` | Print output intent and PDF/X markers | `chunk_container.rs`, `interchange/metadata.rs`, `lib.rs`, `serialize.rs` |
 | `patches/09-rendition-class.patch` | Master rendition in XMP | `chunk_container.rs` |
-| `patches/10-mesh-gradients.patch` | Mesh gradients | `content.rs`, `graphics/{mask,paint,shading_function}.rs`, `surface.rs` |
+| `patches/10-mesh-gradients.patch` | Mesh gradients | `content.rs`, `error.rs`, `graphics/{mask,paint,shading_function}.rs`, `serialize.rs`, `surface.rs` |
 
 Each patch applies with `patch -p1` from this directory, in numeric order, to the pristine
 crate. `SOURCE.json` records, for every retained file, the upstream hash (`upstream_sha256`)
@@ -250,17 +250,25 @@ master rendition, so the patch writes `default`.
 
 From storytold/craft-libs#184 by @fastmikey99.
 
-Krilla 0.8.2 paints only flat colour, linear, radial and sweep gradients and tiling patterns, so
-an app writing a gradient mesh had to cut each patch into flat-colour pieces: a VectorCraft
+Krilla 0.8.2 paints only flat color, linear, radial and sweep gradients and tiling patterns, so
+an app writing a gradient mesh had to cut each patch into flat-color pieces: a VectorCraft
 document holding an Illustrator file's 22,850 mesh patches became a 197 MB PDF with stepped
-blends. The patch adds `paint::MeshGradient` (and `MeshPatch`): Coons patches with a colour and
+blends. The patch adds `paint::MeshGradient` (and `MeshPatch`): Coons patches with a color and
 an opacity at each corner, written as one PDF Type 6 shading (ISO 32000-1, 8.7.4.5.7) through
 pdf-writer's `StreamShading`, so the viewer or RIP blends them at its own resolution. Each patch
 is an 8-bit flag (no shared edge), its twelve points as 32-bit coordinates over the mesh's
-bounds (`Decode`) and its four corner colours at 8 bits a component, Flate-compressed. It goes
+bounds (`Decode`) and its four corner colors at 8 bits a component, Flate-compressed. It goes
 through the same path as the other gradients (`GradientProperties::MeshGradient`): a shading
 pattern for the fill, and for corner opacities below 1 a luminosity soft mask holding the same
-mesh in gray (`use_opacities`), as cairo and Illustrator write transparent meshes. Every patch's
-colours must share one colour space, as gradient stops must. Changed files: `src/content.rs`,
-`src/surface.rs`, `src/graphics/mask.rs`, `src/graphics/paint.rs`,
-`src/graphics/shading_function.rs`.
+mesh in gray (`use_opacities`), as cairo and Illustrator write transparent meshes.
+
+The corner colors of every patch go through `common_color_space` from patch 07, the rule
+gradient stops follow, before the shading is written: process colors alone become
+DeviceCMYK, one spot alone a Separation space, and any other mix of inks a DeviceN space with
+the process colorants in CMYK order, then the spots. A mesh mixing CMYK and a spot is a
+DeviceN mesh with one component per colorant at each corner. Colors the rule can't bring into
+one space (RGB with CMYK, `All` or `None` with anything else) would be written with another
+space's component count, so the document fails with `KrillaError::MixedMeshColorSpaces`
+instead. The soft mask is written in gray from the opacities and is unaffected.
+
+Tests: `crates/pdf/tests/print_color.rs` (`mesh_*`, `rgb_mesh_*`) and the plate-test scene S17.

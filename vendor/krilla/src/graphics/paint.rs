@@ -59,8 +59,16 @@ pub struct MeshPatch {
     /// (ISO 32000-1, 8.7.4.5.7): starting at a corner, three cubic Bézier edges' worth of points
     /// going one way round the patch, so the corners are `points[0]`, `[3]`, `[6]` and `[9]`.
     pub points: [(f32, f32); 12],
-    /// The colours at the corners `points[0]`, `[3]`, `[6]` and `[9]`. Every patch of a mesh
-    /// gradient needs its colours in the same colour space.
+    /// The colors at the corners `points[0]`, `[3]`, `[6]` and `[9]`.
+    ///
+    /// Corner colors of a mesh in different color spaces built from inks (CMYK, luma as
+    /// black, spots with a CMYK fallback, DeviceN) are written in one space: Separation for a
+    /// single spot, DeviceCMYK for process colors alone, DeviceN otherwise. Other colors need
+    /// to share one color space across the whole mesh, or [`Document::finish`] fails with
+    /// [`KrillaError::MixedMeshColorSpaces`].
+    ///
+    /// [`Document::finish`]: crate::Document::finish
+    /// [`KrillaError::MixedMeshColorSpaces`]: crate::error::KrillaError::MixedMeshColorSpaces
     pub colors: [Color; 4],
     /// The opacities at the same corners.
     pub opacities: [NormalizedF32; 4],
@@ -79,7 +87,7 @@ impl Hash for MeshPatch {
     }
 }
 
-/// A mesh gradient: Coons patches, each blending its four corner colours across its curved
+/// A mesh gradient: Coons patches, each blending its four corner colors across its curved
 /// shape, written as one PDF Type 6 shading so the viewer or RIP blends them smoothly at its
 /// own resolution. Corner opacities below 1 add a soft mask, as for the other gradients.
 /// Patches paint in order (a later one over an earlier one); a fill paints only where they lie.
