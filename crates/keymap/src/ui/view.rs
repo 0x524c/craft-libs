@@ -486,6 +486,8 @@ impl Draw<'_, '_> {
             } else if r.has_focus() || r.clicked() {
                 capture::lock_focus(ui, r.id);
             }
+        } else if r.has_focus() {
+            capture::unlock_focus(ui, r.id);
         }
         self.keyboard_toggle(ui);
     }
@@ -1140,6 +1142,8 @@ impl Draw<'_, '_> {
                 } else {
                     capture::lock_focus(ui, field_id);
                 }
+            } else if resp.has_focus() {
+                capture::unlock_focus(ui, field_id);
             }
             if ui.link(self.vis(&self.ui("Type…"))).clicked() {
                 self.state.stop_recording();

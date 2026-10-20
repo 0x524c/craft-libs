@@ -210,6 +210,41 @@ fn the_new_shortcut_field_waits_for_assign() {
     assert_eq!(h.state().bindings("file.save"), ["Cmd+S", "Cmd+E"]);
 }
 
+/// Presses Tab until the control labeled `label` has focus; false after `max` presses.
+fn tab_to(h: &mut Harness<'_, Fx>, label: &str, max: usize) -> bool {
+    for _ in 0..max {
+        press(h, Modifiers::NONE, EguiKey::Tab);
+        if h.get_by_label(label).is_focused() {
+            return true;
+        }
+    }
+    false
+}
+
+#[test]
+fn tab_leaves_the_new_shortcut_field_after_recording() {
+    let mut h = mac();
+    h.get_by_label("Save").click();
+    h.run();
+    click(&mut h, "New shortcut: None");
+    press(&mut h, Modifiers::NONE, EguiKey::F7);
+    assert!(!h.state().state.is_recording());
+    assert!(h.get_by_label("New shortcut: F7").is_focused());
+    assert!(tab_to(&mut h, "Assign", 6), "Tab moves on to Assign");
+    assert_eq!(h.state().bindings("file.save"), ["Cmd+S"], "Tab is not recorded");
+}
+
+#[test]
+fn tab_leaves_search_by_key_after_recording() {
+    let mut h = mac();
+    click(&mut h, "Search by key");
+    press(&mut h, Modifiers::COMMAND, EguiKey::S);
+    assert!(!h.state().state.is_recording());
+    assert!(h.get_by_label("Search by key").is_focused());
+    press(&mut h, Modifiers::NONE, EguiKey::Tab);
+    assert!(table_focused(&h), "Tab moves on to the table");
+}
+
 // ---- Conflicts ----
 
 #[test]

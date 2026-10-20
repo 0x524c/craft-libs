@@ -15,6 +15,13 @@ pub(crate) fn lock_focus(ui: &Ui, id: Id) {
     ui.memory_mut(|m| m.set_focus_lock_filter(id, FOCUS_LOCK));
 }
 
+/// Gives Tab, arrows and Escape back to egui's focus navigation. egui keeps a focused widget's
+/// filter until focus moves, so a widget that recorded calls this each frame it has focus and
+/// does not record.
+pub(crate) fn unlock_focus(ui: &Ui, id: Id) {
+    ui.memory_mut(|m| m.set_focus_lock_filter(id, EventFilter::default()));
+}
+
 /// Removes every key, text, IME and clipboard event from `input` and returns the chords pressed,
 /// in order. Repeats, releases and modifier-only presses give no chord. Copy, Cut and Paste
 /// count as the presses that cause them (Cmd+C, Cmd+X, Cmd+V, or Shift+Delete and Shift+Insert),
