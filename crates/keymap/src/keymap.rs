@@ -774,6 +774,13 @@ impl Keymap {
         t == by.0.effective(self.platform) && !self.twins(i, j, t) && self.scopes.relation(&bx.1, &by.1) == Some(true)
     }
 
+    /// Whether both commands of `conflict` have its chord among their defaults, so they share it by
+    /// design and [`Keymap::clashing`] leaves them out.
+    pub(crate) fn twins_in(&self, conflict: &Conflict) -> bool {
+        let (Some(i), Some(j)) = (self.find(&conflict.a.0), self.find(&conflict.b.0)) else { return false };
+        self.twins(i, j, conflict.chord)
+    }
+
     fn find(&self, command: &CommandRef) -> Option<usize> {
         self.index.get(&command.key()).copied()
     }

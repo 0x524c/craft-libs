@@ -317,7 +317,7 @@ fn build(keymap: &Keymap, options: &Options, text: &dyn Text, view: &View) -> Bu
     let catalog = keymap.catalog();
     let mut built = Built::default();
     let mut clashing: HashSet<String> = HashSet::new();
-    for c in keymap.conflicts() {
+    for c in keymap.conflicts().into_iter().filter(|c| !keymap.twins_in(c)) {
         match c.kind {
             ConflictKind::Clash => {
                 built.clashes += 1;
@@ -597,6 +597,30 @@ pub(crate) mod tests {
         let none = BTreeSet::new();
         let built = build(&km, &o, &English, &view("", &AreaId::All, Filter::All, &none));
         assert_eq!((built.clashes, built.matches), (1, 8));
+        Ok(())
+    }
+
+    #[test]
+    fn commands_sharing_a_default_key_are_no_conflict() -> Result<(), crate::AssignError> {
+        let menu = Bindable::new("app.characterPanel", "Character", Scope::app()).with_path(vec!["Window".into(), "Character".into()]);
+        let catalog = vec![
+            menu.with_default(key("Cmd+T")),
+            Bindable::new("panel.character", "Character Panel", Scope::app()).with_default(key("Cmd+T")),
+            Bindable::new("file.save", "Save", Scope::app()).with_default(key("Cmd+S")),
+        ];
+        let mut km = Keymap::new(catalog, Scopes::new(), Platform::Mac);
+        let o = Options::default();
+        let none = BTreeSet::new();
+        let built = build(&km, &o, &English, &view("", &AreaId::All, Filter::All, &none));
+        assert_eq!((built.clashes, built.shadows), (0, 0));
+        assert!(lines(&km, &o, &English, "", AreaId::All, Filter::Conflicts).is_empty());
+
+        km.assign(&"file.save".into(), key("Cmd+T"), crate::Policy::Keep)?;
+        let built = build(&km, &o, &English, &view("", &AreaId::All, Filter::All, &none));
+        assert_eq!(built.clashes, 2, "Save clashes with both twins");
+        let flagged: Vec<String> =
+            built.lines.iter().filter_map(|l| if let Line::Row(r) = l { r.conflict.then(|| r.key.clone()) } else { None }).collect();
+        assert_eq!(flagged, ["app.characterPanel", "panel.character", "file.save"]);
         Ok(())
     }
 
