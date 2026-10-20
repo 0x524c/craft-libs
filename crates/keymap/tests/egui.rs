@@ -219,6 +219,18 @@ fn a_web_paste_carries_its_text_and_takes_its_event() {
 }
 
 #[test]
+fn a_held_web_paste_runs_once_when_repeats_are_off() {
+    let km = dispatch_keymap();
+    let mut d = Dispatcher::new().with_clipboard_events(true);
+    let repeat = Event::Key { key: EguiKey::V, physical_key: Some(EguiKey::V), pressed: true, repeat: true, modifiers: CTRL };
+    let paste = || Event::Paste("text".into());
+    let events = vec![press(EguiKey::V, CTRL), paste(), repeat.clone(), paste()];
+    let (ran, left) = run(&mut d, &km, &Active::NONE, frame(1.0, CTRL, events));
+    assert_eq!(ran, ["edit.paste"]);
+    assert_eq!(left, [repeat, paste()], "the repeat and its event stay in egui's input");
+}
+
+#[test]
 fn declined_hits_leave_their_events_in_order() {
     let km = dispatch_keymap();
     let mut d = Dispatcher::new();

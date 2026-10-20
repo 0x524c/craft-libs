@@ -306,6 +306,12 @@ impl Dispatcher {
                         }
                     }
                 }
+                // A repeat that does not run leaves its clipboard event in place with it.
+                Event::Key { pressed: true, repeat: true, .. } => {
+                    if let Some((j, _)) = causes[i] {
+                        caused_taken[j] = Some(false);
+                    }
+                }
                 Event::Text(_) if drop_text => {
                     drop_text = false;
                     continue;
