@@ -592,3 +592,20 @@ fn hidden_panels_leave_their_split_and_resizing_names_the_layout_path() {
     let Some(Node::Split { size: SplitSize::FixedFirst(200.0), second, .. }) = &d.layout.root else { panic!("{:?}", d.layout) };
     assert!(matches!(**second, Node::Split { size, .. } if size != SplitSize::Ratio(0.5)));
 }
+
+#[test]
+fn a_hidden_floating_window_does_not_cover_dock_targets() {
+    // Window 5 covers the column's seam at x 150..240 until it is hidden.
+    let mut layout = workspace();
+    layout.floating = vec![Floating::single(vec![5], 0, [150.0, 250.0, 200.0, 150.0]), Floating::single(vec![8], 0, [560.0, 300.0, 200.0, 200.0])];
+    let mut d = Driver::new(layout, Profile::Dock);
+    d.hide = Hide::Keep;
+    d.content.keep = vec![2, 3, 4, 8];
+    d.step(vec![]);
+    d.step(vec![]);
+    d.drag(d.title(8).center(), pos2(200.0, 309.0));
+    let Some(Node::Split { first, .. }) = &d.layout.root else { panic!("{:?}", d.layout.root) };
+    let Node::Dock { columns, .. } = &**first else { panic!("{first:?}") };
+    let groups: Vec<Vec<u32>> = columns[0].groups.iter().map(|g| g.panels.clone()).collect();
+    assert_eq!(groups, vec![vec![2, 3], vec![8], vec![4]]);
+}

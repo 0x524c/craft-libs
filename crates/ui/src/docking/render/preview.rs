@@ -66,7 +66,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             let Some(pointer) = pointer.filter(|p| !self.blockers.iter().any(|r| r.contains(*p))) else { return };
             match drag.gesture {
-                GroupGesture::Window => self.drop_window(ctx, &drag, pointer, float_only),
+                GroupGesture::Window => self.drop_window(&drag, pointer, float_only),
                 GroupGesture::Group | GroupGesture::Column => self.drop_group(ctx, &drag, pointer, float_only),
             }
         } else if let Some(pointer) = pointer.filter(|p| !self.blockers.iter().any(|r| r.contains(*p))) {
@@ -113,7 +113,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if pointer.distance(drag.origin) < 2.0 {
             return;
         }
-        if !float_only && let Some((action, _)) = self.dock_group_proposal(ctx, drag, pointer) {
+        if !float_only && let Some((action, _)) = self.dock_group_proposal(drag, pointer) {
             self.output.actions.extend(action);
             return;
         }
@@ -162,7 +162,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if float_only {
             return;
         }
-        if let Some((action, line)) = self.dock_group_proposal(ctx, drag, pointer) {
+        if let Some((action, line)) = self.dock_group_proposal(drag, pointer) {
             if action.is_some() {
                 self.paint_dock_line(ctx, line);
             }
@@ -214,7 +214,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             return;
         }
-        let dock = if float_only || gone { None } else { self.dock_tab_proposal(ctx, &drag.panel, pointer) };
+        let dock = if float_only || gone { None } else { self.dock_tab_proposal(&drag.panel, pointer) };
         if let Some((action, line)) = dock {
             if released {
                 cancel_drag::<P>(ctx, self.id);

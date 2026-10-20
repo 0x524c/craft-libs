@@ -274,7 +274,9 @@ grips, resize edges and dividers. It is always compiled, so an app can return it
 `DockArea::hit_id(id, &hit)` is the egui widget id of a control, for tests and automation that
 focus it or read its response. `DockArea::floating_layer(id, &window)` is a floating window's
 egui layer: compare its place in `memory.layer_ids()` with another layer to tell whether the
-window covers it, and read its rect with `memory.area_rect(layer.id)`.
+window covers it, and read its rect with `memory.area_rect(layer.id)`. A window the area does not
+draw (its panels hidden, or a frame maximized) keeps its last rect there, so check
+`memory.areas().is_visible(&layer)` first.
 
 The `testing` feature adds `docking::testing::DockDriver`. It runs a `DockArea` in a headless
 egui context with real pointer and key events, and applies the actions each frame emits.

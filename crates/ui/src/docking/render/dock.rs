@@ -412,15 +412,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         });
     }
 
-    /// Whether a floating window (other than the one following the pointer) or a host overlay
-    /// covers `pointer`. Covered dock targets take nothing.
-    fn dock_covered(&self, ctx: &Context, pointer: Pos2, moving: Option<&P>) -> bool {
+    /// Whether a floating window drawn this frame (other than the one following the pointer)
+    /// or a host overlay covers `pointer`. Covered dock targets take nothing.
+    fn dock_covered(&self, pointer: Pos2, moving: Option<&P>) -> bool {
         self.blockers.iter().any(|r| r.contains(pointer))
             || self.iconic.covers(pointer)
-            || self.layout.floating.iter().any(|window| {
-                let Some(first) = window.panels().next() else { return false };
-                !moving.is_some_and(|p| window.contains(p))
-                    && ctx.memory(|m| m.area_rect(self.id.with(("floating", first)))).is_some_and(|r| r.contains(pointer))
+            || self.frame.stacks.iter().any(|window| {
+                window.window.contains(pointer) && !moving.is_some_and(|p| window.groups.iter().any(|(panels, ..)| panels.contains(p)))
             })
     }
 
@@ -451,9 +449,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 
     /// The dock target a whole group or column drag would take at `pointer`, with the action
     /// and its line. A target that leaves the layout unchanged is a no-op: `None` action.
-    pub(super) fn dock_group_proposal(&self, ctx: &Context, drag: &GroupDrag<P>, pointer: Pos2) -> Option<(Option<Action<P>>, Rect)> {
+    pub(super) fn dock_group_proposal(&self, drag: &GroupDrag<P>, pointer: Pos2) -> Option<(Option<Action<P>>, Rect)> {
         let moving = (drag.gesture == GroupGesture::Window).then_some(&drag.panel);
-        if self.dock_covered(ctx, pointer, moving) {
+        if self.dock_covered(pointer, moving) {
             return None;
         }
         let candidates = self.dock_candidates();
@@ -465,8 +463,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// The dock target a single tab drag would take: a new group, column or dock of that panel.
     /// A panel alone in its group takes the group's state to a new dock; one that shares its
     /// group leaves the other tabs behind (P6).
-    pub(super) fn dock_tab_proposal(&self, ctx: &Context, panel: &P, pointer: Pos2) -> Option<(Option<Action<P>>, Rect)> {
-        if self.dock_covered(ctx, pointer, None) {
+    pub(super) fn dock_tab_proposal(&self, panel: &P, pointer: Pos2) -> Option<(Option<Action<P>>, Rect)> {
+        if self.dock_covered(pointer, None) {
             return None;
         }
         let candidates = self.dock_candidates();

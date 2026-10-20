@@ -310,8 +310,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// Release of a title bar drag. The window already sits where it was dragged; a dock or
     /// group target docks or merges every group in it, else hosts get the release in
     /// `group_drop`.
-    pub(super) fn drop_window(&mut self, ctx: &Context, drag: &GroupDrag<P>, pointer: Pos2, float_only: bool) {
-        if !float_only && let Some((action, _)) = self.dock_group_proposal(ctx, drag, pointer) {
+    pub(super) fn drop_window(&mut self, drag: &GroupDrag<P>, pointer: Pos2, float_only: bool) {
+        if !float_only && let Some((action, _)) = self.dock_group_proposal(drag, pointer) {
             self.output.actions.extend(action);
             return;
         }

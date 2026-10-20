@@ -112,7 +112,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'_, P> {
 
     /// The egui layer of a floating window in the area `id`; `None` for an empty window. Of two
     /// layers, the later in `ctx.memory(|m| m.layer_ids())` is drawn on top, and
-    /// `ctx.memory(|m| m.area_rect(layer.id))` is the window's rect.
+    /// `ctx.memory(|m| m.area_rect(layer.id))` is the window's rect. A window the area does not
+    /// draw (all its panels hidden, or a frame maximized) keeps its last rect there: check
+    /// `ctx.memory(|m| m.areas().is_visible(&layer))` before treating it as covering anything.
     pub fn floating_layer(id: Id, window: &Floating<P>) -> Option<LayerId> {
         window.panels().next().map(|first| LayerId::new(Order::Middle, id.with(("floating", first))))
     }
