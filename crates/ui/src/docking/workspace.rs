@@ -114,14 +114,15 @@ impl<P: Clone + Eq + Hash> Workspace<P> {
 
     /// Show or hide one panel. Showing restores its recorded location, following the chain of
     /// hidden anchors when its own anchor is hidden too; otherwise it opens beside `fallback`.
-    /// A shown panel becomes the active tab of its group.
-    pub fn set_visible(&mut self, panel: P, visible: bool, fallback: Option<P>) -> Result<(), DockError> {
+    /// A shown panel becomes the active tab of its group. Hiding follows `permissions` and
+    /// [`Self::locked`], as [`Self::apply`] does, so a protected canvas stays shown.
+    pub fn set_visible(&mut self, panel: P, visible: bool, fallback: Option<P>, permissions: impl Fn(&P) -> Permissions) -> Result<(), DockError> {
         self.validate()?;
         if !visible {
             if !self.layout.contains(&panel) {
                 return Ok(());
             }
-            return self.apply(Action::Close { panel }, |_| Permissions::default()).map(drop);
+            return self.apply(Action::Close { panel }, permissions).map(drop);
         }
         if self.layout.contains(&panel) {
             return self.apply(Action::Activate { panel }, |_| Permissions::default()).map(drop);

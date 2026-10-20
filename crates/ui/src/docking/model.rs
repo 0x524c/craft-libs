@@ -762,7 +762,9 @@ impl<P: Clone + Eq + Hash> Layout<P> {
         self.validate()?;
         match &action {
             Action::Move { panel, anchor, placement } | Action::OpenAt { panel, anchor, placement } => {
-                if !permissions(panel).movable {
+                // Opening an absent panel moves nothing, so it works in a locked workspace too.
+                let opens = matches!(action, Action::OpenAt { .. }) && !self.contains(panel);
+                if !opens && !permissions(panel).movable {
                     return Err(DockError::NotAllowed);
                 }
                 if !placement_allowed(placement, permissions(anchor)) {

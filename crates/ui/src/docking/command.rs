@@ -517,12 +517,12 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
         };
         if let Some(panel) = show.filter(|p| !workspace.layout.contains(p)) {
             if self.edge().is_none() {
-                workspace.set_visible(panel.clone(), true, None)?;
+                workspace.set_visible(panel.clone(), true, None, &permissions)?;
                 return Ok(Vec::new());
             }
             // Shown, then moved to the edge, all or nothing.
             let mut shown = workspace.clone();
-            shown.set_visible(panel.clone(), true, None)?;
+            shown.set_visible(panel.clone(), true, None, &permissions)?;
             let closed = shown.apply_all(self.to_actions(&shown, right_to_left, space)?, permissions)?;
             *workspace = shown;
             return Ok(closed);

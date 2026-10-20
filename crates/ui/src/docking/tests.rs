@@ -314,7 +314,7 @@ fn long_action_sequence_never_loses_or_duplicates_a_panel() {
             {
                 let fallback = workspace.layout.panels().first().map(|p| **p);
                 let before = workspace.clone();
-                if workspace.set_visible(hidden, true, fallback).is_err() {
+                if workspace.set_visible(hidden, true, fallback, |_| Permissions::default()).is_err() {
                     assert_eq!(workspace, before);
                 }
             }

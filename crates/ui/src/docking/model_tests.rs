@@ -170,8 +170,8 @@ fn close_group_and_close_window_record_a_restorable_location_per_member() {
     assert_eq!(workspace.apply(Action::CloseGroup { panel: 3 }, allow).unwrap(), [2, 3]);
     assert_eq!(workspace.hidden.iter().map(|(p, _)| *p).collect::<Vec<_>>(), [2, 3]);
     assert_eq!(panels_of(&dock(&workspace.layout, Side::End)[0].groups), [vec![4]]);
-    workspace.set_visible(2, true, None).unwrap();
-    workspace.set_visible(3, true, None).unwrap();
+    workspace.set_visible(2, true, None, |_| Permissions::default()).unwrap();
+    workspace.set_visible(3, true, None, |_| Permissions::default()).unwrap();
     assert_eq!(panels_of(&dock(&workspace.layout, Side::End)[0].groups), [vec![2, 3], vec![4]]);
 
     assert_eq!(workspace.layout.closed_by(&Action::CloseWindow { panel: 7 }).unwrap(), [6, 7, 8]);
@@ -179,7 +179,7 @@ fn close_group_and_close_window_record_a_restorable_location_per_member() {
     assert!(workspace.layout.floating.is_empty());
     assert_eq!(workspace.hidden.len(), 3);
     for panel in [6, 7, 8] {
-        workspace.set_visible(panel, true, None).unwrap();
+        workspace.set_visible(panel, true, None, |_| Permissions::default()).unwrap();
     }
     assert_eq!(workspace.layout.floating.len(), 1);
     assert_eq!(panels_of(&workspace.layout.floating[0].groups), [vec![6, 7], vec![8]]);
@@ -187,7 +187,7 @@ fn close_group_and_close_window_record_a_restorable_location_per_member() {
 
     workspace.apply(Action::CloseOthers { panel: 12 }, allow).unwrap();
     assert_eq!(group_state(&workspace.layout, 12).0, [12]);
-    workspace.set_visible(11, true, None).unwrap();
+    workspace.set_visible(11, true, None, |_| Permissions::default()).unwrap();
     assert_eq!(group_state(&workspace.layout, 12).0, [11, 12]);
     assert!(workspace.hidden.is_empty());
     assert_eq!(sorted(&workspace.layout), ALL);
@@ -299,7 +299,7 @@ fn locked_workspace_rejects_structure_but_allows_activate_open_minimize_and_resi
         assert_eq!(workspace.apply(action.clone(), allow), Err(DockError::NotAllowed), "{action:?}");
         assert_eq!(workspace, before);
     }
-    assert_eq!(workspace.set_visible(4, false, None), Err(DockError::NotAllowed));
+    assert_eq!(workspace.set_visible(4, false, None, |_| Permissions::default()), Err(DockError::NotAllowed));
     let allowed = [
         Action::Activate { panel: 2 },
         Action::Open { panel: 12, anchor: Some(11) },
@@ -317,6 +317,20 @@ fn locked_workspace_rejects_structure_but_allows_activate_open_minimize_and_resi
     assert_eq!(workspace.layout.panel_state(&5), PanelState::Open);
     assert_eq!(workspace.layout.panel_state(&2), PanelState::Front);
     assert_eq!(workspace.layout.panel_state(&3), PanelState::Open);
+    // Opening at a chosen place works too; moving a shown panel there does not.
+    workspace.apply(Action::OpenAt { panel: 13, anchor: 11, placement: Placement::Split(Zone::Bottom) }, allow).unwrap();
+    assert!(workspace.layout.contains(&13));
+    assert_eq!(workspace.apply(Action::OpenAt { panel: 2, anchor: 11, placement: Placement::Split(Zone::Bottom) }, allow), Err(DockError::NotAllowed));
+}
+
+#[test]
+fn hiding_a_panel_that_may_not_close_is_refused() {
+    let mut workspace = Workspace::new(docked());
+    let canvas = |p: &u32| if *p == 1 { Permissions { accepts_splits: true, ..Permissions::PROTECTED } } else { Permissions::default() };
+    assert_eq!(workspace.set_visible(1, false, None, canvas), Err(DockError::NotAllowed));
+    assert!(workspace.layout.contains(&1) && workspace.hidden.is_empty());
+    workspace.set_visible(2, false, None, canvas).unwrap();
+    assert!(!workspace.layout.contains(&2));
 }
 
 #[test]
@@ -334,7 +348,7 @@ fn reconcile_drops_unknown_panels_and_places_missing_registered_ones() {
     // Unregistered panels wait in `hidden` and come back once registered.
     assert_eq!(workspace.hidden.iter().map(|(p, _)| *p).collect::<Vec<_>>(), [98, 99]);
     assert_eq!(sorted(&workspace.layout), ALL);
-    workspace.set_visible(99, true, None).unwrap();
+    workspace.set_visible(99, true, None, |_| Permissions::default()).unwrap();
     assert_eq!(group_state(&workspace.layout, 2).0, [2, 3, 99]);
     assert_eq!(dock(&workspace.layout, Side::End).len(), 2);
     assert_eq!(group_state(&workspace.layout, 11).0, [11, 12]);
