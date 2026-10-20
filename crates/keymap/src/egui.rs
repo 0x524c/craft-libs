@@ -173,7 +173,8 @@ pub struct Hit {
     /// the shifted key for a Shift binding (`:` for `Shift+;`), Shift held to type a symbol, or
     /// `+` and `=` standing for each other.
     pub exact: bool,
-    /// The text of the Paste event that ran the command ([`Dispatcher::with_clipboard_events`]).
+    /// The text of the Paste event that ran the command, or on the web the Paste event that came
+    /// with the press that ran it ([`Dispatcher::with_clipboard_events`]).
     pub pasted: Option<String>,
 }
 
@@ -240,7 +241,8 @@ impl Dispatcher {
     /// Cmd+X, Cmd+V; Shift+Delete and Shift+Insert for Cut and Paste with Shift alone) outside text
     /// fields. Off by default: the events stay in egui's input for the app's own handlers. With it
     /// on, an event that runs a command is removed, and a Paste event's text moves to
-    /// [`Hit::pasted`]. An app that asks egui for a paste (`ViewportCommand::RequestPaste`) to run
+    /// [`Hit::pasted`]. On the web, the key press runs the command and its clipboard event goes
+    /// with it the same way; when the press runs nothing, or the hit is declined, both stay. An app that asks egui for a paste (`ViewportCommand::RequestPaste`) to run
     /// its paste command gets a Paste event back, which with this on runs that command again.
     pub fn with_clipboard_events(mut self, on: bool) -> Dispatcher {
         self.clipboard = on;
@@ -266,11 +268,12 @@ impl Dispatcher {
         let mut kept = Vec::with_capacity(input.events.len());
         // The Text event egui sends after a key press belongs to that press.
         let mut drop_text = false;
-        // The web build sends both a clipboard key press and the clipboard event it causes.
-        let mut clipboard_press = None;
         let events = std::mem::take(&mut input.events);
         let typed = if active.typing { typed_text(&events) } else { Vec::new() };
-        let causes_event = if self.clipboard { Vec::new() } else { clipboard_event_follows(&events, platform) };
+        // The web build sends both a clipboard key press and the clipboard event it causes. The
+        // press decides: its event goes with it when it runs a command and stays otherwise.
+        let causes = clipboard_event_follows(&events, platform);
+        let mut caused_taken: Vec<Option<bool>> = vec![None; events.len()];
         for (i, event) in events.into_iter().enumerate() {
             match &event {
                 Event::Key { key, pressed: true, repeat, modifiers, .. } if !*repeat || self.repeat => {
@@ -281,16 +284,22 @@ impl Dispatcher {
                         let keep = if active.typing {
                             typed.get(i) == Some(&true) || clip.is_some() || may_be_alt_gr(key, held, platform)
                         } else {
-                            causes_event.get(i) == Some(&true)
+                            !self.clipboard && causes[i].is_some()
                         };
                         if keep {
                             kept.push(event);
                             continue;
                         }
-                        if clip.is_some() {
-                            clipboard_press = clip;
+                        let caused = causes[i].clone();
+                        let hit = self.press(key, held, *repeat, now, keymap, active).map(|mut hit| {
+                            hit.pasted = caused.as_ref().and_then(|(_, text)| text.clone());
+                            hit
+                        });
+                        let hit = hit.filter(&mut accept);
+                        if let Some((j, _)) = caused {
+                            caused_taken[j] = Some(hit.is_some());
                         }
-                        if let Some(hit) = self.press(key, held, *repeat, now, keymap, active).filter(&mut accept) {
+                        if let Some(hit) = hit {
                             hits.push(hit);
                             drop_text = !(held.cmd || held.ctrl);
                             continue;
@@ -303,9 +312,11 @@ impl Dispatcher {
                 }
                 // A focused text field copies and pastes on these events itself.
                 Event::Copy | Event::Cut | Event::Paste(_) if self.clipboard && !active.typing => {
-                    let (key, held, clip) = clipboard_chord(&event, frame_mods);
-                    if clipboard_press == Some(clip) {
-                        clipboard_press = None;
+                    let (key, held) = clipboard_chord(&event, frame_mods);
+                    if let Some(taken) = caused_taken[i] {
+                        if taken {
+                            continue;
+                        }
                     } else if let Some(mut hit) = self.press(key, held, false, now, keymap, active) {
                         if let Event::Paste(text) = &event {
                             hit.pasted = Some(text.clone());
@@ -349,19 +360,19 @@ enum Clip {
     Paste,
 }
 
-/// For each event, whether it is a clipboard key press whose clipboard event comes later in the
-/// frame, as the web build sends them.
-fn clipboard_event_follows(events: &[Event], platform: Platform) -> Vec<bool> {
-    let mut out = vec![false; events.len()];
-    let mut ahead = [false; 3];
-    for (event, follows) in events.iter().zip(out.iter_mut()).rev() {
+/// For each clipboard key press whose clipboard event comes later in the frame, as the web build
+/// sends them: the index of that event, and the text of a Paste event.
+fn clipboard_event_follows(events: &[Event], platform: Platform) -> Vec<Option<(usize, Option<String>)>> {
+    let mut out = vec![None; events.len()];
+    let mut ahead: [Option<usize>; 3] = [None; 3];
+    for (i, event) in events.iter().enumerate().rev() {
         if let Some(seen) = event_clip(event).and_then(|c| ahead.get_mut(c as usize)) {
-            *seen = true;
+            *seen = Some(i);
         } else if let Event::Key { key, pressed: true, modifiers, .. } = event {
             let clip = Key::from_egui(*key).and_then(|k| clipboard_kind(k, Mods::from_egui(modifiers, platform)));
-            if let Some(seen) = clip.and_then(|c| ahead.get_mut(c as usize)) {
-                *follows = *seen;
-                *seen = false;
+            if let Some(j) = clip.and_then(|c| ahead.get_mut(c as usize)).and_then(Option::take) {
+                let text = if let Some(Event::Paste(text)) = events.get(j) { Some(text.clone()) } else { None };
+                out[i] = Some((j, text));
             }
         }
     }
@@ -434,16 +445,16 @@ fn clipboard_kind(key: Key, held: Mods) -> Option<Clip> {
     }
 }
 
-/// The press a clipboard event stands for, with the modifiers held, and the event's kind. Off
-/// macOS egui-winit also sends Cut for Shift+Delete and Paste for Shift+Insert.
-fn clipboard_chord(event: &Event, held: Mods) -> (Key, Mods, Clip) {
+/// The press a clipboard event stands for, with the modifiers held. Off macOS egui-winit also
+/// sends Cut for Shift+Delete and Paste for Shift+Insert.
+fn clipboard_chord(event: &Event, held: Mods) -> (Key, Mods) {
     let with_cmd = Mods { cmd: true, ..held };
     let shift_only = held.shift && !held.cmd;
     match event {
-        Event::Cut if shift_only => (Key::Delete, held, Clip::Cut),
-        Event::Cut => (Key::X, with_cmd, Clip::Cut),
-        Event::Paste(_) if shift_only => (Key::Insert, held, Clip::Paste),
-        Event::Paste(_) => (Key::V, with_cmd, Clip::Paste),
-        _ => (Key::C, with_cmd, Clip::Copy),
+        Event::Cut if shift_only => (Key::Delete, held),
+        Event::Cut => (Key::X, with_cmd),
+        Event::Paste(_) if shift_only => (Key::Insert, held),
+        Event::Paste(_) => (Key::V, with_cmd),
+        _ => (Key::C, with_cmd),
     }
 }

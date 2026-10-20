@@ -194,6 +194,31 @@ fn clipboard_events_run_their_chords_outside_text_fields_when_turned_on() {
 }
 
 #[test]
+fn a_web_paste_carries_its_text_and_takes_its_event() {
+    let km = dispatch_keymap();
+    let mut d = Dispatcher::new().with_clipboard_events(true);
+    // The web build sends the Cmd+V press and then the Paste event with the clipboard text.
+    let events = vec![press(EguiKey::V, CTRL), Event::Paste("text".into()), press(EguiKey::C, CTRL), Event::Copy];
+    let mut input = frame(1.0, CTRL, events.clone());
+    let mut seen = Vec::new();
+    let hits = d.dispatch_filtered(&mut input, &km, &Active::NONE, |hit| {
+        seen.push(hit.pasted.clone());
+        true
+    });
+    let ran: Vec<_> = hits.iter().map(|h| (h.command.id.as_str(), h.pasted.as_deref())).collect();
+    assert_eq!(ran, [("edit.paste", Some("text")), ("edit.copy", None)]);
+    assert_eq!(seen, [Some("text".to_string()), None], "the filter sees the pasted text");
+    assert!(input.events.is_empty(), "{:?}", input.events);
+
+    // A declined press leaves the press and its event in place, and the event does not run again.
+    let mut input = frame(2.0, CTRL, events.clone());
+    let hits = d.dispatch_filtered(&mut input, &km, &Active::NONE, |hit| hit.command.id != "edit.paste");
+    let ran: Vec<_> = hits.iter().map(|h| h.command.id.as_str()).collect();
+    assert_eq!(ran, ["edit.copy"]);
+    assert_eq!(input.events, events[..2]);
+}
+
+#[test]
 fn declined_hits_leave_their_events_in_order() {
     let km = dispatch_keymap();
     let mut d = Dispatcher::new();

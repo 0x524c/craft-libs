@@ -228,6 +228,8 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
   egui's Copy, Cut and Paste events stay with the app by default. On the desktop, egui-winit
   sends them in place of the Cmd+C, Cmd+X and Cmd+V presses (Ctrl off macOS), so a binding on
   those chords runs only with `with_clipboard_events(true)`. Then the events count as their
-  chords outside text fields, and a Paste event's text moves to `Hit::pasted`. An app whose
+  chords outside text fields, and a Paste event's text moves to `Hit::pasted`. The web build
+  sends the key press and then the event; the press runs the command and takes the event, with
+  its text, along. An app whose
   paste command asks egui for a paste gets a Paste event back, which runs that command again;
   such an app keeps the default.
