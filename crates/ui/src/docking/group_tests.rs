@@ -629,3 +629,40 @@ fn tab_focus_follows_only_the_users_input() {
     d.step(vec![]);
     assert_eq!(d.ctx.memory(|m| m.focused()), None);
 }
+
+#[test]
+fn frame_tabs_follow_the_wheel_and_close_on_a_middle_click() {
+    let second = |d: &Driver| match &d.layout.root {
+        Some(Node::Split { second, .. }) => (**second).clone(),
+        _ => panic!("{:?}", d.layout.root),
+    };
+    let wheel = |unit, y| Event::MouseWheel { unit, delta: vec2(0.0, y), phase: egui::TouchPhase::Move, modifiers: Modifiers::NONE };
+    let middle = |pos, pressed| Event::PointerButton { pos, button: PointerButton::Middle, pressed, modifiers: Modifiers::NONE };
+
+    // Off by default in the Dock profile.
+    let mut d = Driver::new(frames());
+    let over = d.tab(2).center();
+    d.step(vec![Event::PointerMoved(over), wheel(egui::MouseWheelUnit::Line, 1.0)]);
+    d.step(vec![middle(over, true)]);
+    d.step(vec![middle(over, false)]);
+    assert_eq!(second(&d), tabs(&[2, 3], 1));
+
+    let mut d = Driver::new(frames());
+    d.tweak = |style| style.profile = Profile::Frame;
+    d.step(vec![]);
+    let over = d.tab(2).center();
+    d.step(vec![Event::PointerMoved(over), wheel(egui::MouseWheelUnit::Line, 1.0)]);
+    assert_eq!(second(&d), tabs(&[2, 3], 0), "wheel up selects the previous tab");
+    d.step(vec![wheel(egui::MouseWheelUnit::Line, 1.0)]);
+    assert_eq!(second(&d), tabs(&[2, 3], 0), "and stops at the first");
+    d.step(vec![wheel(egui::MouseWheelUnit::Point, -30.0)]);
+    assert_eq!(second(&d), tabs(&[2, 3], 0), "trackpad scrolling adds up to a notch");
+    let out = d.step(vec![wheel(egui::MouseWheelUnit::Point, -30.0)]);
+    assert_eq!(second(&d), tabs(&[2, 3], 1));
+    assert_eq!(out.focused, Some(3));
+
+    d.step(vec![middle(over, true)]);
+    let out = d.step(vec![middle(over, false)]);
+    assert_eq!(out.actions, vec![Action::Close { panel: 2 }]);
+    assert_eq!(second(&d), tabs(&[3], 0));
+}

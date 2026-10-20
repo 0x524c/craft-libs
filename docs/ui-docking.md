@@ -176,6 +176,9 @@ A flyout fits its content the same way, without the title bar.
 - Drop previews show the destination: an outline for tabs, a line for a new group, column or dock,
   a filled half for a split. Escape or losing window focus cancels a drag.
 - Double-click a tab or drag bar to minimize a group to its strip.
+- In the Frame profile, the mouse wheel over a tab strip selects the next or previous tab, and a
+  middle click on a closable panel's tab closes it. `DockStyle::wheel_selects_tabs` and
+  `middle_click_closes_tabs` turn either on or off in any profile.
 - A column's »/« button collapses it to icons, one icon per panel with a separator between groups.
   Widen an iconic column to show panel names. Click an icon to open its group as a flyout on the
   canvas side. Drag an icon to move its panel, or the grip above an icon group to move the group.

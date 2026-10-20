@@ -99,6 +99,12 @@ pub struct DockStyle {
     pub close_menu_items: bool,
     /// Show × on the title bar of a floating window whose panels are all closable.
     pub close_button: bool,
+    /// The mouse wheel over a tab strip selects the next or previous tab, one per notch.
+    /// `None`: on in [`Profile::Frame`], off in [`Profile::Dock`].
+    pub wheel_selects_tabs: Option<bool>,
+    /// A middle click on a tab closes its panel when the panel is closable. `None`: on in
+    /// [`Profile::Frame`], off in [`Profile::Dock`].
+    pub middle_click_closes_tabs: Option<bool>,
 }
 
 /// Which arrangement a [`DockStyle`] renders and labels.
@@ -167,7 +173,17 @@ impl DockStyle {
             new_window_label: "Move Panel to New Window".into(),
             close_menu_items: true,
             close_button: true,
+            wheel_selects_tabs: None,
+            middle_click_closes_tabs: None,
         }
+    }
+
+    pub(super) fn wheel_selects_tabs(&self) -> bool {
+        self.wheel_selects_tabs.unwrap_or(self.profile == Profile::Frame)
+    }
+
+    pub(super) fn middle_click_closes_tabs(&self) -> bool {
+        self.middle_click_closes_tabs.unwrap_or(self.profile == Profile::Frame)
     }
 
     pub(super) fn valid(&self) -> bool {

@@ -32,6 +32,9 @@ const BORDER_BAND: f32 = 4.0;
 /// Width of the "…" button that lists the panels a strip has no room for.
 const OVERFLOW_WIDTH: f32 = 22.0;
 
+/// Points of smooth (trackpad) scrolling that make one wheel notch.
+const WHEEL_NOTCH: f32 = 40.0;
+
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     pub(super) fn group(&mut self, ui: &mut Ui, panels: &[P], active: usize, minimized: bool, rect: Rect, kind: GroupKind) {
         let Some(selected) = panels.get(active) else { return };
@@ -127,6 +130,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         // Registered last, so the band wins over the tabs below it.
         let border = mirror(Rect::from_min_max(strip.min, pos2(strip.right() - header_width, (strip.top() + BORDER_BAND).min(strip.bottom()))));
         self.group_handle(ui, "drag-border", border, &owner, movable);
+        if self.style.wheel_selects_tabs() {
+            let tabs_area = mirror(Rect::from_min_max(strip.min, pos2(strip.right() - header_width, strip.bottom())));
+            self.wheel_tabs(ui, tabs_area, panels, active);
+        }
         // Logical order, hidden tabs included without a hit area, for no-op detection.
         let tabs =
             panels.iter().map(|panel| (panel.clone(), shown.iter().find(|(p, _)| p == panel).map_or(Rect::NOTHING, |(_, rect)| *rect))).collect();
@@ -198,6 +205,42 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             None
         };
         egui::Popup::menu(&response).open_memory(command).show(|ui| self.group_menu(ui, owner, owner.selected));
+    }
+
+    /// The wheel over a group's strip: down selects the next tab, up the previous, one tab per
+    /// notch, stopping at the ends. Trackpad scrolling adds up to a notch.
+    fn wheel_tabs(&mut self, ui: &Ui, strip: Rect, panels: &[P], active: usize) {
+        let key = self.id.with(("tab-wheel", panels.first()));
+        if !ui.rect_contains_pointer(strip) {
+            ui.ctx().data_mut(|d| d.remove::<f32>(key));
+            return;
+        }
+        let notches: f32 = ui.input(|i| {
+            i.events
+                .iter()
+                .map(|event| match event {
+                    egui::Event::MouseWheel { unit, delta, modifiers, .. } if !modifiers.command && !modifiers.ctrl => match unit {
+                        egui::MouseWheelUnit::Point => delta.y / WHEEL_NOTCH,
+                        egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => delta.y,
+                    },
+                    _ => 0.0,
+                })
+                .sum()
+        });
+        if notches == 0.0 || !notches.is_finite() {
+            return;
+        }
+        let total = ui.ctx().data(|d| d.get_temp::<f32>(key)).unwrap_or(0.0) + notches;
+        let steps = total.trunc();
+        ui.ctx().data_mut(|d| d.insert_temp(key, total - steps));
+        // A wheel turned down scrolls content up: a negative delta selects the next tab.
+        let to = (active as i64 - steps as i64).clamp(0, panels.len().saturating_sub(1) as i64) as usize;
+        if to != active
+            && let Some(panel) = panels.get(to)
+        {
+            self.output.actions.push(Action::Activate { panel: panel.clone() });
+            self.output.focused = Some(panel.clone());
+        }
     }
 
     fn start_group_drag(&mut self, ui: &Ui, panels: &[P], rect: Rect) {
@@ -360,6 +403,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             if !expanded_by_first_click {
                 self.output.actions.push(Action::SetMinimized { panel: panel.clone(), minimized: !minimized });
             }
+        }
+        if self.style.middle_click_closes_tabs() && policy.closable && response.clicked_by(egui::PointerButton::Middle) {
+            self.output.actions.push(Action::Close { panel: panel.clone() });
         }
         if policy.movable && response.drag_started() && begin_drag(ui.ctx(), self.id, panel.clone(), group) {
             self.latch_undock(ui.ctx(), owner.map(|owner| owner.kind));
