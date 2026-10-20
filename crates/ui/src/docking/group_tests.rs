@@ -531,7 +531,7 @@ fn drag_bar_menu_has_the_group_items_and_opens_from_the_keyboard() {
     h.run_steps(1);
     h.input_mut().events.push(Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
     h.run_steps(2);
-    for label in ["Close Tab Group", "Minimize", "Float Tab Group", "Move Group to"] {
+    for label in ["Close Tab Group", "Minimize", "Float Tab Group", "Move Group To"] {
         assert_eq!(h.query_all_by_label(label).count(), 1, "{label}");
     }
     h.get_by_label("Close Tab Group").click();

@@ -250,7 +250,7 @@ the app's command registry. App-specific aliases stay in the app.
 ## Labels
 
 Every visible and accessibility label is a `*_label` field of `DockStyle`, with an English
-default. `DockStyle::localized` sets them all from one keyed lookup:
+default: title case for menu items, sentence case for names only screen readers announce. `DockStyle::localized` sets them all from one keyed lookup:
 
 ```rust,ignore
 let style = DockStyle::from_ui(ui).localized(|key| app.strings.get(key).cloned());

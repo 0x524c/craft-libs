@@ -4,7 +4,9 @@ use super::DockStyle;
 
 impl DockStyle {
     /// Replace every `*_label` field with `translate(key)`, keeping the English default where it
-    /// returns `None`. An application translates the docking chrome in one place:
+    /// returns `None`. The defaults of menu items are in title case; those of controls, which
+    /// only screen readers announce, in sentence case. An application translates the docking
+    /// chrome in one place:
     ///
     /// ```
     /// fn dock_style(ui: &egui::Ui) -> craft_ui::docking::DockStyle {
@@ -17,8 +19,8 @@ impl DockStyle {
     ///
     /// | Key | Field | English default |
     /// |---|---|---|
-    /// | `dock.float` | `float_label` | Float panel |
-    /// | `dock.close` | `close_label` | Close panel |
+    /// | `dock.float` | `float_label` | Float Panel |
+    /// | `dock.close` | `close_label` | Close Panel |
     /// | `dock.movePanelTo` | `move_panel_to_label` | Move Panel to Group |
     /// | `dock.panels` | `panels_label` | Panels |
     /// | `dock.resize` | `resize_label` | Resize panels |
@@ -28,7 +30,7 @@ impl DockStyle {
     /// | `dock.minimize` | `minimize_label` | Minimize |
     /// | `dock.expand` | `expand_label` | Expand |
     /// | `dock.floatGroup` | `float_group_label` | Float Tab Group |
-    /// | `dock.moveGroupTo` | `move_group_to_label` | Move Group to |
+    /// | `dock.moveGroupTo` | `move_group_to_label` | Move Group To |
     /// | `dock.moveColumn` | `move_column_label` | Move panel column |
     /// | `dock.collapseToIcons` | `collapse_to_icons_label` | Collapse to Icons |
     /// | `dock.expandPanels` | `expand_panels_label` | Expand Panels |

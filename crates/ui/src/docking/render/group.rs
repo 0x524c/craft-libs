@@ -258,7 +258,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     /// The group items of the menu tail: Close Tab Group, Minimize or Expand, Float Tab Group
-    /// and Move Group to. `panel` is the panel whose menu this is.
+    /// and Move Group To. `panel` is the panel whose menu this is.
     fn group_menu(&mut self, ui: &mut Ui, owner: &TabGroup<'_, P>, panel: &P) {
         let all = |check: &dyn Fn(crate::docking::Permissions) -> bool| owner.panels.iter().all(|p| check(self.permissions(p)));
         let closable = self.style.close_menu_items && all(&|p| p.closable);

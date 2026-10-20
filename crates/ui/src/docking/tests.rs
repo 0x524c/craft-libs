@@ -1260,7 +1260,7 @@ fn popup_action_labels_use_custom_visual_text_and_logical_accessibility() {
     h.input_mut().events.push(Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
     h.run_steps(2);
     assert!(egui::Popup::is_any_open(&h.ctx));
-    for logical in ["Float panel", "Move Panel to Group", "Close panel"] {
+    for logical in ["Float Panel", "Move Panel to Group", "Close Panel"] {
         assert!(
             h.output().shapes.iter().any(|shape| paints(&shape.shape, &format!("Action visual: {logical}"))),
             "custom action must paint: {logical}"

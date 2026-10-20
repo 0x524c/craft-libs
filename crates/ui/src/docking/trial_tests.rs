@@ -319,8 +319,8 @@ fn hidden_close_controls_leave_closing_to_the_host() {
     d.step(vec![secondary(false)]);
     d.step(vec![]);
     let painted = |d: &Driver, label: &str| texts(d).iter().any(|(_, t)| t.galley.text() == label);
-    assert!(painted(&d, "Float panel"), "the tab menu is open");
-    assert!(!painted(&d, "Close panel") && !painted(&d, "Close Tab Group"));
+    assert!(painted(&d, "Float Panel"), "the tab menu is open");
+    assert!(!painted(&d, "Close Panel") && !painted(&d, "Close Tab Group"));
     // The panels stay closable: the host's own Close applies and reports what it closed.
     assert_eq!(d.layout.apply_with_permissions(Action::CloseWindow { panel: 5 }, |p| d.content.permissions(p)), Ok(vec![5, 6]));
 }

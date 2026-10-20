@@ -93,7 +93,7 @@ pub struct DockStyle {
     pub restore_frame_label: String,
     /// Shown where native windows are available (feature `native-windows`).
     pub new_window_label: String,
-    /// Show the built-in Close items in tab and group menus (Close panel, Close Tab Group,
+    /// Show the built-in Close items in tab and group menus (Close Panel, Close Tab Group,
     /// Close Other Panels in Group) for closable panels. A host that draws its own Close items
     /// turns this off and keeps [`Permissions::closable`], so its close actions still apply.
     pub close_menu_items: bool,
@@ -130,8 +130,8 @@ impl DockStyle {
             border: visuals.widgets.noninteractive.bg_stroke,
             accent: visuals.selection.stroke.color,
             font: FontId::proportional(12.0),
-            float_label: "Float panel".into(),
-            close_label: "Close panel".into(),
+            float_label: "Float Panel".into(),
+            close_label: "Close Panel".into(),
             move_panel_to_label: "Move Panel to Group".into(),
             panels_label: "Panels".into(),
             resize_label: "Resize panels".into(),
@@ -141,7 +141,7 @@ impl DockStyle {
             minimize_label: "Minimize".into(),
             expand_label: "Expand".into(),
             float_group_label: "Float Tab Group".into(),
-            move_group_to_label: "Move Group to".into(),
+            move_group_to_label: "Move Group To".into(),
             drag_bar_width: 40.0,
             floating_background: visuals.window_fill,
             floating_stroke: visuals.window_stroke,
