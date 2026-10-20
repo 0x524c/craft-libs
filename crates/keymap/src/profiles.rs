@@ -314,7 +314,8 @@ impl Profiles {
         builtins.iter().any(|(n, _)| n.to_lowercase() == lower)
     }
 
-    fn taken(&self, name: &str, builtins: &Builtins) -> bool {
+    /// Whether `name` matches a built-in or user set, ignoring case.
+    pub(crate) fn taken(&self, name: &str, builtins: &Builtins) -> bool {
         let lower = name.to_lowercase();
         self.builtin_like(name, builtins) || self.sets.keys().any(|k| k.to_lowercase() == lower)
     }

@@ -8,7 +8,7 @@ use crate::command::CommandRef;
 use crate::editor::{self, DOUBLE_PRESS, EditSession, Recorded, Recorder};
 use crate::import::{self, ForeignSet, ImportOptions, ImportPlan, ImportReport};
 use crate::keymap::{AssignError, Assigned, Binding, Holder, Keymap, MAX_BINDINGS, Overrides, Policy};
-use crate::profiles::{Builtins, ProfileError, Profiles};
+use crate::profiles::{Builtins, ProfileError, Profiles, set_name};
 use crate::scope::Scope;
 use crate::ui::rows::{AreaEntry, AreaId, Built, Filter, RowCache, View};
 use crate::ui::text::{Text, trigger_text};
@@ -795,8 +795,13 @@ impl DialogState {
         self.after_save_prompt(env, Then::Switch(name.to_string()));
     }
 
-    /// New Set…: a copy of the current shortcuts (`based_on: None`) or of a set.
+    /// New Set…: a copy of the current shortcuts (`based_on: None`) or of a set. A name that is
+    /// taken (ignoring case) is refused, before any prompt to save.
     pub(crate) fn new_set(&mut self, env: &mut Env, name: &str, based_on: Option<&str>) {
+        if Self::name_taken(env, name) {
+            self.refuse(profile_error(env, &ProfileError::NameTaken));
+            return;
+        }
         let then = Then::NewSet { name: name.to_string(), based_on: based_on.map(str::to_string) };
         if based_on.is_none() {
             self.run(env, then);
@@ -824,7 +829,10 @@ impl DialogState {
         let result = match then {
             Then::Switch(name) => self.load_set(env, &name),
             Then::NewSet { name, based_on } => {
+                // Saving edits to a built-in first can have made a set of this name.
+                let taken = Self::name_taken(env, &name);
                 let made = match (env.sets.as_mut(), based_on) {
+                    _ if taken => Err(ProfileError::NameTaken),
                     (None, _) => Err(ProfileError::NotFound),
                     (Some((p, b)), None) => p.save_as(&name, env.keymap.overrides().clone(), b),
                     (Some((p, b)), Some(from)) => p.duplicate(&from, &name, b),
@@ -838,6 +846,11 @@ impl DialogState {
             }
         };
         self.report(env, result);
+    }
+
+    fn name_taken(env: &Env, name: &str) -> bool {
+        let (Some((p, b)), Some(name)) = (env.sets.as_ref(), set_name(name)) else { return false };
+        p.taken(&name, b)
     }
 
     /// Rename… (not for built-ins).
@@ -1278,6 +1291,30 @@ mod tests {
         st.assign_field(&mut fx.env());
         assert_eq!(fx.keys("file.save"), ["Cmd+S", "F7 F7"]);
         assert!(st.type_binding(&mut fx.env(), &"file.save".into(), "Cmd+Nope").is_err());
+    }
+
+    #[test]
+    fn new_set_refuses_a_taken_name_and_keeps_the_set() {
+        let mut fx = Fx::new(Options::default());
+        let mut st = open(&mut fx);
+        st.new_set(&mut fx.env(), "Mine", None);
+        record(&mut st, &mut fx, add("object.front"), &["F2"]);
+        st.save_set(&mut fx.env());
+        let kept = fx.p.sets["Mine"].clone();
+        assert!(!kept.is_empty());
+        st.switch_set(&mut fx.env(), "Fixture Defaults");
+        for name in ["Mine", " mine ", "fixture defaults"] {
+            for based_on in [None, Some("Fixture Defaults")] {
+                st.new_set(&mut fx.env(), name, based_on);
+                assert!(st.message.as_ref().is_some_and(|m| m.refused), "{name:?} from {based_on:?}");
+                assert_eq!((fx.p.sets.len(), fx.p.active.as_str()), (1, "Fixture Defaults"));
+                assert_eq!(fx.p.sets["Mine"], kept);
+            }
+        }
+        st.new_set(&mut fx.env(), "Other", None);
+        st.rename_set(&mut fx.env(), "MINE");
+        assert!(st.message.as_ref().is_some_and(|m| m.refused));
+        assert_eq!(fx.p.sets["Mine"], kept);
     }
 
     #[test]
