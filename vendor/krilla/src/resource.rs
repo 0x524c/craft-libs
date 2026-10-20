@@ -326,6 +326,10 @@ where
         format!("{}{}", T::get_prefix(), num)
     }
 
+    pub(crate) fn refs(&self) -> impl Iterator<Item = Ref> + '_ {
+        self.entries.iter().copied()
+    }
+
     pub(crate) fn get_entries(&self) -> impl Iterator<Item = (String, Ref)> + '_ {
         self.entries
             .iter()

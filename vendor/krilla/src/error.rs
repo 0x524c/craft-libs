@@ -24,6 +24,11 @@ pub type KrillaResult<T> = Result<T, KrillaError>;
 pub enum KrillaError {
     /// A page or surface failed during cleanup; discard the complete document.
     Poisoned,
+    /// [`GroupColorSpace::Cmyk`] with `no_device_cs` needs a `cmyk_profile` for the group
+    /// color space.
+    ///
+    /// [`GroupColorSpace::Cmyk`]: crate::GroupColorSpace::Cmyk
+    MissingGroupCmykProfile,
     /// An error while attempting to embed a font.
     Font(Font, String),
     /// A list of validation errors. Can only occur if you set the `validator` in
@@ -62,6 +67,9 @@ impl Display for KrillaError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             KrillaError::Poisoned => f.write_str("document contains a failed page or surface"),
+            KrillaError::MissingGroupCmykProfile => {
+                f.write_str("a CMYK group color space with no_device_cs needs a CMYK profile")
+            }
             KrillaError::Font(_, message) => write!(f, "failed to embed font: {message}"),
             KrillaError::Validation(errors) => {
                 let count = errors.len();

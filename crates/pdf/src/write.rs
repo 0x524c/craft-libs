@@ -8,8 +8,12 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 pub use krilla as backend;
 
-// Require the root workspace patch; an unpatched backend can abort during unwind.
+// Require the root workspace patch; an unpatched backend can abort during unwind, and
+// writes RGB blending groups and no print output intent.
 const _: bool = backend::CRAFT_UNWIND_POISONING;
+const _: bool = backend::CRAFT_PRINT_COLOR;
+
+pub mod print;
 
 use backend::configure::{Archival, Configuration, ConfigurationBuilder, ConfigurationError, PdfVersion};
 use backend::text::{Font, Tag};
@@ -36,6 +40,8 @@ pub enum WriteError {
     Allocation,
     #[error("font could not be read for embedding")]
     InvalidFont,
+    #[error("the print profile is not a readable CMYK ICC profile")]
+    InvalidProfile,
 }
 
 /// Run an entire app export, including drawing and postprocessing, behind a native

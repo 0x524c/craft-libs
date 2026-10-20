@@ -147,14 +147,12 @@ impl ChunkContainer {
             sc.register_validation_error(ValidationError::NoDocumentTitle);
         }
 
-        // Write the PDF document info metadata.
-        if let Some(metadata) = &self.metadata {
-            metadata.serialize_document_info(
-                &mut remapped_ref,
-                &mut pdf,
-                sc.serialize_settings().configuration,
-            );
-        }
+        // Write the PDF document info metadata, also without metadata when print markers need it.
+        let no_metadata = Metadata::default();
+        self.metadata
+            .as_ref()
+            .unwrap_or(&no_metadata)
+            .serialize_document_info(&mut remapped_ref, &mut pdf, &sc.serialize_settings());
 
         let instance_id = stable_hash_base64(pdf.as_bytes());
 
@@ -182,6 +180,7 @@ impl ChunkContainer {
         let settings = sc.serialize_settings();
         let validators = settings.validators();
         validators.write_xmp(&mut xmp);
+        settings.write_print_xmp(&mut xmp);
 
         xmp.num_pages(sc.page_infos().len() as u32);
         xmp.format("application/pdf");

@@ -22,8 +22,9 @@ use zune_jpeg::JpegDecoder;
 use crate::chunk_container::ChunkContainer;
 use crate::configure::ValidationError;
 use crate::error::KrillaError;
+use crate::graphics::color::device_n::DeviceNSpace;
 use crate::graphics::color::DEVICE_GRAY;
-use crate::graphics::color::{cmyk, luma, rgb};
+use crate::graphics::color::{cmyk, luma, rgb, ColorSpace as PdfColorSpace, SpecialColorSpace};
 use crate::graphics::icc::{GenericICCProfile, ICCBasedColorSpace, ICCProfile};
 use crate::serialize::SerializeContext;
 use crate::stream::{deflate_encode, FilterStreamBuilder};
@@ -49,7 +50,7 @@ impl BitsPerComponent {
 }
 
 /// The color space of the image.
-#[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
 pub enum ImageColorspace {
     /// The RGB color space.
     Rgb,
@@ -57,6 +58,9 @@ pub enum ImageColorspace {
     Luma,
     /// The CMYK color space.
     Cmyk,
+    /// A DeviceN color space: one sample per colorant, in the space's colorant order,
+    /// 0 = no ink. Only for [`CustomImage`]; an ICC profile is ignored.
+    DeviceN(DeviceNSpace),
 }
 
 impl ImageColorspace {
@@ -65,6 +69,8 @@ impl ImageColorspace {
             ImageColorspace::Luma => 1,
             ImageColorspace::Rgb => 3,
             ImageColorspace::Cmyk => 4,
+            // At most `DeviceNSpace::MAX_COLORANTS`.
+            ImageColorspace::DeviceN(space) => space.colorants().len() as u8,
         }
     }
 
@@ -73,6 +79,7 @@ impl ImageColorspace {
             ImageColorspace::Rgb => matches!(profile, GenericICCProfile::Rgb(_)),
             ImageColorspace::Luma => matches!(profile, GenericICCProfile::Luma(_)),
             ImageColorspace::Cmyk => matches!(profile, GenericICCProfile::Cmyk(_)),
+            ImageColorspace::DeviceN(_) => false,
         }
     }
 }
@@ -166,7 +173,7 @@ impl ImageRepr {
     }
 
     fn color_space(&self) -> ImageColorspace {
-        self.metadata.color_space
+        self.metadata.color_space.clone()
     }
 }
 
@@ -233,7 +240,7 @@ impl Image {
         let hash = data.as_ref().sip_hash();
         let mut metadata = jpeg_metadata(data.as_ref())?;
         let icc_profile =
-            icc_profile.and_then(|d| get_icc_profile_type(d.as_ref(), metadata.color_space));
+            icc_profile.and_then(|d| get_icc_profile_type(d.as_ref(), &metadata.color_space));
         metadata.icc = icc_profile;
 
         Ok(Self(Arc::new(ImageRepr {
@@ -285,7 +292,7 @@ impl Image {
             bits_per_component: image.bits_per_component(),
             icc: image
                 .icc_profile()
-                .and_then(|d| get_icc_profile_type(d, image.color_space())),
+                .and_then(|d| get_icc_profile_type(d, &image.color_space())),
         };
 
         Ok(Self(Arc::new(ImageRepr {
@@ -365,6 +372,7 @@ impl Image {
     ) {
         let soft_mask_id = self.0.metadata.has_alpha.then(|| {
             sc.register_validation_error(ValidationError::Transparency(sc.location));
+            sc.mark_transparent(root_ref);
             sc.new_ref()
         });
 
@@ -416,6 +424,9 @@ impl Image {
                     }
                     Some(cs) => cs.into(),
                 },
+                ImageColorspace::DeviceN(space) => {
+                    PdfColorSpace::Special(SpecialColorSpace::DeviceN(space))
+                }
             };
 
             sc.register_colorspace(chunk_container, cs)
@@ -544,7 +555,7 @@ fn png_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
     let icc = info
         .icc_profile
         .as_ref()
-        .and_then(|i| get_icc_profile_type(i, image_color_space));
+        .and_then(|i| get_icc_profile_type(i, &image_color_space));
 
     Ok(ImageMetadata {
         has_alpha,
@@ -610,7 +621,7 @@ fn jpeg_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
 
     let icc = decoder
         .icc_profile()
-        .and_then(|d| get_icc_profile_type(&d, image_color_space));
+        .and_then(|d| get_icc_profile_type(&d, &image_color_space));
 
     Ok(ImageMetadata {
         has_alpha: false,
@@ -693,7 +704,7 @@ fn webp_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
     let icc = decoder
         .icc_profile()
         .map_err(|e| e.to_string().to_ascii_lowercase())?
-        .and_then(|d| get_icc_profile_type(&d, color_space));
+        .and_then(|d| get_icc_profile_type(&d, &color_space));
 
     Ok(ImageMetadata {
         has_alpha: decoder.has_alpha(),
@@ -806,11 +817,12 @@ fn handle_u16_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, B
     (encoded_image, encoded_mask, BitsPerComponent::Sixteen)
 }
 
-fn get_icc_profile_type(data: &[u8], color_space: ImageColorspace) -> Option<GenericICCProfile> {
+fn get_icc_profile_type(data: &[u8], color_space: &ImageColorspace) -> Option<GenericICCProfile> {
     let wrapper = match color_space {
         ImageColorspace::Rgb => GenericICCProfile::Rgb(ICCProfile::new(data)?),
         ImageColorspace::Luma => GenericICCProfile::Luma(ICCProfile::new(data)?),
         ImageColorspace::Cmyk => GenericICCProfile::Cmyk(ICCProfile::new(data)?),
+        ImageColorspace::DeviceN(_) => return None,
     };
 
     Some(wrapper)

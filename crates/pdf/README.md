@@ -103,7 +103,7 @@ that supply shaped glyphs do not need that shaper. Adapters that call `draw_text
 DeckCraft, also need `write-simple-text` when adopting this revision. `write-pdf` adds
 embedded-PDF support independently of text shaping.
 
-The writer pins Krilla 0.8.2, with a local unwind-cleanup patch documented in
+The writer pins Krilla 0.8.2, with local unwind-cleanup and print color patches documented in
 [`vendor/krilla/README.craft.md`](../../vendor/krilla/README.craft.md). Successful
 serialization uses the same backend version as before extraction. It provides:
 
@@ -119,6 +119,28 @@ serialization uses the same backend version as before extraction. It provides:
   postprocessing. App errors pass through; serialization errors retain backend diagnostics.
   Caught panic messages retain up to 1024 Unicode scalar values; the installed panic hook
   remains responsible for logging source locations and full diagnostics.
+
+### Print color
+
+`write::print::settings` returns `SerializeSettings` for CMYK print: DeviceCMYK color,
+transparency blending in CMYK (`GroupColorSpace::Cmyk`), the document's CMYK profile as a
+`GTS_PDFX` output intent and `/Trapped /False`. The profile is the document's working space;
+print export always carries it. craft-pdf takes the profile bytes and does not depend on
+craft-cms. Its CC0 `builtin::COATED_FOGRA39_ICC` is the default working space, described by
+`PrintColor::fogra39`:
+
+```rust
+use craft_pdf::write::print::{self, PrintColor};
+
+let settings = print::settings(PrintColor::fogra39(craft_cms::builtin::COATED_FOGRA39_ICC))?;
+let writer = Writer::new(SerializeSettings { configuration, ..settings }, metadata);
+```
+
+For another profile, fill `PrintColor` with its condition identifier (`Custom` when it is
+not registered) and `info`. The settings claim no PDF/X version and are not checked against
+PDF/X; apps that claim conformance set `pdfx_version` and keep their own checks. Writing these
+settings needs the patched Krilla (`CRAFT_PRINT_COLOR`, see
+[`vendor/krilla/README.craft.md`](../../vendor/krilla/README.craft.md)).
 
 `Writer::document_mut` and `write::backend` deliberately expose Krilla's page, resource and
 painting APIs. The apps keep their document walks, pagination, font selection/licensing,

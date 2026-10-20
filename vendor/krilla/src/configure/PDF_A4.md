@@ -66,7 +66,8 @@ See `README.md` for the meaning of each color.
 ### 6.2.4 Colour spaces
 - krilla only uses device-independent colors in this export mode. 🟢 
 - krilla uses compatible ICC profiles. 🟢
-- krilla does not use the OPM entry. 🟢
+- krilla fails export if overprint mode 1 is combined with fill or stroke overprint, since
+  all CMYK is ICCBased in this mode. 🟢
 - krilla never uses CMYK profiles as the destination profile. 🟢
 - krilla does not use device color spaces in this mode. 🟢
 - krilla ensures the Alternate space in Separation color spaces obeys the restrictions
@@ -78,7 +79,8 @@ See `README.md` for the meaning of each color.
   the same color space 🟢
 
 ### 6.2.5 Extended graphics state
-- krilla does not use the `TR`, `HTO`, `TR2` or `HT` keys. 🟢
+- krilla does not use the `TR`, `HTO`, `TR2` or `HT` keys in graphics states. A soft mask's `/TR`
+  (`Mask::with_transfer`) is a key of the soft-mask dictionary, which 6.2.5 does not cover. 🟢
 - krilla does not use halftones. 🟢
 - krilla does not use the `FL`, `BG`, `BG2`, `UCR` or `URC2` functions. 🟢
 

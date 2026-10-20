@@ -67,7 +67,8 @@ in case CMYK is used but no profile was provided, export fails.
 
 6.2.4.2: 
 - sRGB/sGrey ICC profiles conform to ICC v4 specification. 🟢
-- krilla does not support overprinting. 🔵
+- krilla fails export if overprint mode 1 is combined with fill or stroke overprint, since
+  all CMYK is ICCBased in this mode. 🟢
 
 6.2.4.3: 
 - krilla always uses sRGB for RGB, and in addition also embeds an sRGB output intent. 🟢
@@ -87,7 +88,9 @@ in case CMYK is used but no profile was provided, export fails.
 
 6.2.4.5: Fulfilled because patterns are treated the same as all other elements in krilla. 🟢
 
-6.2.5: krilla does not use the transfer functions, halftones, TR/HTP/RI/FL keys. 🔵
+6.2.5: krilla does not use the transfer functions, halftones, TR/HTP/RI/FL keys in graphics
+states. A soft mask's `/TR` (`Mask::with_transfer`) is a key of the soft-mask dictionary, which
+6.2.5 does not cover. 🔵
 
 6.2.6: krilla does never define a rendering intent. 🔵
 

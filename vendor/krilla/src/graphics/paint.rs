@@ -28,7 +28,10 @@ pub struct LinearGradient {
     pub spread_method: SpreadMethod,
     /// The color stops of the linear gradient.
     ///
-    /// Note that all stops need to be in the same color space.
+    /// Stops in different color spaces built from inks (CMYK, luma as black, spots with a
+    /// CMYK fallback, DeviceN) are written in one space: Separation for a single spot,
+    /// DeviceCMYK for process colors alone, DeviceN otherwise. Other stops need to be in the
+    /// same color space.
     pub stops: Vec<Stop>,
     /// Whether the gradient should be anti-aliased.
     pub anti_alias: bool,
@@ -73,7 +76,10 @@ pub struct RadialGradient {
     pub spread_method: SpreadMethod,
     /// The color stops of the radial gradient.
     ///
-    /// Note that all stops need to be in the same color space.
+    /// Stops in different color spaces built from inks (CMYK, luma as black, spots with a
+    /// CMYK fallback, DeviceN) are written in one space: Separation for a single spot,
+    /// DeviceCMYK for process colors alone, DeviceN otherwise. Other stops need to be in the
+    /// same color space.
     pub stops: Vec<Stop>,
     /// Whether the gradient should be anti-aliased.
     pub anti_alias: bool,
@@ -115,7 +121,10 @@ pub struct SweepGradient {
     pub spread_method: SpreadMethod,
     /// The color stops of the sweep gradient.
     ///
-    /// Note that all stops need to be in the same color space.
+    /// Stops in different color spaces built from inks (CMYK, luma as black, spots with a
+    /// CMYK fallback, DeviceN) are written in one space: Separation for a single spot,
+    /// DeviceCMYK for process colors alone, DeviceN otherwise. Other stops need to be in the
+    /// same color space.
     pub stops: Vec<Stop>,
     /// Whether the gradient should be anti-aliased.
     pub anti_alias: bool,
@@ -186,6 +195,7 @@ impl Paint {
             InnerPaint::Color(c) => match c {
                 Color::Regular(c) => c.as_rgb(),
                 Color::Special(SpecialColor::Separation(c)) => c.space.fallback.as_rgb(),
+                Color::Special(SpecialColor::DeviceN(_)) => None,
             },
             _ => None,
         }

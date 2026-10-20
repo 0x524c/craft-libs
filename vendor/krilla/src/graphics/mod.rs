@@ -7,6 +7,7 @@ pub mod icc;
 pub mod image;
 pub mod mask;
 pub mod paint;
+pub(crate) mod device_n;
 pub(crate) mod separation;
 pub(crate) mod shading_function;
 pub(crate) mod shading_pattern;
