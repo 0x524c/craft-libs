@@ -6,7 +6,8 @@ Prepress for the Craft apps: separations, ink limits and the ink manager.
   (always first, in plate order) and the spot inks of a job, and is the job's ink manager
   (aliases, spots to process); `InkColor` is a color as ink tints (`Separation`, `DeviceN`,
   registration or none); `Overprint` holds `op`, `OP` and `OPM`. Spot names are compared as
-  PDF names: `/Gold#20Foil` and `Gold Foil` are one ink.
+  PDF names: `/Gold#20Foil` and `Gold Foil` are one ink. `to_pdf_color` writes an `InkColor`
+  as a krilla color for export.
 - `plates`: one 8-bit plane per ink (255 = 100% ink) rendered from a PDF page.
 - `coverage`: ink coverage at a pixel and over a page, total area coverage (TAC) per pixel,
   and the pixels and regions over a TAC limit.
@@ -131,14 +132,41 @@ alternate needs the printing condition to become CMYK.
 
 Apply it in two places:
 
-- **Export.** The writer calls `resolve` on every color it emits, so the PDF carries the
-  result: DeviceCMYK when `as_cmyk` is `Some`, else a `Separation` or `DeviceN` of the
-  resolved inks (the aliased spot's name, not the original). An overprinting color that
-  became CMYK is written with `OPM 1`, so its zero components leave the plates under it as
-  they are.
+- **Export.** The writer calls `resolve` on every color it emits, then
+  `to_pdf_color(&resolved, &inks, &cms)` for the krilla color to paint with (see
+  [Export](#export)). An overprinting color that became CMYK is written with `OPM 1`, so its
+  zero components leave the plates under it as they are.
 - **Preview.** The preview separates that exported PDF with `plates` and shows
   `composite` and the coverage readings. Plates are the truth: an ink manager change shows
   after the next export, and the preview never recomputes overprint from the document.
+
+## Export
+
+`to_pdf_color(&color, &inks, &cms)` gives the krilla color (`craft_pdf::write::backend::color::Color`)
+for an `InkColor`, choosing the color space from the inks it names:
+
+| Color | Written as |
+|---|---|
+| Tints of process inks only | DeviceCMYK; unlisted process inks are 0 |
+| One spot ink | `Separation` with the spot's alternate as DeviceCMYK fallback |
+| Any other mix | `DeviceN`: process inks first in plate order, then spots in `InkSet` order |
+| `All` | `Separation /All` (registration) |
+| `None` | `Separation /None` (marks no plate) |
+
+A spot's alternate is `spot_cmyk`: a CMYK alternate as given, a Lab one converted through
+`cms` into the printing condition, so a spot has one alternate in every space that names it.
+`None` when the color names an ink not in the set or a `DeviceN` space would need more than
+32 colorants.
+
+```rust
+use craft_prepress::{CmsConversion, InkColor, to_pdf_color};
+
+let cms = CmsConversion::fogra39();
+let printed = inks.resolve(&InkColor::Tints(vec![(gold, 1.0), (black, 0.5)]), &cms);
+if let Some(color) = to_pdf_color(&printed, &inks, &cms) {
+    surface.set_fill(Some(Fill { paint: color.into(), ..Default::default() })); // DeviceN [Black Gold]
+}
+```
 
 ## In DesignCraft and VectorCraft
 

@@ -158,3 +158,94 @@ fn lab_colors_convert_through_the_profile_and_lab_white_is_paper() {
     assert!(near(at(10), expected), "{:?}, FOGRA39 prints {expected:?}", at(10));
     assert_eq!(at(30), [0, 0, 0, 0], "a Lab space's own white prints as paper");
 }
+
+/// A 60 × 10 pt page written by the PDF writer, with a 10 pt wide fill of each color.
+fn written(colors: Vec<craft_pdf::write::backend::color::Color>) -> Vec<u8> {
+    use craft_pdf::write::backend::{geom, page::PageSettings, paint::Fill};
+    let mut writer = craft_pdf::write::Writer::new(Default::default(), Default::default());
+    let mut page = writer.document_mut().start_page_with(PageSettings::new(geom::Size::from_wh(60.0, 10.0).unwrap()));
+    let mut surface = page.surface();
+    for (i, color) in colors.into_iter().enumerate() {
+        let mut path = geom::PathBuilder::new();
+        path.push_rect(geom::Rect::from_xywh(10.0 * i as f32, 0.0, 10.0, 10.0).unwrap());
+        surface.set_fill(Some(Fill { paint: color.into(), ..Default::default() }));
+        surface.draw_path(&path.finish().unwrap());
+    }
+    surface.finish();
+    page.finish();
+    writer.finish().unwrap()
+}
+
+/// The page's color space resources as (family, colorant names), sorted.
+fn color_spaces(pdf: &[u8]) -> Vec<(String, Vec<String>)> {
+    use craft_pdf::syntax::object::{Array, Name, Object};
+    let pdf = craft_pdf::syntax::Pdf::new(Arc::new(pdf.to_vec())).unwrap();
+    let page = pdf.pages().iter().next().unwrap();
+    let spaces = &page.resources().color_spaces;
+    let mut out: Vec<(String, Vec<String>)> = spaces
+        .keys()
+        .map(|key| {
+            let array = spaces.get::<Array<'_>>(key.as_ref()).unwrap();
+            let items: Vec<Object<'_>> = array.iter::<Object<'_>>().collect();
+            let Some(Object::Name(family)) = items.first() else { panic!("a color space without a family") };
+            let names = match items.get(1) {
+                Some(Object::Name(n)) => vec![n.as_str().to_owned()],
+                Some(Object::Array(a)) => a.iter::<Name<'_>>().map(|n| n.as_str().to_owned()).collect(),
+                _ => Vec::new(),
+            };
+            (family.as_str().to_owned(), names)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn ink_colors_write_as_cmyk_separation_or_device_n_and_separate_onto_their_plates() {
+    use craft_prepress::{InkColor, InkSet, Spot, to_pdf_color};
+    let mut inks = InkSet::new();
+    let gold = inks.add(Ink::Spot(Spot { name: "Gold".into(), alternate: Alternate::Cmyk([0.0, 0.3, 1.0, 0.0]), solidity: None })).unwrap();
+    let teal = inks.add(Ink::Spot(Spot { name: "Teal".into(), alternate: Alternate::Lab([55.0, -40.0, -10.0]), solidity: None })).unwrap();
+    let (c, k) = (InkId::process(Process::Cyan), black());
+    let cms = CmsConversion::fogra39();
+    let colors = [
+        InkColor::Tints(vec![(k, 0.4), (c, 0.6)]),
+        InkColor::Tints(vec![(gold, 0.5)]),
+        InkColor::Tints(vec![(gold, 1.0), (k, 0.5)]),
+        InkColor::Tints(vec![(teal, 1.0)]),
+        InkColor::All(1.0),
+        InkColor::None,
+    ];
+    let pdf = written(colors.iter().map(|color| to_pdf_color(color, &inks, &cms).unwrap()).collect());
+    let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let mut expected = vec![
+        ("DeviceN".to_owned(), names(&["Black", "Gold"])),
+        ("Separation".to_owned(), names(&["All"])),
+        ("Separation".to_owned(), names(&["Gold"])),
+        ("Separation".to_owned(), names(&["None"])),
+        ("Separation".to_owned(), names(&["Teal"])),
+    ];
+    expected.sort();
+    assert_eq!(color_spaces(&pdf), expected, "process only is DeviceCMYK, which needs no resource");
+
+    let p = plates(&pdf, 0, 72.0, &Options::default()).unwrap();
+    let names: Vec<&str> = p.inks.iter().map(|(_, ink)| ink.name()).collect();
+    assert_eq!(names, ["Cyan", "Magenta", "Yellow", "Black", "Gold", "Teal"]);
+    let (gold, teal) = (p.inks.lookup("Gold").unwrap(), p.inks.lookup("Teal").unwrap());
+    let at = |x: u32| -> Vec<u8> { p.inks.iter().map(|(id, _)| p.tint(id, x, 5).unwrap()).collect() };
+    assert_eq!(at(5), [153, 0, 0, 102, 0, 0]);
+    assert_eq!(at(15), [0, 0, 0, 0, 128, 0]);
+    assert_eq!(at(25), [0, 0, 0, 128, 255, 0]);
+    assert_eq!(at(35), [0, 0, 0, 0, 0, 255]);
+    assert_eq!(at(45), [255; 6], "registration");
+    assert_eq!(at(55), [0; 6]);
+    assert_eq!((p.tint(gold, 25, 5), p.tint(teal, 35, 5)), (Some(255), Some(255)));
+
+    let unknown = InkSet::new();
+    assert_eq!(to_pdf_color(&colors[1], &unknown, &cms), None, "an ink not in the set");
+    let mut many = InkSet::new();
+    let tints: Vec<(InkId, f32)> = (0..33)
+        .map(|i| (many.add(Ink::Spot(Spot { name: format!("S{i}"), alternate: Alternate::Cmyk([0.0; 4]), solidity: None })).unwrap(), 1.0))
+        .collect();
+    assert_eq!(to_pdf_color(&InkColor::Tints(tints), &many, &cms), None, "more than 32 colorants");
+}

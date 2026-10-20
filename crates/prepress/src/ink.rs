@@ -5,6 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use craft_cms::math;
 use craft_pdf::interpret::color::CmykConversion;
+use craft_pdf::write::backend::color::device_n::{self, Colorant, DeviceNSpace};
+use craft_pdf::write::backend::color::separation::{self, SeparationColorant, SeparationSpace};
+use craft_pdf::write::backend::color::{Color as PdfColor, RegularColor, cmyk};
 
 use crate::cms::lab_to_srgb8;
 
@@ -363,6 +366,84 @@ impl InkColor {
         }
         Some(cmyk)
     }
+}
+
+/// `color` as a krilla fill or stroke color, for the PDF writer. Pass the color as it prints,
+/// after [`InkSet::resolve`].
+///
+/// - Tints of process inks only: DeviceCMYK, unlisted inks 0 (so with `OPM 1` an overprinting
+///   paint leaves their plates as they are).
+/// - One spot ink alone: a `Separation` space with the spot's alternate as DeviceCMYK fallback.
+/// - Any other mix: a `DeviceN` space, process inks first in plate order, then spot inks in
+///   set order. Each spot keeps the alternate its `Separation` space has.
+/// - `All`: the registration color, a `Separation /All` space; `None`: a `Separation /None`
+///   space, which marks no plate.
+///
+/// Spot alternates are [`InkSet::spot_cmyk`]: a CMYK alternate as given, a Lab one through
+/// `cms` into the printing condition. A tint listed twice combines as overlapping halftones,
+/// as in `resolve`. `None` when a tint's ink is not in `inks`, a spot's Lab alternate can't be
+/// converted, a spot name is empty, or a `DeviceN` space would have more than 32 colorants.
+pub fn to_pdf_color(color: &InkColor, inks: &InkSet, cms: &dyn CmykConversion) -> Option<PdfColor> {
+    let tints = match color {
+        InkColor::All(tint) => return Some(separation(SeparationColorant::AllColorants, *tint, cmyk::Color::new(255, 255, 255, 255))),
+        InkColor::None => return Some(separation(SeparationColorant::NoColorant, 0.0, cmyk::Color::new(0, 0, 0, 0))),
+        InkColor::Tints(tints) => tints,
+    };
+    // Sorted by id: process inks first, in plate order, then spots in set order.
+    let mut merged: BTreeMap<InkId, f32> = BTreeMap::new();
+    for &(id, tint) in tints {
+        inks.get(id)?;
+        let t = merged.entry(id).or_insert(0.0);
+        *t = 1.0 - (1.0 - *t) * (1.0 - unit(tint));
+    }
+    if merged.keys().all(|id| id.index() < Process::ALL.len()) {
+        let mut cmyk = [0_u8; 4];
+        for (id, tint) in &merged {
+            if let Some(c) = cmyk.get_mut(id.index()) {
+                *c = byte(*tint);
+            }
+        }
+        let [c, m, y, k] = cmyk;
+        return Some(RegularColor::Cmyk(cmyk::Color::new(c, m, y, k)).into());
+    }
+    let spot = |id: InkId| -> Option<(String, cmyk::Color)> {
+        let name = inks.get(id)?.name();
+        let [c, m, y, k] = inks.spot_cmyk(id, cms)?.map(byte);
+        (!name.is_empty()).then(|| (name.to_owned(), cmyk::Color::new(c, m, y, k)))
+    };
+    if let [(&id, &tint)] = merged.iter().collect::<Vec<_>>()[..] {
+        let (name, alternate) = spot(id)?;
+        return Some(separation(SeparationColorant::Custom(name), tint, alternate));
+    }
+    let mut colorants = Vec::with_capacity(merged.len());
+    for &id in merged.keys() {
+        colorants.push(match Process::ALL.get(id.index()) {
+            Some(p) => Colorant::Process(match p {
+                Process::Cyan => device_n::Process::Cyan,
+                Process::Magenta => device_n::Process::Magenta,
+                Process::Yellow => device_n::Process::Yellow,
+                Process::Black => device_n::Process::Black,
+            }),
+            None => {
+                let (name, alternate) = spot(id)?;
+                Colorant::Spot { name, alternate }
+            }
+        });
+    }
+    let space = DeviceNSpace::new(colorants)?;
+    Some(device_n::Color::new(merged.values().map(|t| byte(*t)).collect(), space)?.into())
+}
+
+fn unit(v: f32) -> f32 {
+    if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 }
+}
+
+fn byte(v: f32) -> u8 {
+    (unit(v) * 255.0).round() as u8
+}
+
+fn separation(colorant: SeparationColorant, tint: f32, fallback: cmyk::Color) -> PdfColor {
+    separation::Color::new(byte(tint), SeparationSpace::new(colorant, RegularColor::Cmyk(fallback))).into()
 }
 
 /// Overprint parameters of a paint (ISO 32000-2 §8.6.7).
