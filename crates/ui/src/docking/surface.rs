@@ -44,7 +44,7 @@ pub struct DockStyle {
     /// Minimum width of the drag bar left of the group header. Tabs overflow before the bar
     /// narrows.
     pub drag_bar_width: f32,
-    /// Painted under every floating window, so it stays opaque when the panel colours are not.
+    /// Painted under every floating window, so it stays opaque when the panel colors are not.
     pub floating_background: Color32,
     pub floating_stroke: Stroke,
     /// Dock: docks, columns and stacked groups. Frame: a split tree of tab frames, with
@@ -454,7 +454,7 @@ pub(super) enum GroupGesture {
 pub(super) struct GroupDrag<P> {
     /// The first member; identifies the gesture.
     pub(super) panel: P,
-    /// The floating window rect at the press, restored when a window move is cancelled.
+    /// The floating window rect at the press, restored when a window move is canceled.
     pub(super) original: [f32; 4],
     pub(super) gesture: GroupGesture,
     pub(super) members: Vec<P>,

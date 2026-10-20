@@ -176,7 +176,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         let active = response.has_focus() || response.hovered();
         if movable {
-            // A grip mark at rest, centred in the bar's reserved width beside the header.
+            // A grip mark at rest, centerd in the bar's reserved width beside the header.
             let grip = if self.style.right_to_left {
                 Rect::from_min_max(hit.min, pos2((hit.left() + self.style.drag_bar_width).min(hit.right()), hit.bottom()))
             } else {

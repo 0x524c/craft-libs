@@ -159,7 +159,7 @@ pub enum UiDock<P> {
 }
 
 /// A `ui.dock` operation, tagged by `operation`. `move` takes `target` (the anchor), `zone`
-/// (default `center`) and `before`, which only applies to a centre move.
+/// (default `center`) and `before`, which only applies to a center move.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "camelCase", bound(serialize = "P: Serialize", deserialize = "P: Deserialize<'de>"))]
 #[non_exhaustive]

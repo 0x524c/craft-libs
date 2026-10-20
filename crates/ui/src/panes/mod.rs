@@ -202,7 +202,7 @@ struct Memory {
 #[derive(Clone, Copy, Debug)]
 struct DragOut {
     pane: Id,
-    cancelled: bool,
+    canceled: bool,
 }
 
 struct Shown<P> {
@@ -556,11 +556,11 @@ impl PaneHost {
         requests: &mut Vec<PaneRequest<P>>,
     ) {
         if bar.drag_started() {
-            memory.drag_out = Some(DragOut { pane: s.id, cancelled: false });
+            memory.drag_out = Some(DragOut { pane: s.id, canceled: false });
         }
         let Some(mut drag) = memory.drag_out.filter(|d| d.pane == s.id) else { return };
         if ctx.input(|input| input.key_pressed(Key::Escape) || !input.focused) {
-            drag.cancelled = true;
+            drag.canceled = true;
         }
         let near = rect.expand(DOCK_SNAP);
         let Some(pointer) = ctx.pointer_latest_pos() else { return };
@@ -570,7 +570,7 @@ impl PaneHost {
         let target = self.snap(pointer, bounds);
         if bar.drag_stopped() {
             memory.drag_out = None;
-            if drag.cancelled || !outside {
+            if drag.canceled || !outside {
                 return;
             }
             match target {
@@ -588,7 +588,7 @@ impl PaneHost {
             return;
         }
         memory.drag_out = Some(drag);
-        if drag.cancelled || !outside {
+        if drag.canceled || !outside {
             return;
         }
         let shape = match target.map(|t| self.side(t)) {
@@ -635,7 +635,7 @@ impl PaneHost {
         }
         if content.movable(&s.pane) {
             match chrome::live_move(ctx, &shown.inner, shown.rect, bounds) {
-                Some(MoveStep::Moving(next) | MoveStep::Cancelled(next)) if next != shown.rect => {
+                Some(MoveStep::Moving(next) | MoveStep::Canceled(next)) if next != shown.rect => {
                     requests.push(PaneRequest::FloatRect(s.pane.clone(), rect_array(next)));
                 }
                 Some(MoveStep::Dropped { rect, pointer }) => {

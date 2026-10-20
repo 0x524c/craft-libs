@@ -121,7 +121,7 @@ fn galley_labels_stay_whole_and_only_an_over_wide_active_tab_ends_with_an_ellips
 }
 
 #[test]
-fn drag_bar_shows_a_grip_at_rest_and_a_group_drag_paints_a_filled_labelled_ghost() {
+fn drag_bar_shows_a_grip_at_rest_and_a_group_drag_paints_a_filled_labeled_ghost() {
     let mut d = Driver::new(frames());
     let visuals = d.ctx.global_style().visuals.clone();
     let bar = d.rect("drag-bar", 2);
@@ -248,7 +248,7 @@ fn right_to_left_mirrors_the_tab_strip_and_its_insertion_slots() {
     assert!(second.right() <= first.left() + 0.5, "{first:?} {second:?}");
     assert!(bar.right() <= second.left() + 0.5 && bar.left() >= 304.0 + 30.0 - 0.5, "the bar sits between the tabs and the header: {bar:?}");
 
-    // Just right of the first tab's centre is before it in a right-to-left strip.
+    // Just right of the first tab's center is before it in a right-to-left strip.
     let out = d.drag(d.tab(1).center(), pos2(first.center().x + 6.0, first.center().y));
     assert!(out.actions.contains(&Action::Move { panel: 1, anchor: 3, placement: Placement::Tab { before: Some(2) } }), "{:?}", out.actions);
 

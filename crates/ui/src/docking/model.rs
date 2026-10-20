@@ -563,7 +563,7 @@ impl<P: Clone + Eq + Hash> Layout<P> {
         if location.anchor.is_some() {
             return Ok(location);
         }
-        // Alone in its group: anchor to the neighbouring group, then the neighbouring column.
+        // Alone in its group: anchor to the neighboring group, then the neighboring column.
         let first = |g: Option<&Group<P>>| g.and_then(|g| g.panels.first()).cloned();
         if let Some(anchor) = first(groups.get(group + 1)) {
             location.anchor = Some(anchor);

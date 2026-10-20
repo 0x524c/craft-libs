@@ -1,6 +1,6 @@
 //! [D] Iconic columns: one icon per panel, groups apart, and the flyout an icon opens.
 //!
-//! Behaviour follows VectorCraft `dock.rs` (icon column, flyouts beside it on the canvas side,
+//! Behavior follows VectorCraft `dock.rs` (icon column, flyouts beside it on the canvas side,
 //! names when the column is widened) and PhotoCraft `dock.rs` (Auto-Collapse Iconic Panels).
 
 use std::{fmt::Debug, hash::Hash};

@@ -1,4 +1,4 @@
-//! Behaviour tests for the pane host, driven by egui pointer and key events in an 800 × 600
+//! Behavior tests for the pane host, driven by egui pointer and key events in an 800 × 600
 //! window. The harness's root ui has an 8 pt margin, so the host spans x 8..792, y 8..592.
 
 use std::collections::HashMap;

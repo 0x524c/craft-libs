@@ -77,7 +77,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 
     /// The valid target under the pointer for a whole group. A target holding the group
     /// itself is a no-op proposal; a target the model would reject is no target. A window
-    /// moving live looks through itself and does not split frames or join a body's centre.
+    /// moving live looks through itself and does not split frames or join a body's center.
     pub(super) fn group_proposal(&self, drag: &GroupDrag<P>, pointer: Pos2) -> Option<DropProposal<P>> {
         let window = drag.gesture == GroupGesture::Window;
         let valid = |proposal: DropProposal<P>| {

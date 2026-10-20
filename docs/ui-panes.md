@@ -51,7 +51,7 @@ egui::CentralPanel::default().show(ui, |ui| {
 });
 ```
 
-| Piece | Behaviour |
+| Piece | Behavior |
 |---|---|
 | `Edge::{Start, End, Bottom}` | Logical edges. `Start` is left, or right with `.rtl(true)`. |
 | `SidePolicy::Columns` | Every docked pane shows; panes on one edge sit side by side in `open` order, the first outermost. |
@@ -84,7 +84,7 @@ State:
   Accessibility, Alt Text, Restrict Editing and Comments at `End`. Default widths as today.
 - `Close(p)` runs the pane's existing command (`view.navigationPane {value: false}`, …). Command
   ids and `nav_pane` in `ui.json` stay as they are.
-- Styles takes #2584's behaviour through the host: map `StylesPaneDock::{Left, Right, Floating}`
+- Styles takes #2584's behavior through the host: map `StylesPaneDock::{Left, Right, Floating}`
   to `Place` (`Left` is `Docked(Start)` in left-to-right interfaces), run `view.stylesPaneDock`
   on `Place`, keep the float rect in UI prefs. #2584's own drag, snap and `float_rect` code goes.
 - Other panes return `None` from `states`; their widths stay session-only, as now.

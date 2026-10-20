@@ -17,7 +17,7 @@ pub const TITLE_HEIGHT: f32 = 14.0;
 /// Names of the resize handles, appended to the frame id: `id.with(name)`.
 pub const RESIZE_HANDLES: [&str; 5] = ["resize", "resize-left", "resize-right", "resize-bottom", "resize-bottom-left"];
 
-/// Colours and font of the frame and title bar.
+/// Colors and font of the frame and title bar.
 #[derive(Clone, Debug)]
 pub struct ChromeStyle {
     /// Painted under the contents, so the window stays opaque when the contents are not.
@@ -168,7 +168,7 @@ impl<'a> FloatingFrame<'a> {
         let mut started = None;
         let mut responses = Vec::new();
         let limits = PanelLimits { min: self.limits.min.max(vec2(40.0, TITLE_HEIGHT + 20.0)).min(self.limits.max), ..self.limits };
-        let cancelled = ui.input(|input| input.key_pressed(Key::Escape) || !input.focused);
+        let canceled = ui.input(|input| input.key_pressed(Key::Escape) || !input.focused);
         for (name, handle, direction) in handles(rect) {
             if !super::targets::usable(handle) {
                 continue;
@@ -226,12 +226,12 @@ impl<'a> FloatingFrame<'a> {
                 None
             };
             if response.enabled()
-                && !cancelled
+                && !canceled
                 && let Some(next) = next.filter(|next| *next != rect)
             {
                 resized = Some(next);
             }
-            if cancelled || !ui.input(|input| input.pointer.primary_down()) {
+            if canceled || !ui.input(|input| input.pointer.primary_down()) {
                 ui.ctx().data_mut(|data| data.remove::<AnchoredResize>(anchor_id));
             }
             if name == "resize" && (response.hovered() || response.dragged() || (response.has_focus() && !quiet)) {
@@ -387,7 +387,7 @@ pub enum MoveStep {
     /// The rect follows the pointer, inside the bounds.
     Moving(Rect),
     /// Escape or window focus loss ended the move: the rect it started from.
-    Cancelled(Rect),
+    Canceled(Rect),
     /// Released over `pointer`, with the rect where it was dropped.
     Dropped { rect: Rect, pointer: Pos2 },
 }
@@ -407,7 +407,7 @@ pub fn live_move(ctx: &Context, bar: &Response, rect: Rect, bounds: Rect) -> Opt
     let forget = || ctx.data_mut(|data| data.remove::<(Rect, Pos2)>(key));
     if ctx.input(|input| input.key_pressed(Key::Escape) || !input.focused) {
         forget();
-        return Some(MoveStep::Cancelled(start));
+        return Some(MoveStep::Canceled(start));
     }
     let pointer = ctx.pointer_latest_pos().unwrap_or(origin);
     let moved = clamp(start.translate(pointer - origin), bounds);

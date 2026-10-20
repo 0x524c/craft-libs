@@ -303,7 +303,7 @@ fn group_drop_on_a_frame_edge_splits_and_on_a_protected_canvas_floats() {
     assert_eq!(**first, tabs(&[2, 3], 1));
     assert_eq!(**second, tabs(&[1], 0));
 
-    // A protected canvas takes nothing, at its centre or its edge: no join, no split, no
+    // A protected canvas takes nothing, at its center or its edge: no join, no split, no
     // preview; the group floats there.
     for at in [pos2(150.0, 300.0), pos2(20.0, 300.0)] {
         let mut d = Driver::with(frames(), canvas(), area);

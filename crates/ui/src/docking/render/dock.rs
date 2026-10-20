@@ -1,7 +1,7 @@
 //! [D] The dock profile: side docks of columns, each a column bar above stacked groups.
 //!
 //! Columns run from the window edge inwards. Every column's inner edge resizes it; the last
-//! column's inner edge is the dock's inner edge. Behaviour follows VectorCraft `floating.rs`
+//! column's inner edge is the dock's inner edge. Behavior follows VectorCraft `floating.rs`
 //! (column layout, drop geometry) and PhotoCraft `dock.rs` (group heights).
 
 use std::{fmt::Debug, hash::Hash};

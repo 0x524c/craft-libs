@@ -73,7 +73,7 @@ fn key(area: Id) -> Id {
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'_, P> {
     /// Every gesture source the area drew in its last frame, with its rect in points. Hosts
     /// return these from a `ui.docking` control method beside the layout and `focused`; tests
-    /// drag from their centres.
+    /// drag from their centers.
     pub fn hit_rects(ctx: &Context, id: Id) -> Vec<(Hit<P>, Rect)> {
         ctx.data(|d| d.get_temp::<Vec<(Hit<P>, Rect)>>(key(id))).unwrap_or_default()
     }

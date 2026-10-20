@@ -80,7 +80,7 @@ impl<P: Clone + Eq + Hash> Workspace<P> {
     }
 
     /// Apply one action. Closed panels record where they go back, so each one can be reopened
-    /// with [`Self::set_visible`]. Honours [`Self::locked`]. Returns the panels the action
+    /// with [`Self::set_visible`]. Honors [`Self::locked`]. Returns the panels the action
     /// closed, in group order, so the application can release their state.
     pub fn apply(&mut self, action: Action<P>, permissions: impl Fn(&P) -> Permissions) -> Result<Vec<P>, DockError> {
         self.apply_all([action], permissions)
