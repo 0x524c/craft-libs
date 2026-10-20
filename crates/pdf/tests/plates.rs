@@ -446,3 +446,32 @@ fn a_callers_cmyk_conversion_separates_process_colour() {
         assert!(c.iter().zip(PCS_WHITE).all(|(v, w)| (v - w).abs() < 1e-3), "a Lab white arrives as the PCS white: {c:?}");
     }
 }
+
+/// A knockout group (`/K true`, pdfcraft #2974) of two process squares at 50 % opacity separates
+/// with only the top square where they overlap: its plates replace the bottom square's there.
+/// Without `/K` the two blend on every plate.
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn a_knockout_group_separates_with_only_the_top_object_in_the_overlap() {
+    let group = |entries: &str| {
+        let form = "/A gs 1 0 0 0 k 0 0 25 25 re f 0 1 0 0 k 15 15 25 25 re f";
+        page_pdf(
+            "/Fm Do",
+            "/XObject << /Fm 5 0 R >>",
+            &[stream(
+                &format!(
+                    "/Type /XObject /Subtype /Form /BBox [0 0 40 40] /Group << /S /Transparency {entries} >> /Resources << /ExtGState << /A << /ca 0.5 >> >> >>"
+                ),
+                form.as_bytes(),
+            )],
+        )
+    };
+    // Device rows run top down: the overlap is at (20, 20), cyan alone at (5, 35), magenta alone
+    // at (35, 5).
+    let knockout = plates(&group("/K true"), &inks(&[]), true, None);
+    assert_eq!(knockout.at(20, 20), [0, 50, 0, 0], "only the magenta square in the overlap");
+    assert_eq!(knockout.at(5, 35), [50, 0, 0, 0]);
+    assert_eq!(knockout.at(35, 5), [0, 50, 0, 0]);
+    let blended = plates(&group(""), &inks(&[]), true, None);
+    assert_eq!(blended.at(20, 20), [25, 50, 0, 0], "both squares without /K");
+}

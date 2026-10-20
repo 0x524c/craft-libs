@@ -33,11 +33,20 @@ PdfCraft's vendored `vello_common` patch (clip-intersection performance) is not 
 reader snapshot.
 
 Changes ported from PdfCraft pull requests that were open when they were ported, under the
-same MIT OR Apache-2.0 licence. Code comments keep the pull request's patch numbers.
+same MIT OR Apache-2.0 licence. Code comments keep the pull request's patch numbers, except
+where noted below.
 
 | PdfCraft PR | Author | Source commit | Files | Change |
 |---|---|---|---|---|
 | [#2770](https://github.com/storytold/pdfcraft/pull/2770) | Guillem Hermida (guillehr2) | [6fcf2a4](https://github.com/guillehr2/pdfcraft/commit/6fcf2a4aca29e943e28cb69017ff8f87d00656c6) | hayro-interpret `color.rs`, `interpret/mod.rs`, `interpret/path.rs`, `interpret/state.rs`, `pattern.rs`, `shading.rs`, `soft_mask.rs`, `x_object.rs` | Patches 35 and 36, plate mode: `InterpreterSettings::plate` draws one ink's separation as a gray film (`color::Plate`, `ColorSpace::ink_use`/`ink_tint`); the graphics state reads `OP`, `op` and `OPM` and an overprinting paint that doesn't specify the plate's ink leaves the plate as it is (ISO 32000-2 §8.6.7); `InterpreterSettings::ink_sink` reports spot inks; `color::CmykSimulation` converts process colour to an output intent's CMYK. Only the vendored interpreter part is ported; PdfCraft's `separations.rs` and Output Preview UI are not |
+| [#2974](https://github.com/storytold/pdfcraft/pull/2974) | mtlcl410 | [bae6981](https://github.com/mtlcl410/pdfcraft/commit/bae69819594a6385a027fec1f67e6b3c36c259b4) | hayro-interpret `device.rs`, `x_object.rs`; hayro `renderer.rs` | Knockout groups (`/K true`) knock out: while one is innermost, fills, strokes, glyph outlines and shadings are drawn with `Compose::Copy` (weighted by coverage); an unmasked image's rectangle (`Device::knockout_image`) and a nested group's shape (an erase pass between `Device::begin_knockout_erase` and `end_knockout_erase`) are cleared before their layer composites; a transparency group drawn in a knockout group always gets a layer of its own. Masked images and stencils composite as before |
+
+Code comments label #2974's changes `Knockout patch (pdfcraft #2974)` instead of a number: the
+pull request numbers them hayro-interpret patch 39 and hayro patch 19, and PdfCraft may
+renumber them when it merges. `crates/pdf/tests/knockout.rs` adapts its test; a plate-mode
+test in `crates/pdf/tests/plates.rs` checks that a knockout group separates with only the top
+object where two objects overlap. The erase pass resolves the group's resources with
+`Resources::from_scope`, as the group's own draw does in this tree.
 
 The output-intent conversion of patch 36 goes through a `color::CmykConversion` trait, so
 that callers can convert with their own colour management. `CmykSimulation::new` keeps

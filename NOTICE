@@ -105,6 +105,10 @@ The hayro-interpret plate mode (separations, overprint and output-intent simulat
 from PdfCraft pull request #2770 by Guillem Hermida, commit
 6fcf2a4aca29e943e28cb69017ff8f87d00656c6 (https://github.com/storytold/pdfcraft/pull/2770),
 MIT OR Apache-2.0; crates/pdf/tests/plates.rs and tests/support/synthetic_icc.rs adapt its tests.
+Knockout transparency groups in hayro-interpret and hayro are ported from PdfCraft pull request
+#2974 by mtlcl410, commit bae69819594a6385a027fec1f67e6b3c36c259b4
+(https://github.com/storytold/pdfcraft/pull/2974), MIT OR Apache-2.0;
+crates/pdf/tests/knockout.rs adapts its test.
 The reader retains the existing Foxit/PDFium standard-14 font assets (BSD-3-Clause),
 Compact ICC Profiles by Clinton Ingram (CC0-1.0), and dependency CMaps (BSD-3-Clause).
 Their licences and per-file hashes are retained in vendor/hayro-interpret/assets,

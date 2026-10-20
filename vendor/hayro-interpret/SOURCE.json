@@ -200,7 +200,7 @@
       "path": "src/device.rs",
       "source_sha256": "6f0c1203d1e60724cdd11e9a230249247a70f578c4a7ccb9bf39a23411b32db6",
       "source_git_blob": "36c64a23fd23f6c4abad941077cf93296a67841f",
-      "sha256": "6f0c1203d1e60724cdd11e9a230249247a70f578c4a7ccb9bf39a23411b32db6"
+      "sha256": "abe1a0a835deb409b4d466e1d0f041a0e53ef8981be0929070afc77258cd8434"
     },
     {
       "path": "src/encode.rs",
@@ -434,7 +434,7 @@
       "path": "src/x_object.rs",
       "source_sha256": "e1c51e96a335c32c122011b2d05c5020c36a33c2c73342ba173c28a3e2fe0219",
       "source_git_blob": "21b134ce8cd9604399cd0776febf923d69c02673",
-      "sha256": "20e9d2f4fcafd20e11d6255f2800c8732ea84e74e5061287c8d5fbcfb4ffe013"
+      "sha256": "a1828456a715f0d2a6a76ab10656a018d4b94c4012050b739bce09728ac27225"
     }
   ],
   "compatibility_reference": {
