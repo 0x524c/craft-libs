@@ -81,26 +81,22 @@ mod tests {
         let start = Rect::from_min_max(pos2(100.0, 80.0), pos2(400.0, 300.0));
         let viewport = Rect::from_min_max(Pos2::ZERO, pos2(800.0, 600.0));
         let limits = PanelLimits { min: vec2(160.0, 120.0), max: vec2(500.0, 400.0) };
-        for direction in [vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0), vec2(-1.0, 1.0), vec2(1.0, 1.0)] {
-            let edge = pos2(if direction.x < 0.0 { start.left() } else { start.right() }, start.bottom());
+        for direction in
+            [vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0), vec2(-1.0, 1.0), vec2(1.0, 1.0), vec2(0.0, -1.0), vec2(-1.0, -1.0), vec2(1.0, -1.0)]
+        {
+            let edge =
+                pos2(if direction.x < 0.0 { start.left() } else { start.right() }, if direction.y < 0.0 { start.top() } else { start.bottom() });
             let pointer = edge + vec2(2.0, -3.0);
             let resize = AnchoredResize::new(start, pointer, direction).unwrap();
             let rect = resize.rect(pointer + vec2(20.0, 25.0), viewport, limits).unwrap();
-            assert_eq!(rect.top(), start.top());
-            if direction.x < 0.0 {
-                assert_eq!(rect.right(), start.right());
-                assert_eq!(rect.left(), start.left() + 20.0);
-            } else {
-                assert_eq!(rect.left(), start.left());
-            }
-            if direction.x > 0.0 {
-                assert_eq!(rect.right(), start.right() + 20.0);
-            }
-            if direction.y > 0.0 {
-                assert_eq!(rect.bottom(), start.bottom() + 25.0);
-            } else {
-                assert_eq!(rect.bottom(), start.bottom());
-            }
+            // A moving edge follows the pointer; every other edge stays.
+            let moved = |d: f32, lo: f32, hi: f32, by: f32| match d {
+                d if d < 0.0 => (lo + by, hi),
+                d if d > 0.0 => (lo, hi + by),
+                _ => (lo, hi),
+            };
+            assert_eq!((rect.left(), rect.right()), moved(direction.x, start.left(), start.right(), 20.0), "{direction:?}");
+            assert_eq!((rect.top(), rect.bottom()), moved(direction.y, start.top(), start.bottom(), 25.0), "{direction:?}");
         }
     }
 

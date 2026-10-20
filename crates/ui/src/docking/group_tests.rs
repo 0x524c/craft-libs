@@ -556,7 +556,7 @@ fn a_group_dragged_out_of_a_floating_stack_tears_out_alone() {
     let mut d = Driver::new(layout);
     let from = d.rect("drag-bar", 6).center();
     let out = d.drag(from, pos2(700.0, 300.0));
-    assert!(matches!(moved_group(&out.actions), Some(Target::Float { rect: Some([_, _, 300.0, 191.5]) })), "{:?}", out.actions);
+    assert!(matches!(moved_group(&out.actions), Some(Target::Float { rect: Some([_, _, 300.0, 189.5]) })), "{:?}", out.actions);
     assert_eq!(d.layout.floating.len(), 2);
     assert_eq!(d.layout.floating[0].groups, vec![Group::new(vec![5], 0)]);
     assert_eq!(d.layout.floating[1].groups, vec![Group::new(vec![6, 7], 1)]);

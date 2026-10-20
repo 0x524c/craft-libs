@@ -289,7 +289,7 @@ fn floating_stack_seams_and_bands_insert_groups() {
     let divider = d.response(DockArea::hit_id(Id::new(AREA), &Hit::Divider(Divider::Group(5u32)))).unwrap().center();
     d.drag(divider, divider + vec2(0.0, 40.0));
     let heights: Vec<_> = window_of(&d.layout, 5).unwrap().groups.iter().map(|g| g.height.unwrap()).collect();
-    assert!((heights[0] - 181.5).abs() < 2.0 && (heights[1] - 101.5).abs() < 2.0, "{heights:?}");
+    assert!((heights[0] - 179.5).abs() < 2.0 && (heights[1] - 99.5).abs() < 2.0, "{heights:?}");
 }
 
 #[test]
@@ -456,7 +456,7 @@ fn hide_panels_keeps_protected_panels_and_the_except_set() {
     }
     // A window keeps its rect with its hidden groups left out.
     d.step(vec![]);
-    assert_eq!(d.title(6).min, pos2(300.0, 80.0));
+    assert_eq!(d.title(6).min, pos2(300.0, 84.0), "below the resize band");
 }
 
 #[test]
@@ -468,7 +468,7 @@ fn native_window_falls_back_in_window_when_viewports_are_embedded() {
     assert!(d.ctx.embed_viewports());
     let out = d.step(vec![]);
     assert!(out.actions.is_empty(), "{out:?}");
-    assert_eq!(d.title(5).min, pos2(300.0, 80.0));
+    assert_eq!(d.title(5).min, pos2(300.0, 84.0));
     assert_eq!(d.layout, layout);
 }
 
@@ -513,7 +513,7 @@ fn native_window_close_returns_the_group_to_its_in_window_rect() {
     assert_eq!(d.layout.floating[0].rect, [300.0, 80.0, 240.0, 300.0]);
     d.step(vec![]);
     d.step(vec![]);
-    assert_eq!(d.title(5).min, pos2(300.0, 80.0));
+    assert_eq!(d.title(5).min, pos2(300.0, 84.0));
 }
 
 #[test]
@@ -611,4 +611,29 @@ fn a_hidden_floating_window_does_not_cover_dock_targets() {
     let Node::Dock { columns, .. } = &**first else { panic!("{first:?}") };
     let groups: Vec<Vec<u32>> = columns[0].groups.iter().map(|g| g.panels.clone()).collect();
     assert_eq!(groups, vec![vec![2, 3], vec![8], vec![4]]);
+}
+
+#[test]
+fn top_edges_resize_from_the_band_above_the_title_bar() {
+    // W2 holds [8] at [560, 300, 200, 200]; each top handle keeps the opposite edges.
+    let area = Id::new(AREA);
+    for (edge, by, expected) in [
+        (ResizeEdge::Top, vec2(0.0, -40.0), [560.0, 260.0, 200.0, 240.0]),
+        (ResizeEdge::TopLeft, vec2(-30.0, 20.0), [530.0, 320.0, 230.0, 180.0]),
+        (ResizeEdge::TopRight, vec2(20.0, -10.0), [560.0, 290.0, 220.0, 210.0]),
+    ] {
+        let mut d = Driver::new(workspace(), Profile::Dock);
+        let handle = d.response(DockArea::hit_id(area, &Hit::Resize(8u32, edge))).unwrap();
+        assert_eq!(handle.bottom(), d.title(8).top(), "{edge:?} lies above the title bar");
+        d.drag(handle.center(), handle.center() + by);
+        assert_eq!(window_of(&d.layout, 8).unwrap().rect, expected, "{edge:?}");
+    }
+    // The title bar still moves the window, and arrow keys move the focused top edge.
+    let mut d = Driver::new(workspace(), Profile::Dock);
+    let title = d.title(8);
+    d.drag(pos2(title.center().x, title.top() + 1.0), pos2(title.center().x - 50.0, title.top() + 1.0));
+    assert_eq!(window_of(&d.layout, 8).unwrap().rect, [510.0, 300.0, 200.0, 200.0]);
+    d.ctx.memory_mut(|m| m.request_focus(DockArea::hit_id(area, &Hit::Resize(8u32, ResizeEdge::Top))));
+    d.step(vec![Event::Key { key: egui::Key::ArrowUp, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
+    assert_eq!(window_of(&d.layout, 8).unwrap().rect, [510.0, 292.0, 200.0, 208.0]);
 }

@@ -3,7 +3,7 @@ use std::{fmt::Debug, hash::Hash};
 use egui::{Context, Id, Key, Pos2, Rect, Ui, pos2, vec2};
 
 use super::{GroupKind, Renderer, clamp_float, node_limits};
-use crate::docking::chrome::{ChromeStyle, FloatingFrame, TitleBar};
+use crate::docking::chrome::{ChromeStyle, FloatingFrame, RESIZE_BAND, TitleBar};
 use crate::docking::{Action, DropProposal, Floating, Group, GroupDrag, GroupGesture, Node, PanelLimits, Placement, Target};
 use crate::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis};
 
@@ -43,7 +43,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// Size limits of a floating window: its title bar, each group's strip and the bodies of
     /// the groups that are not minimized.
     pub(super) fn window_limits(&self, window: &Floating<P>) -> PanelLimits {
-        let mut limits = PanelLimits { min: vec2(0.0, self.style.title_height), max: vec2(1_000_000.0, self.style.title_height) };
+        // A movable window is resizable, with a resize band above its title bar.
+        let band = if window.panels().all(|panel| self.permissions(panel).movable) { RESIZE_BAND } else { 0.0 };
+        let chrome = band + self.style.title_height;
+        let mut limits = PanelLimits { min: vec2(0.0, chrome), max: vec2(1_000_000.0, chrome) };
         for (index, group) in window.groups.iter().enumerate() {
             let policy = node_limits(&Node::Tabs { panels: group.panels.clone(), active: 0 }, self.style, &*self.content);
             let gap = if index > 0 { GAP } else { 0.0 };
@@ -62,7 +65,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let [x, y, width, height] = window.rect;
         let limits = self.window_limits(window);
         let size = vec2(width, height).max(limits.min).min(limits.max);
-        let rect = Rect::from_min_size(pos2(x, y), size);
+        let rect = crate::docking::chrome::clamp(Rect::from_min_size(pos2(x, y), size), screen);
         let id = self.id.with(("floating", first));
         if self.activation.as_ref().is_some_and(|panel| window.contains(panel)) {
             ctx.move_to_top(FloatingFrame::layer(id));
@@ -73,7 +76,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let response = FloatingFrame::new(id, rect).bounds(screen).limits(limits).resizable(movable).resize_label(&resize_label).show(
             ctx,
             &style,
-            |ui, rect| self.window_contents(ui, window, rect, &style),
+            |ui, contents| self.window_contents(ui, window, contents, rect, &style),
         );
         for handle in &response.handles {
             self.register_interaction(ctx, handle.id);
@@ -94,12 +97,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
     }
 
-    /// The title bar, then the stacked groups below it.
-    pub(super) fn window_contents(&mut self, ui: &mut Ui, window: &Floating<P>, rect: Rect, style: &ChromeStyle) {
-        let title = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.top() + self.style.title_height).min(rect.bottom())));
-        self.title_bar(ui, window, title, rect, style);
-        let body = Rect::from_min_max(pos2(rect.left(), title.bottom()), rect.max);
-        self.floating_stack(ui, &window.groups, body, rect);
+    /// The title bar, then the stacked groups below it, in `contents`. Moves carry the whole
+    /// `frame`, resize band included.
+    fn window_contents(&mut self, ui: &mut Ui, window: &Floating<P>, contents: Rect, frame: Rect, style: &ChromeStyle) {
+        let title = Rect::from_min_max(contents.min, pos2(contents.right(), (contents.top() + self.style.title_height).min(contents.bottom())));
+        self.title_bar(ui, window, title, frame, style);
+        let body = Rect::from_min_max(pos2(contents.left(), title.bottom()), contents.max);
+        self.floating_stack(ui, &window.groups, body, frame);
     }
 
     /// Drag moves the whole window live, double-click minimizes or expands every group, ×

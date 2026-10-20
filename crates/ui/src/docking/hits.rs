@@ -49,6 +49,9 @@ pub enum ResizeEdge {
     Bottom,
     BottomLeft,
     BottomRight,
+    Top,
+    TopLeft,
+    TopRight,
 }
 
 /// A divider that resizes what is on either side of it.
@@ -104,6 +107,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'_, P> {
                     ResizeEdge::Right => RESIZE_HANDLES[2],
                     ResizeEdge::Bottom => RESIZE_HANDLES[3],
                     ResizeEdge::BottomLeft => RESIZE_HANDLES[4],
+                    ResizeEdge::Top => RESIZE_HANDLES[5],
+                    ResizeEdge::TopLeft => RESIZE_HANDLES[6],
+                    ResizeEdge::TopRight => RESIZE_HANDLES[7],
                 };
                 id.with(("floating", p)).with(name)
             }
@@ -146,7 +152,16 @@ pub(super) fn named<P: Clone + Eq + Hash + Debug + Send + Sync + 'static>(area: 
         ] {
             name(hit);
         }
-        for edge in [ResizeEdge::BottomRight, ResizeEdge::Left, ResizeEdge::Right, ResizeEdge::Bottom, ResizeEdge::BottomLeft] {
+        for edge in [
+            ResizeEdge::BottomRight,
+            ResizeEdge::Left,
+            ResizeEdge::Right,
+            ResizeEdge::Bottom,
+            ResizeEdge::BottomLeft,
+            ResizeEdge::Top,
+            ResizeEdge::TopLeft,
+            ResizeEdge::TopRight,
+        ] {
             name(Hit::Resize(p(), edge));
         }
     }

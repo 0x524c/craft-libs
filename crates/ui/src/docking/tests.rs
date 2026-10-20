@@ -1420,7 +1420,7 @@ fn collapsed_floating_height_cap_does_not_disable_keyboard_width_resizing() {
     }
     ctx.memory_mut(|memory| memory.request_focus(id));
     frame(vec![Event::Key { key: egui::Key::ArrowRight, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
-    assert_eq!(layout.floating[0].rect, [80.0, 70.0, 308.0, 40.0]);
+    assert_eq!(layout.floating[0].rect, [80.0, 70.0, 308.0, 44.0]);
 }
 
 #[test]

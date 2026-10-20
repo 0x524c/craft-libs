@@ -189,7 +189,7 @@ fn title_dragged_out_floats_and_a_drop_near_an_edge_docks() {
         vec![PaneRequest::Place(Pane::Styles, Place::Floating), PaneRequest::FloatRect(Pane::Styles, [360.0, 112.0, 270.0, 480.0])],
         "floats under the pointer, clamped to the window"
     );
-    assert_eq!(title(&h, Pane::Styles).min, pos2(360.0, 112.0));
+    assert_eq!(title(&h, Pane::Styles).min, pos2(360.0, 116.0));
 
     // Dropped within 32 pt of the right edge: docked at End.
     h.state_mut().log.clear();

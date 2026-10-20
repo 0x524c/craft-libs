@@ -312,7 +312,7 @@ fn hit_rects_cover_every_gesture_source() {
         assert!(kinds(kind) > 0, "{name}: {hits:?}");
     }
     assert!(hits.iter().any(|(h, _)| matches!(h, Hit::Divider(Divider::Stack(10)))));
-    assert_eq!(hits.iter().filter(|(h, _)| matches!(h, Hit::Resize(..))).count(), 5);
+    assert_eq!(hits.iter().filter(|(h, _)| matches!(h, Hit::Resize(..))).count(), 8);
     for (hit, rect) in hits.iter().filter(|(h, _)| !matches!(h, Hit::Overflow(_) | Hit::Collapse(_) | Hit::StackToggle(_) | Hit::Close(_))) {
         let mut d = DockDriver::new(layout.clone(), Content);
         let from = rect.center();

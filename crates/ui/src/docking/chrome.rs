@@ -15,7 +15,12 @@ use super::{DockStyle, PanelLimits, resize::AnchoredResize};
 pub const TITLE_HEIGHT: f32 = 14.0;
 
 /// Names of the resize handles, appended to the frame id: `id.with(name)`.
-pub const RESIZE_HANDLES: [&str; 5] = ["resize", "resize-left", "resize-right", "resize-bottom", "resize-bottom-left"];
+pub const RESIZE_HANDLES: [&str; 8] =
+    ["resize", "resize-left", "resize-right", "resize-bottom", "resize-bottom-left", "resize-top", "resize-top-left", "resize-top-right"];
+
+/// Height of the top resize band of a resizable frame. The frame's contents start below it, so
+/// the band takes no moves or clicks from a title bar.
+pub const RESIZE_BAND: f32 = 4.0;
 
 /// Colors and font of the frame and title bar.
 #[derive(Clone, Debug)]
@@ -51,9 +56,12 @@ impl ChromeStyle {
     }
 }
 
-/// Resize handle hit rects and the edges they move: both sides, the bottom and both bottom
-/// corners. The top edge belongs to the title bar.
-fn handles(rect: Rect) -> [(&'static str, Rect, Vec2); 5] {
+/// Resize handle hit rects and the edges they move: every side and corner. The top handles
+/// fill the band above the contents; the others lie over the contents' edges.
+fn handles(rect: Rect) -> [(&'static str, Rect, Vec2); 8] {
+    let band_bottom = (rect.top() + RESIZE_BAND).min(rect.bottom());
+    let left_corner = (rect.left() + 12.0).min(rect.right());
+    let right_corner = (rect.right() - 12.0).max(rect.left());
     [
         ("resize", Rect::from_min_max((rect.max - vec2(12.0, 12.0)).max(rect.min), rect.max), vec2(1.0, 1.0)),
         (
@@ -73,12 +81,12 @@ fn handles(rect: Rect) -> [(&'static str, Rect, Vec2); 5] {
         ),
         (
             "resize-bottom-left",
-            Rect::from_min_max(
-                pos2(rect.left(), (rect.bottom() - 12.0).max(rect.top())),
-                pos2((rect.left() + 12.0).min(rect.right()), rect.bottom()),
-            ),
+            Rect::from_min_max(pos2(rect.left(), (rect.bottom() - 12.0).max(rect.top())), pos2(left_corner, rect.bottom())),
             vec2(-1.0, 1.0),
         ),
+        ("resize-top", Rect::from_min_max(pos2(left_corner, rect.top()), pos2(right_corner, band_bottom)), vec2(0.0, -1.0)),
+        ("resize-top-left", Rect::from_min_max(rect.min, pos2(left_corner, band_bottom)), vec2(-1.0, -1.0)),
+        ("resize-top-right", Rect::from_min_max(pos2(right_corner, rect.top()), pos2(rect.right(), band_bottom)), vec2(1.0, -1.0)),
     ]
 }
 
@@ -118,7 +126,8 @@ impl<'a> FloatingFrame<'a> {
         self
     }
 
-    /// Size limits of a resize. The frame itself is drawn at the given rect.
+    /// Size limits of a resize, top resize band included. The frame itself is drawn at the
+    /// given rect.
     pub fn limits(mut self, limits: PanelLimits) -> Self {
         self.limits = limits;
         self
@@ -139,7 +148,8 @@ impl<'a> FloatingFrame<'a> {
         LayerId::new(Order::Middle, id)
     }
 
-    /// Draw the frame, then `add_contents` with the frame's rect, then the outline and handles.
+    /// Draw the frame, then `add_contents` with the rect for its contents (the frame's rect below
+    /// the top resize band when resizable), then the outline and handles.
     pub fn show<R>(self, ctx: &Context, style: &ChromeStyle, add_contents: impl FnOnce(&mut Ui, Rect) -> R) -> FrameResponse<R> {
         let bounds = self.bounds.unwrap_or_else(|| ctx.content_rect());
         let rect = clamp(self.rect, bounds);
@@ -155,7 +165,9 @@ impl<'a> FloatingFrame<'a> {
             ui.set_min_size(rect.size());
             ui.allocate_rect(rect, Sense::hover());
             ui.painter().rect_filled(rect, 0.0, style.background);
-            let inner = add_contents(ui, rect);
+            let contents =
+                if self.resizable { Rect::from_min_max(pos2(rect.left(), (rect.top() + RESIZE_BAND).min(rect.bottom())), rect.max) } else { rect };
+            let inner = add_contents(ui, contents);
             ui.painter().rect_stroke(rect, 0.0, style.stroke, StrokeKind::Outside);
             let (resized, resize_started, handles) = if self.resizable { self.handles(ui, rect, bounds, style) } else { (None, None, Vec::new()) };
             FrameResponse { inner, rect, layer: Self::layer(self.id), resized, resize_started, handles }
@@ -167,7 +179,7 @@ impl<'a> FloatingFrame<'a> {
         let mut resized = None;
         let mut started = None;
         let mut responses = Vec::new();
-        let limits = PanelLimits { min: self.limits.min.max(vec2(40.0, TITLE_HEIGHT + 20.0)).min(self.limits.max), ..self.limits };
+        let limits = PanelLimits { min: self.limits.min.max(vec2(40.0, RESIZE_BAND + TITLE_HEIGHT + 20.0)).min(self.limits.max), ..self.limits };
         let canceled = ui.input(|input| input.key_pressed(Key::Escape) || !input.focused);
         for (name, handle, direction) in handles(rect) {
             if !super::targets::usable(handle) {
