@@ -2,11 +2,7 @@ use std::{fmt::Debug, hash::Hash};
 
 use egui::{Color32, Context, FontId, Id, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-use super::{
-    Action, DockError, DropTarget, Layout, Permissions,
-    render::Renderer,
-    resize::AnchoredResize,
-};
+use super::{Action, DockError, DropTarget, Layout, Permissions, render::Renderer, resize::AnchoredResize};
 
 /// Horizontal room around a tab's label, both when measuring its natural width and when cutting it.
 pub(super) const TAB_PADDING: f32 = 24.0;

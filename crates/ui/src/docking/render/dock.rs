@@ -417,9 +417,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     fn dock_covered(&self, pointer: Pos2, moving: Option<&P>) -> bool {
         self.blockers.iter().any(|r| r.contains(pointer))
             || self.iconic.covers(pointer)
-            || self.frame.stacks.iter().any(|window| {
-                window.window.contains(pointer) && !moving.is_some_and(|p| window.groups.iter().any(|(panels, ..)| panels.contains(p)))
-            })
+            || self
+                .frame
+                .stacks
+                .iter()
+                .any(|window| window.window.contains(pointer) && !moving.is_some_and(|p| window.groups.iter().any(|(panels, ..)| panels.contains(p))))
     }
 
     /// Dock targets, with the new-dock bands along the docked area's left and right edges that
