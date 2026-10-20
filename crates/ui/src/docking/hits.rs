@@ -14,7 +14,8 @@ use super::{DockArea, Floating, Layout, Node, render::RESIZE_HANDLES};
 pub enum Hit<P> {
     /// A tab: click activates, drag moves the panel (S1).
     Tab(P),
-    /// A group's drag bar: click opens the group menu, drag moves the group (S2).
+    /// A group's drag bar: drag moves the group; a right click, Enter or Space opens the group
+    /// menu (S2).
     DragBar(P),
     /// The top border of a group's strip: drag moves the group (S3).
     Border(P),

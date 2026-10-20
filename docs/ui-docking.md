@@ -180,6 +180,8 @@ A flyout fits its content the same way, without the title bar.
 - Drop previews show the destination: an outline for tabs, a line for a new group, column or dock,
   a filled half for a split. Escape or losing window focus cancels a drag.
 - Double-click a tab or drag bar to minimize a group to its strip.
+- Right-click a tab for its menu, or a drag bar for the group menu; Enter or Space on a focused
+  drag bar opens it too. A left click on the drag bar only focuses it.
 - In the Frame profile, the mouse wheel over a tab strip selects the next or previous tab, and a
   middle click on a closable panel's tab closes it. `DockStyle::wheel_selects_tabs` and
   `middle_click_closes_tabs` turn either on or off in any profile.

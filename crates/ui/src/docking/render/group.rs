@@ -152,8 +152,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         ui.painter().rect_stroke(rect, 0.0, self.style.border, StrokeKind::Inside);
     }
 
-    /// The drag bar (`drag-bar`: click, double-click, menu and drag) or the top border band
-    /// (`drag-border`: drag only). Both move the whole group.
+    /// The drag bar (`drag-bar`: drag, double-click, and the group menu on a right click, Enter
+    /// or Space) or the top border band (`drag-border`: drag only). Both move the whole group;
+    /// a left click on the bar only focuses it.
     fn group_handle(&mut self, ui: &mut Ui, name: &'static str, hit: Rect, owner: &TabGroup<'_, P>, movable: bool) {
         if !crate::docking::targets::usable(hit) {
             return;
