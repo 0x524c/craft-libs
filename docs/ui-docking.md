@@ -135,8 +135,8 @@ Builder options on `DockArea`:
 and the floating window ×. They hide controls only: a panel that stays `closable` still closes
 by the app's own Close items and commands.
 
-`DockArea::chrome_has_focus` tells whether keyboard focus is on docking chrome rather than on a
-panel body. Focus follows only the user's input: a tab keeps keyboard focus until a command or a
+`DockArea::chrome_has_focus` tells whether keyboard focus is on docking chrome (any control a
+`Hit` names) rather than on a panel body. Focus follows only the user's input: a tab keeps keyboard focus until a command or a
 workspace reset hides, closes or moves its panel, and then gives it up. A divider or a floating
 window's resize grip keeps keyboard focus after a pointer drag, so arrow keys resize it right
 away; its focus highlight shows once a key is pressed. Hovering focuses nothing. `begin_drag` hands a drag that started in the app's own chrome to the area.

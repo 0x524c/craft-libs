@@ -371,3 +371,19 @@ fn an_icon_painted_in_code_replaces_the_initial_and_others_fall_back() {
     assert_eq!(initials.len(), 1, "only panel 2 draws its initial: {initials:?}");
     assert!(two.contains(initials[0]));
 }
+
+#[test]
+fn chrome_has_focus_covers_every_drawn_control() {
+    let mut layout = docked(&[&[1, 2], &[3]], true);
+    layout.floating.push(Floating::single(vec![5, 6], 0, [400.0, 100.0, 240.0, 200.0]));
+    let mut d = Driver::new(layout, Content);
+    d.settle();
+    let hits = d.hits();
+    assert!(hits.iter().any(|(h, _)| matches!(h, Hit::Icon(_))), "{hits:?}");
+    assert!(hits.iter().any(|(h, _)| matches!(h, Hit::IconGrip(_))), "{hits:?}");
+    assert!(hits.iter().any(|(h, _)| matches!(h, Hit::Resize(_, ResizeEdge::Left))), "{hits:?}");
+    for (hit, _) in hits {
+        d.ctx.memory_mut(|m| m.request_focus(DockArea::<u32>::hit_id(d.id, &hit)));
+        assert!(DockArea::<u32>::new(d.id).chrome_has_focus(&d.ctx, &d.layout), "{hit:?}");
+    }
+}

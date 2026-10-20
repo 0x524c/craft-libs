@@ -3,8 +3,8 @@ use std::{fmt::Debug, hash::Hash};
 use egui::{Color32, Context, FontId, Id, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
 use super::{
-    Action, DockError, DropTarget, Layout, Node, Permissions,
-    render::{RESIZE_HANDLES, Renderer},
+    Action, DockError, DropTarget, Layout, Permissions,
+    render::Renderer,
     resize::AnchoredResize,
 };
 
@@ -701,60 +701,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
         if layout.validate().is_err() || ctx.read_response(focused).is_none() {
             return false;
         }
-        let matches = |id: Id| id == focused;
-        let group = |panels: &[P]| {
-            panels.iter().any(|panel| matches(self.id.with(("tab", panel))) || matches(self.id.with(("overflow", panel))))
-                || ["move-group", "drag-bar", "drag-border"].iter().any(|name| matches(self.id.with((*name, panels.first()))))
-        };
-        for floating in &layout.floating {
-            if floating.groups.iter().any(|g| group(&g.panels))
-                || floating.panels().next().is_some_and(|first| {
-                    RESIZE_HANDLES.iter().any(|name| matches(self.id.with(("floating", first)).with(*name)))
-                        || matches(self.id.with(("move-group", Some(first))).with("close"))
-                })
-                || floating.groups.iter().any(|g| matches(self.id.with(("group-resize", g.panels.first()))))
-            {
-                return true;
-            }
-        }
-        let mut nodes = layout.root.as_ref().map(|root| vec![(root, Vec::<bool>::new())]).unwrap_or_default();
-        while let Some((node, path)) = nodes.pop() {
-            match node {
-                Node::Tabs { panels, .. } if group(panels) => return true,
-                Node::Dock { columns, .. }
-                    if columns.iter().flat_map(|c| c.groups.iter()).any(|g| {
-                        group(&g.panels)
-                            || ["column-bar", "column-collapse", "column-resize", "group-resize"]
-                                .iter()
-                                .any(|name| matches(self.id.with((*name, g.panels.first()))))
-                    }) =>
-                {
-                    return true;
-                }
-                Node::Stack { entries } => {
-                    if entries.iter().any(|entry| {
-                        matches(self.id.with(("tab", &entry.panel)))
-                            || matches(self.id.with(("collapse", &entry.panel)))
-                            || matches(self.id.with(("stack-resize", &entry.panel)))
-                    }) {
-                        return true;
-                    }
-                }
-                Node::Split { first, second, .. } => {
-                    if matches(self.id.with(("split", &path))) {
-                        return true;
-                    }
-                    let mut second_path = path.clone();
-                    second_path.push(true);
-                    let mut first_path = path;
-                    first_path.push(false);
-                    nodes.push((second, second_path));
-                    nodes.push((first, first_path));
-                }
-                _ => {}
-            }
-        }
-        false
+        super::hits::named(self.id, layout).contains_key(&focused)
     }
 
     /// Raise a panel's floating window (or open its flyout) on this frame. Apply Activate

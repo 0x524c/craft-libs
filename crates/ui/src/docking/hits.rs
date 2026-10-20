@@ -120,8 +120,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'_, P> {
     }
 }
 
-/// Name the controls the renderer registered this frame and store their rects.
-pub(super) fn record<P: Clone + Eq + Hash + Debug + Send + Sync + 'static>(ctx: &Context, area: Id, layout: &Layout<P>, owned: &[Id]) {
+/// Every control the area `area` can draw for `layout`, by widget id.
+pub(super) fn named<P: Clone + Eq + Hash + Debug + Send + Sync + 'static>(area: Id, layout: &Layout<P>) -> HashMap<Id, Hit<P>> {
     let mut names: HashMap<Id, Hit<P>> = HashMap::new();
     let mut name = |hit: Hit<P>| {
         names.insert(DockArea::<P>::hit_id(area, &hit), hit);
@@ -162,6 +162,12 @@ pub(super) fn record<P: Clone + Eq + Hash + Debug + Send + Sync + 'static>(ctx: 
             nodes.push((first, first_path));
         }
     }
+    names
+}
+
+/// Name the controls the renderer registered this frame and store their rects.
+pub(super) fn record<P: Clone + Eq + Hash + Debug + Send + Sync + 'static>(ctx: &Context, area: Id, layout: &Layout<P>, owned: &[Id]) {
+    let mut names = named(area, layout);
     let hits: Vec<(Hit<P>, Rect)> =
         owned.iter().filter_map(|id| Some((names.remove(id)?, ctx.read_response(*id)?.rect))).filter(|(_, rect)| rect.is_positive()).collect();
     ctx.data_mut(|d| d.insert_temp(key(area), hits));
