@@ -27,10 +27,10 @@ fn binding_text(km: &Keymap, text: &dyn Text, b: &Binding, home: &Scope) -> Stri
     }
 }
 
-/// Groups in the table's order; commands in catalogue order within a group.
+/// Groups in the table's order; commands in catalog order within a group.
 fn groups(km: &Keymap, text: &dyn Text) -> Vec<Group> {
     let mut out: Vec<Group> = Vec::new();
-    for b in km.catalogue() {
+    for b in km.catalog() {
         let bindings = km.bindings(&b.command);
         if bindings.is_empty() {
             continue;

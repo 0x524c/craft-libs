@@ -1,5 +1,5 @@
 //! The on-screen keyboard pane (§2.9 of the dialog plan, `Options::keyboard`): a US ANSI layout
-//! coloured by who holds each key with the chosen modifiers, modifier toggles that also follow the
+//! colored by who holds each key with the chosen modifiers, modifier toggles that also follow the
 //! held modifiers, the shortcuts of the clicked key, and Assign to Selected.
 
 use std::collections::HashMap;
@@ -242,7 +242,7 @@ impl KeyboardState {
         }
         let platform = keymap.platform();
         let mut map: HashMap<Chord, Vec<KeyHolder>> = HashMap::new();
-        for b in keymap.catalogue() {
+        for b in keymap.catalog() {
             for binding in keymap.bindings(&b.command) {
                 let scope = binding.scope_or(&b.scope).clone();
                 let holder = Holder { command: b.command.clone(), binding };

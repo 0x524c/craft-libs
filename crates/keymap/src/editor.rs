@@ -7,11 +7,11 @@
 //! use craft_keymap::editor::holders;
 //! use craft_keymap::{AssignError, Bindable, Binding, Chord, EditSession, Keymap, Platform, Policy, Recorded, Recorder, Scope, Scopes};
 //!
-//! let catalogue = vec![
+//! let catalog = vec![
 //!     Bindable::new("file.save", "Save", Scope::app()).with_default(Binding::parse("Cmd+S").unwrap()),
 //!     Bindable::new("edit.copy", "Copy", Scope::app()).with_default(Binding::parse("Cmd+C").unwrap()),
 //! ];
-//! let mut keymap = Keymap::new(catalogue, Scopes::new(), Platform::Mac);
+//! let mut keymap = Keymap::new(catalog, Scopes::new(), Platform::Mac);
 //! let now = 12.5;
 //!
 //! let mut session = EditSession::begin(&keymap);
@@ -231,13 +231,13 @@ impl Recorder {
     }
 }
 
-/// The bindables matching `query`, in catalogue order: a case-insensitive substring of the label,
+/// The bindables matching `query`, in catalog order: a case-insensitive substring of the label,
 /// an alias, a menu path segment, the command id, or a binding's canonical or `platform` display
 /// text. An empty query matches everything.
 pub fn search<'a>(keymap: &'a Keymap, query: &str, platform: Platform) -> Vec<&'a Bindable> {
     let q = query.trim().to_lowercase();
     keymap
-        .catalogue()
+        .catalog()
         .iter()
         .filter(|b| {
             if q.is_empty() {

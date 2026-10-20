@@ -1,10 +1,10 @@
-//! The dialog's colours and the icon-button style built from them.
+//! The dialog's colors and the icon-button style built from them.
 
 use craft_ui::buttons::{ButtonVisuals, IconButtonStyle};
 use craft_ui::layout::ResizeHandleStyle;
 use egui::{Color32, Stroke, Visuals};
 
-/// The dialog's colours.
+/// The dialog's colors.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DialogStyle {
     pub accent: Color32,
@@ -35,7 +35,7 @@ impl DialogStyle {
     }
 }
 
-/// Icon buttons (+, ×, ↺, ⌨, ✕) in the colours of the app's visuals.
+/// Icon buttons (+, ×, ↺, ⌨, ✕) in the colors of the app's visuals.
 pub(crate) fn icon_buttons(v: &Visuals) -> IconButtonStyle {
     let w = &v.widgets;
     IconButtonStyle {

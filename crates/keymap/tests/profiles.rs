@@ -9,13 +9,13 @@ fn b(text: &str) -> Binding {
 }
 
 fn keymap() -> Keymap {
-    let catalogue = vec![
+    let catalog = vec![
         Bindable::new("file.save", "Save", Scope::app()).with_path(vec!["File".into(), "Save".into()]).with_default(b("Cmd+S")),
         Bindable::new("edit.copy", "Copy", Scope::app()).with_path(vec!["Edit".into(), "Copy".into()]).with_default(b("Cmd+C")),
         Bindable::new(CommandRef::with_params("window.panel", json!({"panel": "layers"})), "Layers", Scope::app()).with_default(b("F7")),
         Bindable::new("timeline.loop", "Loop", Scope::new("Timeline").unwrap()).with_default(b("L")),
     ];
-    Keymap::new(catalogue, Scopes::new().with_panel("Timeline"), Platform::Mac)
+    Keymap::new(catalog, Scopes::new().with_panel("Timeline"), Platform::Mac)
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn an_exported_set_imports_as_a_new_set_with_the_same_keymap() {
 
     let mut again = keymap();
     again.set_overrides(p.active_overrides(&builtins).clone());
-    for bindable in km.catalogue() {
+    for bindable in km.catalog() {
         assert_eq!(again.bindings(&bindable.command), km.bindings(&bindable.command), "{}", bindable.command.key());
     }
     assert_eq!(again.overrides(), km.overrides());

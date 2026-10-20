@@ -473,7 +473,7 @@ impl DialogState {
         let platform = env.keymap.platform();
         let want = trigger.effective(platform);
         let mut shadows = Vec::new();
-        for b in env.keymap.catalogue() {
+        for b in env.keymap.catalog() {
             if b.command == command {
                 continue;
             }

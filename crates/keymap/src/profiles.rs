@@ -36,7 +36,7 @@ const FORMAT: &str = "craft-keymap";
 const VERSION: u64 = 1;
 const IMPORTED: &str = "Imported";
 
-/// The app's built-in sets: name and overrides against the catalogue defaults.
+/// The app's built-in sets: name and overrides against the catalog defaults.
 pub type Builtins<'a> = [(&'a str, Overrides)];
 
 /// Why a set operation was refused.

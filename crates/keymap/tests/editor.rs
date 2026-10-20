@@ -13,13 +13,13 @@ fn b(text: &str) -> Binding {
 }
 
 fn keymap(platform: Platform) -> Keymap {
-    let catalogue = vec![
+    let catalog = vec![
         Bindable::new("file.save", "Save", Scope::app()).with_default(b("Cmd+S")).with_path(vec!["File".into(), "Save".into()]),
         Bindable::new("edit.copy", "Copy", Scope::app()).with_default(b("Cmd+C")).with_alias("Kopieren"),
         Bindable::new("view.zoomIn", "Zoom In", Scope::app()).with_default(b("Cmd+=")),
         Bindable::new("tool.brush", "Brush", Scope::app()).with_default(b("B")).with_path(vec!["Tools".into(), "Paint".into()]),
     ];
-    Keymap::new(catalogue, Scopes::new(), platform)
+    Keymap::new(catalog, Scopes::new(), platform)
 }
 
 fn keys(km: &Keymap, id: &str) -> Vec<String> {
@@ -87,7 +87,7 @@ fn undo_keeps_the_newest_steps() {
 fn undo_history_is_capped_by_size() {
     let mut km = keymap(Platform::Windows);
     let mut session = EditSession::begin(&km);
-    // Full-size snapshots of entries for commands the catalogue does not have.
+    // Full-size snapshots of entries for commands the catalog does not have.
     let big = |tag: char| {
         let mut o = Overrides::new();
         for n in 0..MAX_COMMANDS {

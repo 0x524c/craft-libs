@@ -16,7 +16,7 @@ struct Entry {
     line: Option<usize>,
     keys: String,
     note: String,
-    /// The note is what the item becomes (Will change), drawn in the text colour, not dimmed.
+    /// The note is what the item becomes (Will change), drawn in the text color, not dimmed.
     to: bool,
     /// Chord text inside the note, kept out of bidi reordering.
     note_chord: String,
@@ -55,7 +55,7 @@ impl Draw<'_, '_> {
         line.map(|n| fill(self.ui("line {n}"), &[("n", &n.to_string())]))
     }
 
-    /// "item · line n · keys — note" on one wrapping line, the item in the strong colour.
+    /// "item · line n · keys — note" on one wrapping line, the item in the strong color.
     fn entry(&self, ui: &mut Ui, e: &Entry) {
         let font = TextStyle::Body.resolve(ui.style());
         let strong = ui.visuals().strong_text_color();

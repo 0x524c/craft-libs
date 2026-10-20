@@ -59,7 +59,7 @@ impl Fx {
         self.km.bindings(&CommandRef::from(id)).iter().map(|b| b.to_string()).collect()
     }
 
-    fn cancelled(&self) -> bool {
+    fn canceled(&self) -> bool {
         self.outcomes.iter().any(|o| matches!(o, Outcome::Cancel))
     }
 }
@@ -162,10 +162,10 @@ fn escape_cancels_recording_only() {
     press(&mut h, Modifiers::NONE, EguiKey::Escape);
     assert!(h.state().state.is_open());
     assert!(!h.state().state.is_recording());
-    assert!(!h.state().cancelled());
+    assert!(!h.state().canceled());
     assert_eq!(h.state().bindings("file.save"), ["Cmd+S"]);
     press(&mut h, Modifiers::NONE, EguiKey::Escape);
-    assert!(h.state().cancelled());
+    assert!(h.state().canceled());
     assert!(!h.state().state.is_open());
 }
 
@@ -432,9 +432,9 @@ fn table_keys_move_record_and_delete() {
 fn small_window_keeps_ok_and_long_labels_truncate() {
     let long = "A very long command label ".repeat(12);
     let mut km = fixture(Platform::Mac);
-    let mut catalogue = km.catalogue().to_vec();
-    catalogue.insert(0, Bindable::new("file.long", long.trim(), Scope::app()).with_path(vec!["File".into(), long.trim().into()]));
-    km = Keymap::new(catalogue, Scopes::new().with_panel("Timeline").with_context("Text"), Platform::Mac);
+    let mut catalog = km.catalog().to_vec();
+    catalog.insert(0, Bindable::new("file.long", long.trim(), Scope::app()).with_path(vec!["File".into(), long.trim().into()]));
+    km = Keymap::new(catalog, Scopes::new().with_panel("Timeline").with_context("Text"), Platform::Mac);
     let mut fx = Fx::new(km);
     fx.window = true;
     let size = vec2(480.0, 360.0);
@@ -460,7 +460,7 @@ fn window_close_is_cancel() {
     press(&mut h, Modifiers::NONE, EguiKey::F2);
     assert_eq!(h.state().bindings("file.save"), ["F2"]);
     click(&mut h, "Cancel");
-    assert!(h.state().cancelled());
+    assert!(h.state().canceled());
     assert_eq!(h.state().bindings("file.save"), ["Cmd+S"]);
 }
 
@@ -587,7 +587,7 @@ fn cancel_restores_keymap_and_sets() {
     click_last(&mut h, "Delete");
     assert!(!profiles(&h).sets.contains_key("Other"));
     click(&mut h, "Cancel");
-    assert!(h.state().cancelled());
+    assert!(h.state().canceled());
     assert_eq!(profiles(&h), &before);
     assert!(h.state().km.overrides().is_empty());
 }
@@ -691,14 +691,14 @@ fn picking_a_suggestion_replans_and_is_remembered() {
 #[test]
 fn summary_escapes_html_and_keeps_text_lines() {
     let mut km = fixture(Platform::Mac);
-    let mut catalogue = km.catalogue().to_vec();
+    let mut catalog = km.catalog().to_vec();
     let label = "<b>\"Tom\" & 'Jerry'</b>\nNext";
-    catalogue.push(
+    catalog.push(
         Bindable::new("edit.tricky", label, Scope::app())
             .with_path(vec!["Edit".into(), "Tricky".into()])
             .with_default(craft_keymap::Binding::parse("F6").expect("F6")),
     );
-    km = Keymap::new(catalogue, Scopes::new().with_panel("Timeline").with_context("Text"), Platform::Mac);
+    km = Keymap::new(catalog, Scopes::new().with_panel("Timeline").with_context("Text"), Platform::Mac);
     let mut h = open(Fx::new(km));
     click(&mut h, "Summarize…");
     let (html, text) = h
@@ -734,13 +734,13 @@ fn with_keyboard(options: impl FnOnce(&mut Fx)) -> Harness<'static, Fx> {
     open(fx)
 }
 
-/// What a key's colour means, as its accessibility description says it.
+/// What a key's color means, as its accessibility description says it.
 fn holders_class(h: &Harness<'_, Fx>, key: &str) -> String {
     h.get_by_role_and_label(Role::Button, key).accesskit_node().description().unwrap_or_default().to_string()
 }
 
 #[test]
-fn keyboard_colours_keys_and_assigns_to_the_selected_command() {
+fn keyboard_colors_keys_and_assigns_to_the_selected_command() {
     let mut h = with_keyboard(|_| {});
     assert_eq!(holders_class(&h, "M: Marquee Tool, Elliptical Marquee Tool"), "Application");
     assert_eq!(holders_class(&h, "L: Loop (Timeline)"), "Panel or context");
@@ -831,7 +831,7 @@ fn read_only_has_no_edit_controls() {
     click(&mut h, "Summarize…");
     assert!(h.state().outcomes.iter().any(|o| matches!(o, Outcome::Summary { .. })));
     click(&mut h, "Close");
-    assert!(h.state().cancelled());
+    assert!(h.state().canceled());
 }
 
 // ---- Pseudo locale ----
@@ -864,7 +864,7 @@ fn check_pseudo(h: &Harness<'_, Fx>, width: f32, step: &str) {
         let words = rest.split(|c: char| !c.is_ascii_lowercase()).any(|w| w.len() > 1);
         assert!(!words, "{step}: {label:?} has text that did not go through Text");
     }
-    assert!(seen > 15, "{step}: {seen} labelled nodes");
+    assert!(seen > 15, "{step}: {seen} labeled nodes");
 }
 
 #[test]

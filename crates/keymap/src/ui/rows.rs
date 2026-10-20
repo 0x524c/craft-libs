@@ -69,7 +69,7 @@ pub(crate) struct Chip {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Row {
-    /// Position in the catalogue.
+    /// Position in the catalog.
     pub index: usize,
     pub command: CommandRef,
     /// [`CommandRef::key`], for automation ids and the overrides.
@@ -92,7 +92,7 @@ pub(crate) struct Row {
 pub(crate) struct FixedLine {
     pub label: String,
     pub keys: String,
-    /// The label of a catalogue command now bound to the row's chord: drawn struck through.
+    /// The label of a catalog command now bound to the row's chord: drawn struck through.
     pub now_used_by: Option<String>,
 }
 
@@ -186,12 +186,12 @@ fn is_tool(b: &Bindable) -> bool {
     matches!(b.kind, Kind::Tool { .. })
 }
 
-/// The Show entries, in catalogue order, leaving out areas with no rows.
+/// The Show entries, in catalog order, leaving out areas with no rows.
 pub(crate) fn areas(keymap: &Keymap, options: &Options, text: &dyn Text) -> Vec<AreaEntry> {
-    let catalogue = keymap.catalogue();
+    let catalog = keymap.catalog();
     let mut out = vec![AreaEntry { id: AreaId::All, label: text.ui("All Commands").into_owned() }];
     let mut menus: Vec<&str> = Vec::new();
-    for m in catalogue.iter().filter_map(top_menu) {
+    for m in catalog.iter().filter_map(top_menu) {
         if !menus.contains(&m) {
             menus.push(m);
         }
@@ -200,19 +200,19 @@ pub(crate) fn areas(keymap: &Keymap, options: &Options, text: &dyn Text) -> Vec<
         let label = craft_i18n::fmt(&text.ui("{menu} Menu"), &[("menu", &text.segment(m))]);
         out.push(AreaEntry { id: AreaId::Menu(m.to_string()), label });
     }
-    if catalogue.iter().any(is_tool) {
+    if catalog.iter().any(is_tool) {
         out.push(AreaEntry { id: AreaId::Tools, label: text.ui("Tools").into_owned() });
     }
     let mut panels: Vec<&str> = keymap.scopes().panels().iter().map(String::as_str).collect();
-    for b in catalogue.iter().filter(|b| !b.scope.is_app()) {
+    for b in catalog.iter().filter(|b| !b.scope.is_app()) {
         if !panels.contains(&b.scope.as_str()) {
             panels.push(b.scope.as_str());
         }
     }
-    for p in panels.into_iter().filter(|p| catalogue.iter().any(|b| b.scope.as_str() == *p)) {
+    for p in panels.into_iter().filter(|p| catalog.iter().any(|b| b.scope.as_str() == *p)) {
         out.push(AreaEntry { id: AreaId::Panel(p.to_string()), label: panel_label(text, p) });
     }
-    if catalogue.iter().any(|b| top_menu(b).is_none() && !is_tool(b)) {
+    if catalog.iter().any(|b| top_menu(b).is_none() && !is_tool(b)) {
         out.push(AreaEntry { id: AreaId::Other, label: text.ui("Other").into_owned() });
     }
     for a in &options.areas {
@@ -240,7 +240,7 @@ fn in_area(area: &AreaId, b: &Bindable, options: &Options) -> bool {
     }
 }
 
-/// The first id segment, capitalised: `layer.lock` → `Layer`.
+/// The first id segment, capitalized: `layer.lock` → `Layer`.
 fn id_group(id: &str) -> String {
     let first = id.split('.').next().unwrap_or(id);
     let mut chars = first.chars();
@@ -314,7 +314,7 @@ impl Query {
 
 fn build(keymap: &Keymap, options: &Options, text: &dyn Text, view: &View) -> Built {
     let platform = keymap.platform();
-    let catalogue = keymap.catalogue();
+    let catalog = keymap.catalog();
     let mut built = Built::default();
     let mut clashing: HashSet<String> = HashSet::new();
     for c in keymap.conflicts() {
@@ -333,10 +333,10 @@ fn build(keymap: &Keymap, options: &Options, text: &dyn Text, view: &View) -> Bu
         return built;
     }
 
-    let bindings: Vec<Vec<Binding>> = catalogue.iter().map(|b| keymap.bindings(&b.command)).collect();
+    let bindings: Vec<Vec<Binding>> = catalog.iter().map(|b| keymap.bindings(&b.command)).collect();
     // How many tools of a group hold each effective trigger.
     let mut tool_keys: HashMap<(Option<&str>, Trigger), usize> = HashMap::new();
-    for (b, list) in catalogue.iter().zip(&bindings) {
+    for (b, list) in catalog.iter().zip(&bindings) {
         if let Kind::Tool { group } = &b.kind {
             for x in list {
                 *tool_keys.entry((group.as_deref(), x.trigger.effective(platform))).or_default() += 1;
@@ -344,13 +344,13 @@ fn build(keymap: &Keymap, options: &Options, text: &dyn Text, view: &View) -> Bu
         }
     }
     let submenus = match view.area {
-        AreaId::Menu(m) => catalogue.iter().any(|b| top_menu(b) == Some(m.as_str()) && b.paths.first().is_some_and(|p| p.len() >= 3)),
+        AreaId::Menu(m) => catalog.iter().any(|b| top_menu(b) == Some(m.as_str()) && b.paths.first().is_some_and(|p| p.len() >= 3)),
         _ => false,
     };
 
     // Groups in first-seen order within their rank.
     let mut groups: Vec<(u8, Option<String>, Vec<Row>)> = Vec::new();
-    for (index, (b, list)) in catalogue.iter().zip(&bindings).enumerate() {
+    for (index, (b, list)) in catalog.iter().zip(&bindings).enumerate() {
         if !in_area(view.area, b, options) || !query.matches(b, list, text, platform) {
             continue;
         }
@@ -427,7 +427,7 @@ fn build_fixed(keymap: &Keymap, options: &Options, text: &dyn Text, view: &View,
         let now_used_by = f.chord.and_then(|c| {
             let c = c.effective(platform);
             keymap
-                .catalogue()
+                .catalog()
                 .iter()
                 .find(|b| keymap.bindings(&b.command).iter().any(|x| x.trigger.effective(platform) == c))
                 .map(|b| text.command(b).into_owned())
@@ -468,7 +468,7 @@ pub(crate) mod tests {
         let tool = Kind::Tool { group: Some("Marquee".into()) };
         let path = |p: &[&str]| p.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let timeline = Scope::new("Timeline").unwrap_or_else(Scope::app);
-        let catalogue = vec![
+        let catalog = vec![
             Bindable::new("file.save", "Save", Scope::app()).with_path(path(&["File", "Save"])).with_default(key("Cmd+S")),
             Bindable::new("file.saveAs", "Save As…", Scope::app()).with_path(path(&["File", "Save As…"])).with_default(key("Cmd+Shift+S")),
             Bindable::new("file.export", "Export…", Scope::app()).with_path(path(&["File", "Export…"])).with_default(key("Cmd+E")),
@@ -478,7 +478,7 @@ pub(crate) mod tests {
             Bindable::new("timeline.loop", "Loop", timeline).with_default(key("L")),
             Bindable::new("type.bold", "Bold", Scope::app()).with_default(key("Text: Cmd+B")),
         ];
-        Keymap::new(catalogue, Scopes::new().with_panel("Timeline").with_context("Text"), platform)
+        Keymap::new(catalog, Scopes::new().with_panel("Timeline").with_context("Text"), platform)
     }
 
     fn view<'a>(query: &'a str, area: &'a AreaId, filter: Filter, collapsed: &'a BTreeSet<String>) -> View<'a> {

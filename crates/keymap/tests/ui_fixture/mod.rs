@@ -1,4 +1,4 @@
-//! The catalogue the dialog tests and screenshots use.
+//! The catalog the dialog tests and screenshots use.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -16,7 +16,7 @@ pub fn fixture(platform: Platform) -> Keymap {
     let tool = Kind::Tool { group: Some("Marquee".into()) };
     let path = |p: &[&str]| p.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     let timeline = Scope::new("Timeline").unwrap_or_else(Scope::app);
-    let catalogue = vec![
+    let catalog = vec![
         Bindable::new("file.save", "Save", Scope::app()).with_path(path(&["File", "Save"])).with_default(binding("Cmd+S")),
         Bindable::new("file.saveAs", "Save As…", Scope::app()).with_path(path(&["File", "Save As…"])).with_default(binding("Cmd+Shift+S")),
         Bindable::new("file.export", "Export…", Scope::app()).with_path(path(&["File", "Export…"])).with_default(binding("Cmd+E")),
@@ -26,22 +26,22 @@ pub fn fixture(platform: Platform) -> Keymap {
         Bindable::new("timeline.loop", "Loop", timeline).with_default(binding("L")),
         Bindable::new("type.bold", "Bold", Scope::app()).with_default(binding("Text: Cmd+B")),
     ];
-    Keymap::new(catalogue, Scopes::new().with_panel("Timeline").with_context("Text"), platform)
+    Keymap::new(catalog, Scopes::new().with_panel("Timeline").with_context("Text"), platform)
 }
 
 /// `km` with a command whose label and menu path are far too long for a row.
 #[allow(dead_code)]
 pub fn with_long_label(km: Keymap) -> Keymap {
     let long = "Distribute Selected Objects Evenly Along the Active Guide Path and Keep Their Spacing".to_string();
-    let mut catalogue = km.catalogue().to_vec();
-    catalogue.insert(
+    let mut catalog = km.catalog().to_vec();
+    catalog.insert(
         3,
         Bindable::new("object.distribute", long.as_str(), Scope::app())
             .with_path(vec!["Object".into(), "Arrange and Distribute Along a Path".into(), long.clone()])
             .with_default(binding("Cmd+Alt+Shift+D"))
             .with_default(binding("Ctrl+Alt+Shift+F12")),
     );
-    Keymap::new(catalogue, Scopes::new().with_panel("Timeline").with_context("Text"), km.platform())
+    Keymap::new(catalog, Scopes::new().with_panel("Timeline").with_context("Text"), km.platform())
 }
 
 /// A pseudo translation: every string about 40 % longer, accented, between right-to-left marks and

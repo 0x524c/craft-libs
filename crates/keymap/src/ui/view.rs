@@ -261,7 +261,7 @@ impl Draw<'_, '_> {
         IconButton::new(label, Vec2::splat(ICON), &self.icons).selected(selected).show(ui, |ui, rect, color| paint(ui.painter(), rect, color))
     }
 
-    /// A row control: clickable and labelled but not a Tab stop (the table is one).
+    /// A row control: clickable and labeled but not a Tab stop (the table is one).
     fn row_button(&self, ui: &mut Ui, rect: Rect, id: Id, label: &str, enabled: bool, paint: fn(&Painter, Rect, Color32)) -> Response {
         let resp = ui.interact(rect, id, if enabled { Sense::CLICK } else { Sense::hover() });
         resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));

@@ -1,4 +1,4 @@
-//! The Keyboard Shortcuts dialog (feature `ui`): a table of the catalogue with recording,
+//! The Keyboard Shortcuts dialog (feature `ui`): a table of the catalog with recording,
 //! conflicts, undo, named sets and import review, over [`Keymap`] and optionally [`Profiles`].
 //!
 //! The app keeps a [`DialogState`] while the dialog is open and calls [`ShortcutsDialog::show`]
@@ -72,14 +72,14 @@ pub struct Area {
     pub rows: fn(&Bindable) -> bool,
 }
 
-/// A read-only row for a key outside the catalogue.
+/// A read-only row for a key outside the catalog.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FixedRow {
     pub group: String,
     pub label: String,
     /// The keys as shown.
     pub keys: String,
-    /// The trigger, when the row has one, so a catalogue binding on it can be pointed out.
+    /// The trigger, when the row has one, so a catalog binding on it can be pointed out.
     pub chord: Option<Trigger>,
 }
 
@@ -114,7 +114,7 @@ pub struct Options {
     pub backspace_clears: bool,
     /// false: Enter when idle is OK.
     pub enter_is_ok: bool,
-    /// false: rows sort by translated label instead of catalogue order.
+    /// false: rows sort by translated label instead of catalog order.
     pub sort_by_label: bool,
     /// false: Show as tabs instead of a dropdown.
     pub area_tabs: bool,
