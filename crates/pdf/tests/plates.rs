@@ -42,11 +42,22 @@ fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
 }
 
 fn render(pdf: &[u8], settings: &InterpreterSettings) -> Vec<u8> {
+    render_each(pdf, std::slice::from_ref(settings)).remove(0)
+}
+
+/// The page rendered once per settings, sharing one render cache as a separating caller does.
+fn render_each(pdf: &[u8], settings: &[InterpreterSettings]) -> Vec<Vec<u8>> {
     let doc = open_slice(pdf, None).unwrap();
+    let cache = RenderCache::new();
     let options = Options { background: [255; 4], ..Default::default() };
-    let raster = raster::render(&doc.pages()[0], &RenderCache::new(), settings, &options).unwrap();
-    assert_eq!((raster.width, raster.height), (40, 40));
-    raster.bytes().to_vec()
+    settings
+        .iter()
+        .map(|settings| {
+            let raster = raster::render(&doc.pages()[0], &cache, settings, &options).unwrap();
+            assert_eq!((raster.width, raster.height), (40, 40));
+            raster.bytes().to_vec()
+        })
+        .collect()
 }
 
 /// One film per ink, as RGBA8 over white.
@@ -67,14 +78,11 @@ impl Plates {
 }
 
 fn plates(pdf: &[u8], inks: &[Ink], overprint: bool, simulation: Option<&CmykSimulation>) -> Plates {
-    Plates(
-        inks.iter()
-            .map(|ink| {
-                let plate = Plate { ink: ink.clone(), overprint, simulation: simulation.cloned() };
-                render(pdf, &InterpreterSettings { plate: Some(plate), ..Default::default() })
-            })
-            .collect(),
-    )
+    let settings: Vec<InterpreterSettings> = inks
+        .iter()
+        .map(|ink| InterpreterSettings { plate: Some(Plate { ink: ink.clone(), overprint, simulation: simulation.cloned() }), ..Default::default() })
+        .collect();
+    Plates(render_each(pdf, &settings))
 }
 
 fn spot(name: &str) -> Ink {
@@ -389,11 +397,15 @@ fn a_simulation_shows_its_cmyk_through_its_own_profile() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 fn mutated_profiles_simulate_or_are_refused_without_panicking() {
-    // Bytes through the profile's header, tag table and tables changed in turn. Making a
-    // simulation takes a third of a second in a debug build, so the bytes are sampled.
+    // The header fields a reader checks, every 16th byte of the tag table and bytes spread
+    // over the tag data, changed in turn. Making a simulation takes a fifth of a second in a
+    // debug build, so header bytes readers skip (date, creator, profile ID, reserved) are left
+    // out and the data is sampled.
     let whole = synthetic_icc::cmyk_profile(PRESS, true);
     let pdf = page_pdf("0.5 0.5 0.5 rg 0 0 40 40 re f", "", &[]);
-    let positions = (0..whole.len().min(256)).step_by(16).chain((256..whole.len()).step_by(9973));
+    // Size, version, class, color space, PCS, `acsp`, rendering intent, illuminant.
+    let header = [3, 8, 12, 16, 20, 36, 67, 70];
+    let positions = header.into_iter().chain((128..256).step_by(16)).chain((256..whole.len()).step_by(15_000));
     for (n, at_byte) in positions.enumerate() {
         let mut bent = whole.clone();
         bent[at_byte] = [0x00, 0x7F, 0xFF][n % 3];
