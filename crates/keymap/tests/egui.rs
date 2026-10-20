@@ -81,6 +81,8 @@ fn dispatch_keymap() -> Keymap {
     let catalog = vec![
         app("edit.copy", &["Cmd+C", "Cmd+Insert"]),
         app("edit.paste", &["Cmd+V", "Shift+Insert"]),
+        app("edit.pasteInPlace", &["Cmd+Shift+V"]),
+        app("edit.copyMerged", &["Cmd+Shift+C"]),
         app("app.quit", &["Cmd+Alt+Q"]),
         app("type.pageNumber", &["Cmd+Alt+Shift+N"]),
         app("view.refresh", &["Cmd+Alt+F5"]),
@@ -166,6 +168,39 @@ fn clipboard_events_stay_with_the_app_by_default() {
     // A clipboard press with no clipboard event after it is an ordinary press.
     let (ran, _) = run(&mut d, &km, &Active::NONE, frame(3.0, CTRL, vec![press(EguiKey::Insert, CTRL)]));
     assert_eq!(ran, ["edit.copy"]);
+}
+
+#[test]
+fn clipboard_chords_with_more_modifiers_run_their_bindings() {
+    let km = dispatch_keymap();
+    let mut d = Dispatcher::new();
+    let typing = Active { typing: true, ..Active::NONE };
+    let ctrl_shift = Modifiers { shift: true, ..CTRL };
+    // The desktop: egui-winit sends the Paste event in place of Ctrl+Shift+V.
+    let mut input = frame(1.0, ctrl_shift, vec![Event::Paste("text".into())]);
+    let hits = d.dispatch(&mut input, &km, &Active::NONE);
+    let ran: Vec<_> = hits.iter().map(|h| (h.command.id.as_str(), h.pasted.as_deref())).collect();
+    assert_eq!(ran, [("edit.pasteInPlace", Some("text"))]);
+    assert!(input.events.is_empty());
+    let (ran, left) = run(&mut d, &km, &typing, frame(2.0, ctrl_shift, vec![Event::Copy]));
+    assert_eq!(ran, ["edit.copyMerged"]);
+    assert!(left.is_empty());
+    // Ctrl+Shift+X has no binding: the event stays.
+    let (ran, left) = run(&mut d, &km, &Active::NONE, frame(3.0, ctrl_shift, vec![Event::Cut]));
+    assert!(ran.is_empty());
+    assert_eq!(left, [Event::Cut]);
+
+    // The web: the press decides for itself and its event, also while typing.
+    for (time, active) in [(4.0, &Active::NONE), (5.0, &typing)] {
+        let events = vec![press(EguiKey::C, ctrl_shift), Event::Copy];
+        let (ran, left) = run(&mut d, &km, active, frame(time, ctrl_shift, events));
+        assert_eq!(ran, ["edit.copyMerged"]);
+        assert!(left.is_empty(), "{left:?}");
+    }
+    let events = vec![press(EguiKey::X, ctrl_shift), Event::Cut];
+    let (ran, left) = run(&mut d, &km, &Active::NONE, frame(6.0, ctrl_shift, events.clone()));
+    assert!(ran.is_empty());
+    assert_eq!(left, events);
 }
 
 #[test]

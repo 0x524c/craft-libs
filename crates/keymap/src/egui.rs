@@ -173,8 +173,8 @@ pub struct Hit {
     /// the shifted key for a Shift binding (`:` for `Shift+;`), Shift held to type a symbol, or
     /// `+` and `=` standing for each other.
     pub exact: bool,
-    /// The text of the Paste event that ran the command, or on the web the Paste event that came
-    /// with the press that ran it ([`Dispatcher::with_clipboard_events`]).
+    /// The text of the Paste event that ran the command, or on the web of the Paste event that
+    /// came with the press that ran it.
     pub pasted: Option<String>,
 }
 
@@ -204,16 +204,21 @@ struct LastPress {
 /// that runs a command is removed from the events, together with the text it typed when it has
 /// no command modifier, so no widget sees it too. Other events stay.
 ///
-/// egui's Copy, Cut and Paste events stay with the app unless
-/// [`with_clipboard_events`](Self::with_clipboard_events) is on. On the desktop, egui-winit sends
-/// these events in place of the key presses for Cmd+C, Cmd+X and Cmd+V (Ctrl off macOS, plus
-/// Shift+Delete, Ctrl+Insert and Shift+Insert on Windows), so bindings on those chords run only
-/// with clipboard events on. The web build sends the key press and then the clipboard event; with
-/// clipboard events off, such a press stays too.
+/// On the desktop, egui-winit sends egui's Copy, Cut and Paste events in place of the key press
+/// for any chord of Cmd with C, X or V (Ctrl off macOS; on Windows also Shift+Delete, Ctrl+Insert
+/// and Shift+Insert). The web build sends the key press and then the event. For the plain
+/// clipboard chords (Cmd+C, Cmd+X, Cmd+V, Cmd+Insert, Shift+Delete, Shift+Insert), the events and
+/// their presses stay with the app unless [`with_clipboard_events`](Self::with_clipboard_events)
+/// is on, so bindings on those chords run only with it on. An event with more modifiers held
+/// counts as its chord, read from the frame's modifiers (Cmd+Shift+V), and runs that chord's
+/// binding; without one, it stays. On Windows, egui-winit also sends Cut for Ctrl+Shift+Delete
+/// and Copy for Ctrl+Shift+Insert, which read as Cmd+Shift+X and Cmd+Shift+C.
+///
+/// egui-winit sends no Paste event when the clipboard is empty or holds no text (an image), so a
+/// binding on Cmd+V, or on Cmd and V with more modifiers, cannot run then on the desktop.
 ///
 /// While [`Active::typing`], the text field keeps, without lookup:
-/// - clipboard events, and the clipboard key presses the web build sends with them (Cmd+C, Cmd+X,
-///   Cmd+V, Shift+Delete, Shift+Insert, Ctrl+Insert);
+/// - the plain clipboard chords' events and presses (other clipboard chords are looked up);
 /// - a press with a Text event of its own in the frame, since it typed that text. This covers
 ///   AltGr: the browser on Windows reports AltGr+Q (`@` on a German layout) as Ctrl+Alt+Q, and
 ///   the web build's text agent sends the `@` after it. egui-winit reports AltGr with neither Ctrl
@@ -246,13 +251,14 @@ impl Dispatcher {
         self
     }
 
-    /// Whether egui's Copy, Cut and Paste events count as the chords that cause them (Cmd+C,
-    /// Cmd+X, Cmd+V; Shift+Delete and Shift+Insert for Cut and Paste with Shift alone) outside text
-    /// fields. Off by default: the events stay in egui's input for the app's own handlers. With it
-    /// on, an event that runs a command is removed, and a Paste event's text moves to
-    /// [`Hit::pasted`]. On the web, the key press runs the command and its clipboard event goes
-    /// with it the same way; when the press runs nothing, or the hit is declined, both stay. An app that asks egui for a paste (`ViewportCommand::RequestPaste`) to run
-    /// its paste command gets a Paste event back, which with this on runs that command again.
+    /// Whether egui's Copy, Cut and Paste events for the plain clipboard chords count as those
+    /// chords (Cmd+C, Cmd+X, Cmd+V; Shift+Delete and Shift+Insert for Cut and Paste with Shift
+    /// alone) outside text fields. Off by default: the events stay in egui's input for the app's
+    /// own handlers. With it on, an event that runs a command is removed, and a Paste event's text
+    /// moves to [`Hit::pasted`]. On the web, the key press runs the command and its clipboard
+    /// event goes with it the same way; when the press runs nothing, or the hit is declined, both
+    /// stay. An app that asks egui for a paste (`ViewportCommand::RequestPaste`) to run its paste
+    /// command gets a Paste event back, which with this on runs that command again.
     pub fn with_clipboard_events(mut self, on: bool) -> Dispatcher {
         self.clipboard = on;
         self
@@ -288,13 +294,16 @@ impl Dispatcher {
                 Event::Key { key, pressed: true, repeat, modifiers, .. } if !*repeat || self.repeat => {
                     let held = Mods::from_egui(modifiers, platform);
                     if let Some(key) = Key::from_egui(*key) {
-                        let clip = clipboard_kind(key, held);
+                        let plain_clip = is_plain_clipboard(key, held);
                         let keep = if active.typing {
-                            text_of[i].is_some() || clip.is_some()
+                            text_of[i].is_some() || plain_clip
                         } else {
-                            !self.clipboard && causes[i].is_some()
+                            !self.clipboard && plain_clip && causes[i].is_some()
                         };
                         if keep {
+                            if let Some((j, _)) = causes[i] {
+                                caused_taken[j] = Some(false);
+                            }
                             kept.push((i, event));
                             continue;
                         }
@@ -322,23 +331,26 @@ impl Dispatcher {
                         caused_taken[j] = Some(false);
                     }
                 }
-                // A focused text field copies and pastes on these events itself.
-                Event::Copy | Event::Cut | Event::Paste(_) if self.clipboard && !active.typing => {
-                    let (key, held) = clipboard_chord(&event, frame_mods);
-                    if let Some(taken) = caused_taken[i] {
-                        if taken {
-                            continue;
-                        }
-                    } else if let Some(mut hit) = self.press(key, held, false, now, keymap, active) {
-                        if let Event::Paste(text) = &event {
-                            hit.pasted = Some(text.clone());
-                        }
-                        if accept(&hit) {
-                            hits.push(hit);
-                            continue;
+                // Desktop clipboard events, and web ones whose press stayed or ran nothing.
+                Event::Copy | Event::Cut | Event::Paste(_) => match caused_taken[i] {
+                    Some(true) => continue,
+                    Some(false) => {}
+                    None => {
+                        let (key, held) = clipboard_chord(&event, frame_mods);
+                        // A focused text field copies and pastes on the plain chords itself.
+                        let look = !is_plain_clipboard(key, held) || (self.clipboard && !active.typing);
+                        let hit = if look { self.press(key, held, false, now, keymap, active) } else { None };
+                        if let Some(mut hit) = hit {
+                            if let Event::Paste(text) = &event {
+                                hit.pasted = Some(text.clone());
+                            }
+                            if accept(&hit) {
+                                hits.push(hit);
+                                continue;
+                            }
                         }
                     }
-                }
+                },
                 _ => {}
             }
             kept.push((i, event));
@@ -441,6 +453,17 @@ fn clipboard_kind(key: Key, held: Mods) -> Option<Clip> {
         Key::Insert if held.shift => Some(Clip::Paste),
         Key::Insert if held.cmd || held.ctrl => Some(Clip::Copy),
         _ => None,
+    }
+}
+
+/// Whether a chord is one of the plain clipboard chords, which egui's text fields act on: Cmd+C,
+/// Cmd+X, Cmd+V, Cmd+Insert, Shift+Delete and Shift+Insert.
+fn is_plain_clipboard(key: Key, held: Mods) -> bool {
+    match key {
+        Key::C | Key::X | Key::V => held == Mods::CMD,
+        Key::Insert => held == Mods::CMD || held == Mods::SHIFT,
+        Key::Delete => held == Mods::SHIFT,
+        _ => false,
     }
 }
 
