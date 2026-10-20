@@ -376,6 +376,15 @@ fn binding_text_round_trips_for_every_key() {
 }
 
 #[test]
+fn scope_names_with_outer_whitespace_are_refused() {
+    for name in [" Timeline", "Timeline ", "\u{a0}Timeline", ""] {
+        assert_eq!(Scope::new(name), None, "{name:?}");
+    }
+    assert_eq!(Scope::new("Time line").map(|s| s.to_string()).as_deref(), Some("Time line"));
+    assert_eq!(Binding::parse(" Timeline :  K").map(|b| b.scope), Ok(Some(scope("Timeline"))));
+}
+
+#[test]
 fn edits_are_refused_when_the_overrides_are_full() {
     let catalog = vec![app("edit.copy", &["Cmd+C"]), app("edit.duplicate", &["Cmd+D"]), app("edit.cut", &[])];
     let mut o = Overrides::new();

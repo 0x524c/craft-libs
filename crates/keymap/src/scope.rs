@@ -9,17 +9,21 @@ pub const MAX_SCOPE_NAME: usize = 64;
 
 const APP: &str = "Application";
 
-/// The name of a scope. Never empty, at most [`MAX_SCOPE_NAME`] bytes, without `:`.
+/// The name of a scope. Never empty, at most [`MAX_SCOPE_NAME`] bytes, without `:` or outer
+/// whitespace.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(transparent)]
 pub struct Scope(String);
 
 impl Scope {
-    /// `None` for an empty name, one over [`MAX_SCOPE_NAME`] bytes, or one with `:` or a control
-    /// character.
+    /// `None` for an empty name, one over [`MAX_SCOPE_NAME`] bytes, one with `:` or a control
+    /// character, or one with whitespace at either end, which binding text would lose.
     pub fn new(name: impl Into<String>) -> Option<Scope> {
         let name = name.into();
-        let ok = !name.is_empty() && name.len() <= MAX_SCOPE_NAME && !name.chars().any(|c| c == ':' || c.is_control());
+        let ok = !name.is_empty()
+            && name.len() <= MAX_SCOPE_NAME
+            && name.trim() == name
+            && !name.chars().any(|c| c == ':' || c.is_control());
         ok.then_some(Scope(name))
     }
 
