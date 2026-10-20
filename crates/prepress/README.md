@@ -1,6 +1,6 @@
-# craft-separations
+# craft-prepress
 
-Print separations for the Craft apps:
+Prepress for the Craft apps: separations, ink limits and the ink manager.
 
 - `ink`: the ink model the writers and previews share. `InkSet` holds the four process inks
   (always first, in plate order) and the spot inks of a job, and is the job's ink manager
@@ -13,12 +13,14 @@ Print separations for the Craft apps:
 - `composite`: an sRGB preview of chosen plates.
 - `cms`: process color conversion into a CMYK printing condition through craft-cms.
 
+A transparency flattener is planned as a module behind a `flatten` feature.
+
 ## Plates from an exported PDF
 
 An app exports its PDF as usual, then separates a page of it:
 
 ```rust
-use craft_separations::{plates, InkId, Options, Process};
+use craft_prepress::{plates, InkId, Options, Process};
 
 let p = plates(&pdf, 0, 150.0, &Options::default())?;
 for (id, ink) in p.inks.iter() {
@@ -101,11 +103,11 @@ Overprint is already in the plates (the renderer decides per plate what overprin
 knocks out), so the preview shows it without rewriting any paint as a blend mode.
 
 ```rust
-use craft_separations::{CmsConversion, InkId};
+use craft_prepress::{CmsConversion, InkId};
 
 let cms = CmsConversion::fogra39();
 let mut enabled = vec![true; p.inks.len()];
-enabled[InkId::process(craft_separations::Process::Black).index()] = false; // hide Black
+enabled[InkId::process(craft_prepress::Process::Black).index()] = false; // hide Black
 let mut rgb = p.composite(&enabled, &cms);
 let over = p.above(300.0, &enabled);
 over.paint(&mut rgb, [255, 0, 255]); // TAC warning

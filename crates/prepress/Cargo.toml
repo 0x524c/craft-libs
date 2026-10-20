@@ -1,6 +1,6 @@
 [package]
-name = "craft-separations"
-description = "Ink model and per-ink plates rendered from a PDF, for the Craft apps' print output"
+name = "craft-prepress"
+description = "Prepress for the Craft apps: ink model, per-ink plates rendered from a PDF, coverage, ink limits and composite preview"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

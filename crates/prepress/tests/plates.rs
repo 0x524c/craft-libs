@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use craft_cms::{Intent, Profile, Transform, builtin};
-use craft_separations::{Alternate, CmsConversion, Conversion, Error, Fallback, Ink, InkId, MAX_SPOT_INKS, Options, Process, plates};
+use craft_prepress::{Alternate, CmsConversion, Conversion, Error, Fallback, Ink, InkId, MAX_SPOT_INKS, Options, Process, plates};
 
 /// A 40 × 40 pt page with `content` and `resources`, `catalog` entries, and `objects`
 /// numbered from 5 (each a whole object body).
@@ -92,7 +92,7 @@ fn red_in(profile: &[u8]) -> [u8; 4] {
     cmyk.map(|v| (v * 255.0).round() as u8)
 }
 
-fn red_tints(p: &craft_separations::Plates) -> [u8; 4] {
+fn red_tints(p: &craft_prepress::Plates) -> [u8; 4] {
     Process::ALL.map(|c| p.tint(InkId::process(c), 20, 20).unwrap())
 }
 

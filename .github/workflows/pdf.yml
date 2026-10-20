@@ -3,9 +3,9 @@ name: Shared PDF
 on:
   push:
     branches: [main]
-    paths: ["crates/pdf/**", "crates/separations/**", "vendor/hayro*/**", "vendor/krilla/**", "scripts/test-pdf-backends.sh", "scripts/*fetch-pdf-test-fonts.py", "Cargo.toml", "Cargo.lock", ".github/workflows/pdf.yml"]
+    paths: ["crates/pdf/**", "crates/prepress/**", "vendor/hayro*/**", "vendor/krilla/**", "scripts/test-pdf-backends.sh", "scripts/*fetch-pdf-test-fonts.py", "Cargo.toml", "Cargo.lock", ".github/workflows/pdf.yml"]
   pull_request:
-    paths: ["crates/pdf/**", "crates/separations/**", "vendor/hayro*/**", "vendor/krilla/**", "scripts/test-pdf-backends.sh", "scripts/*fetch-pdf-test-fonts.py", "Cargo.toml", "Cargo.lock", ".github/workflows/pdf.yml"]
+    paths: ["crates/pdf/**", "crates/prepress/**", "vendor/hayro*/**", "vendor/krilla/**", "scripts/test-pdf-backends.sh", "scripts/*fetch-pdf-test-fonts.py", "Cargo.toml", "Cargo.lock", ".github/workflows/pdf.yml"]
   workflow_dispatch:
 
 permissions:
@@ -46,11 +46,11 @@ jobs:
       - run: cargo clippy -p craft-pdf --all-targets --all-features --locked -- -D warnings
       - run: cargo test -p craft-pdf --all-features --locked
       - run: cargo test --manifest-path crates/pdf/read-only-contract/Cargo.toml --locked
-      - name: Separations (plates through the vendored renderer)
+      - name: craft-prepress (plates through the vendored renderer)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cargo clippy -p craft-separations --all-targets --locked -- -D warnings
-          cargo test -p craft-separations --locked
+          cargo clippy -p craft-prepress --all-targets --locked -- -D warnings
+          cargo test -p craft-prepress --locked
   backends:
     name: PDF vendored contracts
     runs-on: ubuntu-latest
