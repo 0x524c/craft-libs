@@ -341,7 +341,9 @@ fn changes_that_find_the_overrides_full_are_reported() {
     let rows = |failed: &[Failed]| -> Vec<(String, String, FailedChange, Vec<String>)> {
         failed.iter().map(|f| (f.command.id.clone(), f.label.clone(), f.change, f.shortcuts.clone())).collect()
     };
-    let row = |id: &str, label: &str, change, shortcuts: &[&str]| (id.to_string(), label.to_string(), change, shortcuts.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+    let row = |id: &str, label: &str, change, shortcuts: &[&str]| {
+        (id.to_string(), label.to_string(), change, shortcuts.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    };
     assert_eq!(
         rows(&r.failed),
         [
@@ -395,7 +397,11 @@ fn keys_in_unknown_scopes_are_skipped_and_the_rest_apply() {
     let mut km = keymap(Platform::Windows);
     let r = plan(&set, &km, &options).apply(&mut km);
     has(&km, "file.close", &["Cmd+Q", "Text: Cmd+L"]);
-    let skipped: Vec<_> = r.skipped.iter().map(|s: &Skipped| (s.command.id.as_str(), s.item.as_str(), s.line, s.shortcut.as_str(), s.kept_by.clone(), s.reason)).collect();
+    let skipped: Vec<_> = r
+        .skipped
+        .iter()
+        .map(|s: &Skipped| (s.command.id.as_str(), s.item.as_str(), s.line, s.shortcut.as_str(), s.kept_by.clone(), s.reason))
+        .collect();
     assert_eq!(skipped, [("file.close", "File > Close", None, "Story: Cmd+K", None, SkipReason::UnknownScope)]);
     assert_eq!(serde_json::to_value(r.skipped[0].reason).unwrap(), "unknownScope");
 }

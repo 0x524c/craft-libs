@@ -238,9 +238,12 @@ pub struct Dispatcher {
     text_first: bool,
 }
 
+/// eframe's web build sends a press's Text event first when no text field has focus.
+const TEXT_FIRST: bool = cfg!(target_arch = "wasm32");
+
 impl Default for Dispatcher {
     fn default() -> Dispatcher {
-        Dispatcher { last: None, repeat: false, clipboard: false, text_first: cfg!(target_arch = "wasm32") }
+        Dispatcher { last: None, repeat: false, clipboard: false, text_first: TEXT_FIRST }
     }
 }
 
@@ -300,11 +303,8 @@ impl Dispatcher {
                     let held = Mods::from_egui(modifiers, platform);
                     if let Some(key) = Key::from_egui(*key) {
                         let plain_clip = is_plain_clipboard(key, held);
-                        let keep = if active.typing {
-                            text_of[i].is_some() || plain_clip
-                        } else {
-                            !self.clipboard && plain_clip && causes[i].is_some()
-                        };
+                        let keep =
+                            if active.typing { text_of[i].is_some() || plain_clip } else { !self.clipboard && plain_clip && causes[i].is_some() };
                         if keep {
                             if let Some((j, _)) = causes[i] {
                                 caused_taken[j] = Some(false);
@@ -374,9 +374,10 @@ impl Dispatcher {
         if repeat {
             return find(false);
         }
-        let again = self.last.as_ref().is_some_and(|l| {
-            l.chord == first && !l.ran_double && l.panel.as_deref() == active.panel && now >= l.at && now - l.at < DOUBLE_PRESS
-        });
+        let again = self
+            .last
+            .as_ref()
+            .is_some_and(|l| l.chord == first && !l.ran_double && l.panel.as_deref() == active.panel && now >= l.at && now - l.at < DOUBLE_PRESS);
         let double = if again { find(true) } else { None };
         self.last = Some(LastPress { chord: first, at: now, ran_double: double.is_some(), panel: active.panel.map(str::to_owned) });
         double.or_else(|| find(false))

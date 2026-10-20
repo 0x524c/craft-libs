@@ -20,10 +20,7 @@ impl Scope {
     /// character, or one with whitespace at either end, which binding text would lose.
     pub fn new(name: impl Into<String>) -> Option<Scope> {
         let name = name.into();
-        let ok = !name.is_empty()
-            && name.len() <= MAX_SCOPE_NAME
-            && name.trim() == name
-            && !name.chars().any(|c| c == ':' || c.is_control());
+        let ok = !name.is_empty() && name.len() <= MAX_SCOPE_NAME && name.trim() == name && !name.chars().any(|c| c == ':' || c.is_control());
         ok.then_some(Scope(name))
     }
 
