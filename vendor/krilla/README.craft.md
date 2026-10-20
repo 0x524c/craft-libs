@@ -18,6 +18,7 @@ itself omits those texts. Its examples and four CC0 ICC profiles are retained wi
 | `patches/06-device-n.patch` | DeviceN colors | `configure/validate.rs`, `graphics/{color,device_n,mod,paint}.rs`, `serialize.rs` |
 | `patches/07-device-n-images-shadings.patch` | DeviceN images and shadings | `graphics/{image,paint,shading_function}.rs` |
 | `patches/08-print-output-intent.patch` | Print output intent and PDF/X markers | `chunk_container.rs`, `interchange/metadata.rs`, `lib.rs`, `serialize.rs` |
+| `patches/09-rendition-class.patch` | Master rendition in XMP | `chunk_container.rs` |
 
 Each patch applies with `patch -p1` from this directory, in numeric order, to the pristine
 crate. `SOURCE.json` records, for every retained file, the upstream hash (`upstream_sha256`)
@@ -233,6 +234,13 @@ version. DesignCraft and VectorCraft added these by rewriting the serialized byt
 - All three default to `None`, which keeps upstream's output.
 
 krilla does not check PDF/X conformance; callers do. `CRAFT_PRINT_COLOR` marks the fork's
-print color patches (02 and 03) so craft-pdf fails to build against an unpatched Krilla.
+print color patches (02 to 08) so craft-pdf fails to build against an unpatched Krilla.
 
 Tests: `crates/pdf/tests/print_color.rs` and the plate-test print preset over every scene.
+
+## 09: master rendition in XMP
+
+From storytold/craft-libs#183 by Hamza (@Hamza0101). Upstream writes
+`xmpMM:RenditionClass` as `proof` on every document, which tells a prepress system that a
+print deliverable is a proof copy. XMP Part 2 (Media Management) defines `default` as the
+master rendition, so the patch writes `default`.
