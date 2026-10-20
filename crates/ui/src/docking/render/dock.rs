@@ -209,6 +209,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 self.handle_style(),
             )
             .value(width, lo..=hi)
+            .reversed(inward < 0.0)
             .show(ui);
             self.register_interaction(ui.ctx(), response.response.id);
             let next = (width + inward * response.delta).clamp(lo, hi);

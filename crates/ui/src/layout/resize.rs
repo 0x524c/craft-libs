@@ -37,11 +37,12 @@ pub struct ResizeHandle<'a> {
     hit_margin: f32,
     step: f32,
     value: Option<(f32, RangeInclusive<f32>)>,
+    reversed: bool,
 }
 
 impl<'a> ResizeHandle<'a> {
     pub fn new(id: Id, axis: SplitAxis, rect: Rect, label: &'a str, style: ResizeHandleStyle) -> Self {
-        Self { id, axis, rect, label, style, hit_margin: 3.0, step: 8.0, value: None }
+        Self { id, axis, rect, label, style, hit_margin: 3.0, step: 8.0, value: None, reversed: false }
     }
 
     /// Expand the hit rectangle along the movement axis, in logical points. Default: 3.
@@ -60,6 +61,14 @@ impl<'a> ResizeHandle<'a> {
     /// The caller remains responsible for updating this value when it accepts a delta.
     pub fn value(mut self, value: f32, range: RangeInclusive<f32>) -> Self {
         self.value = Some((value, range));
+        self
+    }
+
+    /// The value grows against the axis, as for a column docked on the right edge that widens
+    /// as its divider moves left. Accessibility actions then work on the value; the pointer
+    /// and arrow keys stay physical, and `delta` stays along the axis.
+    pub fn reversed(mut self, reversed: bool) -> Self {
+        self.reversed = reversed;
         self
     }
 
@@ -116,27 +125,30 @@ impl<'a> ResizeHandle<'a> {
                     }
                 });
             }
+            let mut change = 0.0;
             ui.input_mut(|input| {
                 input.consume_accesskit_action_requests(response.id, |request| match request.action {
                     accesskit::Action::Increment => {
-                        delta += self.step;
+                        change += self.step;
                         true
                     }
                     accesskit::Action::Decrement => {
-                        delta -= self.step;
+                        change -= self.step;
                         true
                     }
                     accesskit::Action::SetValue => {
                         if let (Some((value, range)), Some(accesskit::ActionData::NumericValue(new_value))) = (&self.value, &request.data)
                             && new_value.is_finite()
                         {
-                            delta = (new_value.clamp(f64::from(*range.start()), f64::from(*range.end())) - f64::from(*value)) as f32;
+                            change = (new_value.clamp(f64::from(*range.start()), f64::from(*range.end())) - f64::from(*value)) as f32;
+                            delta = 0.0;
                         }
                         true
                     }
                     _ => false,
                 });
             });
+            delta += if self.reversed { -change } else { change };
         }
         if !delta.is_finite() {
             delta = 0.0;

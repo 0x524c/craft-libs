@@ -539,3 +539,27 @@ fn a_dock_wider_than_the_window_shrinks_to_fit_and_resizes() {
     assert!(total < 800.0, "{total}");
     assert!((d.hit(&Hit::Divider(Divider::Column(1))).unwrap().center().x - (divider.x - 30.0)).abs() < 1.0);
 }
+
+#[test]
+fn screen_reader_values_follow_the_column_width_on_either_edge() {
+    use egui::accesskit::{Action as A, ActionData, ActionRequest, TreeId};
+    for (side, right_to_left) in [(Side::End, false), (Side::Start, true), (Side::Start, false)] {
+        let mut d = testing::DockDriver::new(docked(side, &[&[&[2]]]), TestContent::default()).with_style(move |s| s.right_to_left = right_to_left);
+        d.ctx.enable_accesskit();
+        d.settle();
+        let id = DockArea::<u32>::hit_id(d.id, &Hit::Divider(Divider::Column(2)));
+        let request = |action, data| Event::AccessKitActionRequest(ActionRequest { action, target_tree: TreeId::ROOT, target_node: id.accesskit_id(), data });
+        let case = format!("{side:?}, right to left {right_to_left}");
+        let out = d.frame(vec![request(A::SetValue, Some(ActionData::NumericValue(300.0)))]);
+        assert_eq!(out.actions, vec![Action::ResizeColumn { panel: 2, width: 300.0 }], "{case}");
+        let out = d.frame(vec![request(A::Increment, None)]);
+        assert_eq!(out.actions, vec![Action::ResizeColumn { panel: 2, width: 248.0 }], "{case}");
+        // Arrow keys stay physical: right moves the divider right.
+        d.ctx.memory_mut(|m| m.request_focus(id));
+        d.frame(vec![]);
+        let out = d.frame(vec![key(egui::Key::ArrowRight)]);
+        let wider = d.hit(&Hit::Divider(Divider::Column(2))).unwrap().center().x < 400.0;
+        let width = if wider { 248.0 } else { 232.0 };
+        assert_eq!(out.actions, vec![Action::ResizeColumn { panel: 2, width }], "{case}");
+    }
+}
