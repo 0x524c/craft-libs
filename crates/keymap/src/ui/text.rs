@@ -289,7 +289,6 @@ pub const STRINGS: &[&str] = &[
     "the scope is unknown",
     "the set's shortcuts could not be added",
     "the shortcuts could not be removed",
-    "the shortcut could not be taken from it",
     "Copy Report",
     "Done",
 ];

@@ -284,7 +284,6 @@ impl Draw<'_, '_> {
         match change {
             FailedChange::Bind => self.ui("the set's shortcuts could not be added"),
             FailedChange::Clear => self.ui("the shortcuts could not be removed"),
-            FailedChange::Unbind => self.ui("the shortcut could not be taken from it"),
         }
     }
 
