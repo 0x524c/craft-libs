@@ -169,6 +169,9 @@ pub enum Paint {
     Linear {
         linear: Gradient,
     },
+    Mesh {
+        mesh: Box<Mesh>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -188,6 +191,15 @@ pub struct Gradient {
     pub from: [f32; 2],
     pub to: [f32; 2],
     pub stops: Vec<GradientStop>,
+}
+
+/// A mesh gradient of one Coons patch with straight edges over `rect` (page coordinates).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Mesh {
+    pub rect: [f32; 4],
+    /// Solid paints at the top-left, top-right, bottom-right and bottom-left corners.
+    pub corners: [Paint; 4],
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -520,10 +532,18 @@ impl Scene {
                     out.push("gradients need at least two stops".into());
                 }
                 for stop in &linear.stops {
-                    if matches!(stop.paint, Paint::Linear { .. }) {
+                    if matches!(stop.paint, Paint::Linear { .. } | Paint::Mesh { .. }) {
                         out.push("gradient stops must be solid paints".into());
                     }
                     self.paint_problems(&stop.paint, out);
+                }
+            }
+            Paint::Mesh { mesh } => {
+                for corner in &mesh.corners {
+                    if matches!(corner, Paint::Linear { .. } | Paint::Mesh { .. }) {
+                        out.push("mesh corners must be solid paints".into());
+                    }
+                    self.paint_problems(corner, out);
                 }
             }
             _ => {}

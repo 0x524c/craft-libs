@@ -52,6 +52,7 @@ Paints:
 | Several inks (DeviceN) | `{"inks": {"Cyan": 60, "Black": 40}}` |
 | Registration (`/All`) | `"registration"` |
 | Linear gradient | `{"linear": {"from": [x, y], "to": [x, y], "stops": [{"at": 0, "paint": …}, …]}}` |
+| Mesh gradient (one Coons patch with straight edges) | `{"mesh": {"rect": [x, y, w, h], "corners": [paint, paint, paint, paint]}}` (top left, top right, bottom right, bottom left) |
 
 Images are synthetic: `{"px": [w, h], "ramp": [paint, paint]}` (left to right),
 `"split": [paint, paint]` (left and right halves) or `"feather": pt` (a gray soft-mask image,

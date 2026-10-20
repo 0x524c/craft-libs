@@ -20,7 +20,7 @@ use krilla::image::{BitsPerComponent, CustomImage, Image, ImageColorspace};
 use krilla::mask::{Mask as KrillaMask, MaskType, TransferFunction};
 use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
-use krilla::paint::{Fill, LinearGradient, Paint as KrillaPaint, SpreadMethod, Stop, Stroke as KrillaStroke};
+use krilla::paint::{Fill, LinearGradient, MeshGradient, MeshPatch, Paint as KrillaPaint, SpreadMethod, Stop, Stroke as KrillaStroke};
 use krilla::pdf::{Pdf, PdfDocument};
 use krilla::surface::Surface;
 use krilla::text::{Font, TextDirection};
@@ -318,12 +318,7 @@ impl Resolver<'_, '_> {
     fn paint(&self, paint: &Paint) -> Result<KrillaPaint, Error> {
         match paint {
             Paint::Linear { linear } => {
-                // krilla brings ink-based stops into one space; RGB and registration don't mix.
-                let space = linear.stops.first().map(|s| space_of(&s.paint));
-                let mixed = linear.stops.iter().any(|s| Some(space_of(&s.paint)) != space);
-                if mixed && linear.stops.iter().any(|s| matches!(s.paint, Paint::Rgb { .. } | Paint::Named(_))) {
-                    return Err(unsupported("gradient between RGB or registration and other color spaces"));
-                }
+                mixable(linear.stops.iter().map(|s| &s.paint))?;
                 let mut stops = Vec::new();
                 for stop in &linear.stops {
                     let offset = NormalizedF32::new(stop.at).ok_or_else(|| self.bad("gradient stop outside 0–1"))?;
@@ -340,6 +335,23 @@ impl Resolver<'_, '_> {
                     anti_alias: false,
                 }
                 .into())
+            }
+            Paint::Mesh { mesh } => {
+                mixable(mesh.corners.iter())?;
+                let [x, y, w, h] = mesh.rect;
+                let corners = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)];
+                let mut points = [(0.0, 0.0); 12];
+                for (i, &(ax, ay)) in corners.iter().enumerate() {
+                    let (bx, by) = corners[(i + 1) % 4];
+                    for step in 0..3 {
+                        let t = step as f32 / 3.0;
+                        points[3 * i + step] = (ax + (bx - ax) * t, ay + (by - ay) * t);
+                    }
+                }
+                let [a, b, c, d] = &mesh.corners;
+                let colors = [self.color(a)?, self.color(b)?, self.color(c)?, self.color(d)?];
+                let patch = MeshPatch { points, colors, opacities: [NormalizedF32::ONE; 4] };
+                Ok(MeshGradient { patches: vec![patch], transform: Transform::identity(), anti_alias: false }.into())
             }
             solid => Ok(self.color(solid)?.into()),
         }
@@ -359,7 +371,7 @@ impl Resolver<'_, '_> {
                 separation::Color::new(byte(*tint), SeparationSpace::new(SeparationColorant::Custom(spot.clone()), alternate)).into()
             }
             Paint::Inks { inks } => self.device_n(inks)?.into(),
-            Paint::Linear { .. } => return Err(self.bad("gradients can't nest")),
+            Paint::Linear { .. } | Paint::Mesh { .. } => return Err(self.bad("gradients can't nest")),
         })
     }
 
@@ -457,7 +469,7 @@ impl Resolver<'_, '_> {
             Paint::Rgb { rgb } => (ImageColorspace::Rgb, rgb.to_vec()),
             Paint::Inks { .. } | Paint::Spot { .. } => return Err(self.bad("image paints must share a color space")),
             Paint::Named(_) => return Err(unsupported("registration image")),
-            Paint::Linear { .. } => return Err(self.bad("images take solid paints")),
+            Paint::Linear { .. } | Paint::Mesh { .. } => return Err(self.bad("images take solid paints")),
         })
     }
 
@@ -473,6 +485,16 @@ enum Space<'a> {
     Rgb,
     Spot(&'a str),
     Other,
+}
+
+/// krilla brings ink-based gradient colors into one space; RGB and registration don't mix.
+fn mixable<'a>(paints: impl Iterator<Item = &'a Paint> + Clone) -> Result<(), Error> {
+    let space = paints.clone().next().map(space_of);
+    let mixed = paints.clone().any(|p| Some(space_of(p)) != space);
+    if mixed && paints.into_iter().any(|p| matches!(p, Paint::Rgb { .. } | Paint::Named(_))) {
+        return Err(unsupported("gradient between RGB or registration and other color spaces"));
+    }
+    Ok(())
 }
 
 fn space_of(paint: &Paint) -> Space<'_> {
