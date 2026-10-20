@@ -504,3 +504,38 @@ fn a_column_s_first_tab_dropped_on_its_own_column_edge_anchors_on_another_panel(
     assert_eq!(out.actions, vec![]);
     assert_eq!(d.layout, layout);
 }
+
+#[test]
+fn a_dock_wider_than_the_window_shrinks_to_fit_and_resizes() {
+    let widths = render::fit_widths(&[(600.0, Some(40.0)), (600.0, Some(40.0)), (48.0, None)], 800.0);
+    assert!((widths.iter().sum::<f32>() - 800.0).abs() < 0.01 && widths[2] == 48.0, "{widths:?}");
+    assert_eq!(render::fit_widths(&[(600.0, Some(300.0)), (600.0, Some(300.0))], 400.0), vec![300.0, 300.0]);
+
+    // Three 600-wide columns saved on a larger screen, in an 800-wide window.
+    let mut layout = docked(Side::Start, &[&[&[1]], &[&[2]], &[&[3]]]);
+    if let Some(Node::Split { first, .. }) = &mut layout.root
+        && let Node::Dock { columns, .. } = &mut **first
+    {
+        for column in columns {
+            column.width = 600.0;
+        }
+    }
+    let mut d = testing::DockDriver::new(layout, TestContent::default());
+    for panel in [1, 2, 3] {
+        let divider = d.hit(&Hit::Divider(Divider::Column(panel))).unwrap();
+        assert!(d.hit(&Hit::Tab(panel)).is_some_and(|tab| tab.width() > 0.0), "{panel}");
+        assert!(divider.right() < 800.0, "{panel}: {divider:?}");
+    }
+    let divider = d.hit(&Hit::Divider(Divider::Column(1))).unwrap().center();
+    d.press(divider);
+    d.move_to(divider + vec2(-8.0, 0.0));
+    let out = d.move_to(divider + vec2(-30.0, 0.0));
+    assert!(out.error.is_none() && !out.actions.is_empty(), "{out:?}");
+    for action in &out.actions {
+        assert!(matches!(action, Action::ResizeColumn { width, .. } if *width > 0.0), "{action:?}");
+    }
+    d.release(divider + vec2(-30.0, 0.0));
+    let total: f32 = (0..3).map(|i| column(&d.layout, i).width).sum();
+    assert!(total < 800.0, "{total}");
+    assert!((d.hit(&Hit::Divider(Divider::Column(1))).unwrap().center().x - (divider.x - 30.0)).abs() < 1.0);
+}

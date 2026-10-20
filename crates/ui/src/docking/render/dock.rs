@@ -90,6 +90,32 @@ pub(in crate::docking) fn group_heights(groups: &[(bool, Option<f32>, f32)], str
     heights
 }
 
+/// Column widths that fit `room`. Each entry is (width, floor); a column with a floor shrinks
+/// in proportion, never below its floor, and one without keeps its width. A dock saved on a
+/// larger screen still fits, as far as the floors allow.
+pub(in crate::docking) fn fit_widths(columns: &[(f32, Option<f32>)], room: f32) -> Vec<f32> {
+    let mut widths: Vec<f32> = columns.iter().map(|(w, _)| *w).collect();
+    for _ in 0..columns.len() {
+        let total: f32 = widths.iter().sum();
+        if total <= room {
+            break;
+        }
+        let flex: f32 = widths.iter().zip(columns).filter(|(w, (_, floor))| floor.is_some_and(|f| **w > f)).map(|(w, _)| *w).sum();
+        if flex <= 0.0 {
+            break;
+        }
+        let scale = ((room - (total - flex)) / flex).max(0.0);
+        for (width, (_, floor)) in widths.iter_mut().zip(columns) {
+            if let Some(floor) = *floor
+                && *width > floor
+            {
+                *width = (*width * scale).max(floor);
+            }
+        }
+    }
+    widths
+}
+
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// A horizontal split with a dock child: the dock takes its columns' width on its physical
     /// edge, the sibling the rest. False when neither child is a dock.
@@ -138,12 +164,21 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if usable(rect) {
             ui.painter().rect_filled(rect, 0.0, self.style.background);
         }
-        let total: f32 = columns.iter().map(|c| column_width(c, self.style)).sum();
+        let bounds: Vec<(f32, f32)> = columns
+            .iter()
+            .map(|c| if c.iconic { (self.style.iconic_width, self.style.iconic_max_width) } else { self.column_bounds(c) })
+            .collect();
+        let natural: Vec<(f32, Option<f32>)> =
+            columns.iter().zip(&bounds).map(|(c, (lo, _))| (column_width(c, self.style), (!c.iconic).then_some(lo.max(1.0)))).collect();
+        let widths = fit_widths(&natural, rect.width());
+        let scaled = widths.iter().zip(&natural).any(|(w, (n, _))| w != n);
+        let total: f32 = widths.iter().sum();
         let mut x = outer;
         let mut drawn = Vec::new();
         for (index, column) in columns.iter().enumerate() {
             let Some(first) = column.groups.first().and_then(|g| g.panels.first()) else { continue };
-            let width = column_width(column, self.style).min((rect.width() - (x - outer).abs()).max(0.0));
+            let fitted = widths.get(index).copied().unwrap_or_default();
+            let width = fitted.min((rect.width() - (x - outer).abs()).max(0.0));
             let inner = x + inward * width;
             let column_rect = Rect::from_x_y_ranges(x.min(inner)..=x.max(inner), rect.y_range());
             self.column(ui, column, first, column_rect, edge);
@@ -153,13 +188,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             let (band, line) = column_edge(inner, -inward, rect.y_range());
             self.dock_targets.push(DockDrop { target: DockTarget::ColumnEdge { anchor: first.clone(), after: true }, band, line });
-            drawn.push((column, first, width, inner));
+            drawn.push((index, column, first, width, inner));
             x = inner;
         }
         // Registered after the columns, so the narrow hit areas win at the edges.
-        for (column, first, width, inner) in drawn {
-            let others = total - column_width(column, self.style);
-            let (lo, hi) = if column.iconic { (self.style.iconic_width, self.style.iconic_max_width) } else { self.column_bounds(column) };
+        for (index, column, first, width, inner) in drawn {
+            if width < 1.0 {
+                continue;
+            }
+            let others = total - widths.get(index).copied().unwrap_or_default();
+            let (lo, hi) = bounds.get(index).copied().unwrap_or_default();
             let hi = hi.min(room - others).max(lo.min(room - others).max(0.0));
             let lo = lo.min(hi);
             let divider = Rect::from_x_y_ranges((inner - 1.0)..=(inner + 1.0), rect.y_range());
@@ -174,12 +212,22 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             .show(ui);
             self.register_interaction(ui.ctx(), response.response.id);
             let next = (width + inward * response.delta).clamp(lo, hi);
-            if response.delta != 0.0 && next != width {
+            if response.delta != 0.0 && next != width && next > 0.0 {
                 self.output.actions.push(if column.iconic {
                     Action::ResizeIconic { panel: first.clone(), width: Some(next) }
                 } else {
                     Action::ResizeColumn { panel: first.clone(), width: next }
                 });
+                // A dock shrunk to fit keeps the widths it was drawn at, so the resized column
+                // follows the pointer instead of being scaled again.
+                if scaled {
+                    for (other, (column, width)) in columns.iter().zip(&widths).enumerate() {
+                        let first = column.groups.first().and_then(|g| g.panels.first());
+                        if let Some(first) = first.filter(|_| other != index && !column.iconic && *width > 0.0) {
+                            self.output.actions.push(Action::ResizeColumn { panel: first.clone(), width: *width });
+                        }
+                    }
+                }
             }
         }
     }
