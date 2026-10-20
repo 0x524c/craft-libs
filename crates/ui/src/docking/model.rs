@@ -675,6 +675,7 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             if !proposed.contains(anchor) {
                 return Err(DockError::MissingTarget);
             }
+            let mut around = false;
             if let Placement::Split(zone @ (Zone::Left | Zone::Right | Zone::Top | Zone::Bottom)) = location.placement
                 && !location.sibling.is_empty()
             {
@@ -685,14 +686,13 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                 if members.len() != location.sibling.len() || !members.contains(anchor) {
                     return Err(DockError::InvalidPlacement);
                 }
-                let inserted = proposed
+                around = proposed
                     .root
                     .as_mut()
                     .is_some_and(|root| restore_around_subtree(root, &panel, &members, zone, location.size.unwrap_or(SplitSize::Ratio(0.5))));
-                if !inserted {
-                    return Err(DockError::MissingTarget);
-                }
-            } else {
+            }
+            // A subtree that changed since (a migrated or reconciled layout) splits the anchor.
+            if !around {
                 proposed.apply_inner(Action::OpenAt { panel: panel.clone(), anchor: anchor.clone(), placement: location.placement.clone() })?;
                 if let Some(size) = location.size
                     && let Some(root) = proposed.root.as_mut()
@@ -712,6 +712,29 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             if let Some(entry) = stack_entry_mut(root, &panel) {
                 entry.open = open;
                 entry.height = height;
+            }
+        }
+        proposed.validate()?;
+        *self = proposed;
+        Ok(())
+    }
+
+    /// Open an absent panel as a frame at the outer edge of the docked area, taking most of it:
+    /// the last resort for a panel that must stay shown, such as a protected canvas.
+    pub(super) fn open_at_edge(&mut self, panel: P) -> Result<(), DockError> {
+        let mut proposed = self.clone();
+        if self.root.is_none() {
+            proposed.root = Some(Node::Tabs { panels: vec![panel], active: 0 });
+        } else {
+            let anchor = self
+                .panels()
+                .into_iter()
+                .find(|p| matches!(self.place(p), Some(Place::Dock { .. } | Place::Node(_))))
+                .cloned()
+                .ok_or(DockError::MissingTarget)?;
+            proposed.apply_inner(Action::OpenAt { panel: panel.clone(), anchor, placement: Placement::Edge(Zone::Right) })?;
+            if let Some(root) = proposed.root.as_mut() {
+                restore_parent_size(root, &panel, SplitSize::Ratio(0.25));
             }
         }
         proposed.validate()?;

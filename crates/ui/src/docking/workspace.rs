@@ -157,8 +157,11 @@ impl<P: Clone + Eq + Hash> Workspace<P> {
     /// numbered panels) move to `hidden` with their location, so they come back once registered;
     /// the saved arrangement drops them. Registered panels in `default` that are neither shown
     /// nor hidden go to their default place, or to `hidden` when that place cannot be rebuilt.
+    /// A registered panel that `permissions` says cannot close, such as a protected canvas, is
+    /// always shown: at its recorded or default place, else at the outer edge of the docked
+    /// area. Pass the panels' own permissions, not [`Permissions::locked`] ones.
     /// `hidden` keeps at most [`MAX_PANELS`] entries, dropping the oldest unregistered ones first.
-    pub fn reconcile(&mut self, registered: impl Fn(&P) -> bool, default: &Workspace<P>) {
+    pub fn reconcile(&mut self, registered: impl Fn(&P) -> bool, permissions: impl Fn(&P) -> Permissions, default: &Workspace<P>) {
         if self.validate().is_err() {
             *self = Workspace { locked: self.locked, ..default.clone() };
         }
@@ -199,6 +202,17 @@ impl<P: Clone + Eq + Hash> Workspace<P> {
         for (panel, location) in &default.hidden {
             if registered(panel) && !known.contains(panel) && !self.layout.contains(panel) && !self.hidden.iter().any(|(p, _)| p == panel) {
                 self.hidden.push((panel.clone(), location.clone()));
+            }
+        }
+        let stuck: Vec<P> = self.hidden.iter().map(|(p, _)| p).filter(|p| registered(p) && !permissions(p).closable).cloned().collect();
+        for panel in stuck {
+            let mut layout = self.layout.clone();
+            let shown = self.restore_into(&mut layout, &panel).is_ok()
+                || default.layout.location(&panel).is_ok_and(|location| layout.restore(panel.clone(), &location).is_ok())
+                || layout.open_at_edge(panel.clone()).is_ok();
+            if shown {
+                self.layout = layout;
+                self.hidden.retain(|(p, _)| p != &panel);
             }
         }
         let mut excess = self.hidden.len().saturating_sub(MAX_PANELS);

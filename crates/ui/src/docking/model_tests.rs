@@ -329,7 +329,7 @@ fn reconcile_drops_unknown_panels_and_places_missing_registered_ones() {
     let stray = workspace.layout.location(&99).unwrap();
     workspace.hidden.push((98, stray));
     let registered = |p: &u32| *p < 90;
-    workspace.reconcile(registered, &default);
+    workspace.reconcile(registered, |_| Permissions::default(), &default);
     workspace.validate().unwrap();
     // Unregistered panels wait in `hidden` and come back once registered.
     assert_eq!(workspace.hidden.iter().map(|(p, _)| *p).collect::<Vec<_>>(), [98, 99]);
@@ -341,7 +341,7 @@ fn reconcile_drops_unknown_panels_and_places_missing_registered_ones() {
 
     let mut broken = default.clone();
     broken.layout.floating[0].rect[2] = -1.0;
-    broken.reconcile(registered, &default);
+    broken.reconcile(registered, |_| Permissions::default(), &default);
     assert_eq!(broken.layout, default.layout);
 }
 
@@ -466,6 +466,60 @@ mod serde_tests {
                 layout.validate().unwrap_or_else(|e| panic!("{app}{pointer}: {e}"));
                 // Nothing new is in use, so the layout writes back exactly as read.
                 assert_eq!(serde_json::to_value(&layout).unwrap(), layout_value, "{app}{pointer}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_app_fixture_reconciles_with_its_canvas_shown() {
+        let s = |p: &str| p.to_owned();
+        let permissions = |p: &String| if p == "canvas" { Permissions::PROTECTED } else { Permissions::default() };
+        // The canvas between a start dock and the properties, which no fixture matches exactly.
+        let beside = super::Layout {
+            root: Some(Node::Split {
+                axis: SplitAxis::Horizontal,
+                size: SplitSize::FixedFirst(240.0),
+                first: Box::new(Node::Dock { side: Side::Start, columns: vec![Column::new(vec![Group::new(vec![s("layers"), s("pages")], 0)], 240.0)] }),
+                second: Box::new(Node::Split {
+                    axis: SplitAxis::Horizontal,
+                    size: SplitSize::Ratio(0.75),
+                    first: Box::new(Node::Tabs { panels: vec![s("canvas")], active: 0 }),
+                    second: Box::new(Node::Tabs { panels: vec![s("properties"), s("stroke")], active: 0 }),
+                }),
+            }),
+            floating: Vec::new(),
+        };
+        // The canvas with no anchor to go back beside.
+        let alone = super::Layout { root: Some(Node::Tabs { panels: vec![s("canvas")], active: 0 }), floating: Vec::new() };
+        let fixtures = [
+            ("designcraft", include_str!("../../tests/fixtures/v1/designcraft.json"), "/docking"),
+            ("designcraft", include_str!("../../tests/fixtures/v1/designcraft.json"), "/customWorkspaces/0/docking"),
+            ("vectorcraft", include_str!("../../tests/fixtures/v1/vectorcraft.json"), "/docking"),
+            ("lightcraft", include_str!("../../tests/fixtures/v1/lightcraft.json"), "/docking/layout"),
+            ("pdfcraft", include_str!("../../tests/fixtures/v1/pdfcraft.json"), "/docking/layout"),
+            ("cadcraft", include_str!("../../tests/fixtures/v1/cadcraft.json"), "/workspace/docking/layout"),
+            ("soundcraft", include_str!("../../tests/fixtures/v1/soundcraft.json"), "/docking/layout"),
+            ("soundcraft", include_str!("../../tests/fixtures/v1/soundcraft.json"), "/mix_docking/layout"),
+            ("photocraft", include_str!("../../tests/fixtures/v1/photocraft.json"), "/docking"),
+            ("photocraft", include_str!("../../tests/fixtures/v1/photocraft.json"), "/panel_layout/docking"),
+        ];
+        for (app, text, pointer) in fixtures {
+            let file: Value = serde_json::from_str(text).unwrap();
+            let mut saved: super::Layout<String> = serde_json::from_value(file.pointer(pointer).unwrap().clone()).unwrap();
+            let own = saved.contains(&s("canvas")).then(|| saved.clone());
+            saved.take(&s("canvas"));
+            for default in own.iter().chain([&beside, &alone]) {
+                let mut workspace = super::Workspace::new(saved.clone());
+                // A file written while the canvas could still be lost.
+                if let Ok(location) = default.location(&s("canvas")) {
+                    workspace.hidden.push((s("canvas"), location));
+                }
+                for mut workspace in [super::Workspace::new(saved.clone()), workspace] {
+                    workspace.reconcile(|_| true, permissions, &super::Workspace::new(default.clone()));
+                    workspace.validate().unwrap_or_else(|e| panic!("{app}{pointer}: {e}"));
+                    assert!(workspace.layout.contains(&s("canvas")), "{app}{pointer}: {:?}", workspace.layout);
+                    assert!(workspace.hidden.iter().all(|(p, _)| p != "canvas"), "{app}{pointer}");
+                }
             }
         }
     }
