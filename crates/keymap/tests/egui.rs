@@ -380,7 +380,8 @@ fn the_focused_panel_wins_and_tool_groups_cycle() {
     let hits = d.dispatch(&mut input, &km, &Active::NONE);
     let tools = vec![CommandRef::new("tool.marquee"), CommandRef::new("tool.ellipse")];
     let trigger = Trigger::single(chord("M"));
-    assert_eq!(hits, [Hit { command: tools[0].clone(), cycle: tools, trigger, exact: true, pasted: None }]);
+    let got: Vec<_> = hits.iter().map(|h: &Hit| (&h.command, &h.cycle, h.trigger, h.exact, h.pasted.as_deref())).collect();
+    assert_eq!(got, [(&tools[0], &tools, trigger, true, None)]);
 }
 
 #[test]

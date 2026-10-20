@@ -48,6 +48,7 @@ pub enum ReadNote {
 /// Why foreign key text could not be read.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum ForeignError {
     Empty,
     /// Longer than [`MAX_CHORD_TEXT`].

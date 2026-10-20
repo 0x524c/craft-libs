@@ -161,6 +161,7 @@ pub const DOUBLE_PRESS: f64 = 0.6;
 
 /// A command a key press runs.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Hit {
     /// The command to run; for tools sharing the chord, the first of `cycle`.
     pub command: CommandRef,

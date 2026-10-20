@@ -26,6 +26,7 @@ pub const MAX_CONFLICTS: usize = 4096;
 /// What a binding does when pressed.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum Kind {
     #[default]
     Command,
@@ -44,6 +45,7 @@ pub struct Binding {
 /// Why binding text was refused.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum BindingError {
     TooLong,
     /// The part before `": "` is not a scope name.
@@ -201,6 +203,7 @@ impl Bindable {
 /// `Text: Cmd+B` binding is meant for typing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum TypingRule {
     /// Plain chords (no cmd, ctrl or alt) go to the text; function keys still fire.
     #[default]
@@ -306,6 +309,7 @@ pub fn text_editing_chords(platform: Platform) -> &'static [Chord] {
 
 /// What a key press runs.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Lookup {
     None,
     Run(CommandRef),
@@ -337,6 +341,7 @@ pub struct Holder {
 /// The result of an assignment.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Assigned {
     /// Bindings removed from other commands ([`Policy::Steal`]).
     pub taken_from: Vec<Holder>,
@@ -347,6 +352,7 @@ pub struct Assigned {
 /// Why an assignment was refused.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum AssignError {
     UnknownCommand,
     /// The system takes this chord.
@@ -379,6 +385,7 @@ impl std::error::Error for AssignError {}
 /// Why loading dropped part of an [`Overrides`] entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum DropReason {
     KeyTooLong,
     /// The value is not a list of texts.
@@ -393,6 +400,7 @@ pub enum DropReason {
 /// Something wrong in the stored overrides. Load reports these instead of failing.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum Problem {
     /// No command in the catalog has this key; the entry is kept.
     UnknownCommand { key: String },
@@ -413,6 +421,7 @@ pub enum Problem {
 /// How two bindings on one chord relate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum ConflictKind {
     /// Only one of the two can run.
     Clash,
@@ -423,6 +432,7 @@ pub enum ConflictKind {
 /// Two commands on one chord.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Conflict {
     /// The effective trigger on the keymap's platform.
     pub chord: Trigger,

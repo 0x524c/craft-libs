@@ -338,14 +338,12 @@ fn changes_that_find_the_overrides_full_are_reported() {
     has(&km, "view.goToPage", &["Cmd+J"]);
     has(&km, "file.save", &["Cmd+S"]);
     has(&km, "edit.duplicate", &["Cmd+Alt+Shift+D"]);
-    let row = |id: &str, label: &str, change, shortcuts: &[&str]| Failed {
-        command: id.into(),
-        label: label.into(),
-        change,
-        shortcuts: shortcuts.iter().map(|s| s.to_string()).collect(),
+    let rows = |failed: &[Failed]| -> Vec<(String, String, FailedChange, Vec<String>)> {
+        failed.iter().map(|f| (f.command.id.clone(), f.label.clone(), f.change, f.shortcuts.clone())).collect()
     };
+    let row = |id: &str, label: &str, change, shortcuts: &[&str]| (id.to_string(), label.to_string(), change, shortcuts.iter().map(|s| s.to_string()).collect::<Vec<_>>());
     assert_eq!(
-        r.failed,
+        rows(&r.failed),
         [
             row("file.close", "Close", FailedChange::Bind, &["Cmd+J"]),
             row("file.save", "Save", FailedChange::Bind, &["Cmd+Alt+S"]),
@@ -378,7 +376,7 @@ fn changes_that_find_the_overrides_full_are_reported() {
     let r = plan(&set, &km, &options(Start::Current)).apply(&mut km);
     has(&km, "file.close", &["Cmd+Alt+J"]);
     has(&km, "file.save", &["Cmd+S"]);
-    assert_eq!(r.failed, [row("file.save", "Save", FailedChange::Bind, &["Cmd+Alt+J"])]);
+    assert_eq!(rows(&r.failed), [row("file.save", "Save", FailedChange::Bind, &["Cmd+Alt+J"])]);
     assert!(r.skipped.is_empty(), "{:?}", r.skipped);
     assert_eq!(r.imported, 1);
 }
@@ -397,17 +395,8 @@ fn keys_in_unknown_scopes_are_skipped_and_the_rest_apply() {
     let mut km = keymap(Platform::Windows);
     let r = plan(&set, &km, &options).apply(&mut km);
     has(&km, "file.close", &["Cmd+Q", "Text: Cmd+L"]);
-    assert_eq!(
-        r.skipped,
-        [Skipped {
-            command: "file.close".into(),
-            item: "File > Close".into(),
-            line: None,
-            shortcut: "Story: Cmd+K".into(),
-            kept_by: None,
-            reason: SkipReason::UnknownScope
-        }]
-    );
+    let skipped: Vec<_> = r.skipped.iter().map(|s: &Skipped| (s.command.id.as_str(), s.item.as_str(), s.line, s.shortcut.as_str(), s.kept_by.clone(), s.reason)).collect();
+    assert_eq!(skipped, [("file.close", "File > Close", None, "Story: Cmd+K", None, SkipReason::UnknownScope)]);
     assert_eq!(serde_json::to_value(r.skipped[0].reason).unwrap(), "unknownScope");
 }
 
@@ -586,7 +575,8 @@ fn report_json_uses_camel_case_names() {
     assert_eq!(reasons, ["noMatch", "ambiguous", "context", "tool", "noMatch"]);
     assert_eq!(sorted(&v["unreadable"][0]), ["item", "keys", "line", "reason"]);
     assert_eq!(sorted(&v["suggestions"][0]), ["candidates", "item", "line"]);
-    let approximated = ImportReport { approximated: plan(&numpad_set(), &km, &options).report.approximated, ..ImportReport::default() };
+    let mut approximated = ImportReport::default();
+    approximated.approximated = plan(&numpad_set(), &km, &options).report.approximated;
     let a = serde_json::to_value(&approximated).unwrap();
     assert_eq!(sorted(&a["approximated"][0]), ["item", "keys", "line", "note"]);
     assert_eq!(a["approximated"][0]["note"], "numpad");
