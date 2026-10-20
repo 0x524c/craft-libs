@@ -346,6 +346,12 @@ impl Permissions {
     /// uses `Permissions { accepts_splits: true, ..Permissions::PROTECTED }`.
     pub const PROTECTED: Self = Self { movable: false, floatable: false, closable: false, accepts_tabs: false, accepts_splits: false };
 
+    /// A canvas: it can neither move, close nor take tabs. `accepts_splits` and `floatable`
+    /// do not matter, so a canvas that opens panels beside it still counts.
+    pub fn is_protected(self) -> bool {
+        !self.movable && !self.closable && !self.accepts_tabs
+    }
+
     /// Lock Workspace: nothing moves, floats or closes; tab and split drops keep their policy.
     /// [`super::Workspace::apply`] applies this when the workspace is locked; an application
     /// with a global lock preference applies it in its own permissions callback.

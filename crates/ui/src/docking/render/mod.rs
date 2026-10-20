@@ -231,7 +231,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 /// A lone protected or bare panel draws no tab strip and no drag bar.
 pub(in crate::docking) fn stripless<P>(panels: &[P], content: &dyn DockContent<P>) -> bool {
     match panels {
-        [panel] => content.permissions(panel) == Permissions::PROTECTED || content.bare(panel),
+        [panel] => content.permissions(panel).is_protected() || content.bare(panel),
         _ => false,
     }
 }

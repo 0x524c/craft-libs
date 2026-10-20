@@ -6,7 +6,7 @@ use egui::{Context, Pos2, Rect, pos2, vec2};
 
 use super::{GroupKind, Renderer, floating::StackHit, group::TabGroup};
 use crate::docking::{
-    Action, Column, DockContent, DockEvent, Floating, Group, HidePanels, Layout, Node, Permissions, Profile, Zone,
+    Action, Column, DockContent, DockEvent, Floating, Group, HidePanels, Layout, Node, Profile, Zone,
     dock_model::{Place, node_at},
 };
 
@@ -29,7 +29,7 @@ pub(in crate::docking) fn view<'a, P: Clone + Eq + Hash>(
     hide: HidePanels<'_, P>,
     content: &dyn DockContent<P>,
 ) -> (Cow<'a, Layout<P>>, FrameState<P>) {
-    let protected = |p: &P| content.permissions(p) == Permissions::PROTECTED;
+    let protected = |p: &P| content.permissions(p).is_protected();
     let hidden = |p: &P| match hide {
         HidePanels::None => false,
         HidePanels::All => !protected(p),

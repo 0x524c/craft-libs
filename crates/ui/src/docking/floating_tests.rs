@@ -48,17 +48,25 @@ fn workspace() -> Layout<u32> {
 struct Content {
     native: bool,
     keep: Vec<u32>,
+    /// Canvas 0 accepts side splits, as an app that opens panels beside it does.
+    beside: bool,
+    drawn: Vec<u32>,
 }
 
 impl DockContent<u32> for Content {
-    fn body(&mut self, ui: &mut egui::Ui, _: &u32) {
+    fn body(&mut self, ui: &mut egui::Ui, panel: &u32) {
+        self.drawn.push(*panel);
         ui.label("Body");
     }
     fn logical_label(&self, panel: &u32) -> String {
         format!("Panel {panel}")
     }
     fn permissions(&self, panel: &u32) -> Permissions {
-        if *panel == 0 { Permissions::PROTECTED } else { Permissions::default() }
+        match *panel {
+            0 if self.beside => Permissions { accepts_splits: true, ..Permissions::PROTECTED },
+            0 => Permissions::PROTECTED,
+            _ => Permissions::default(),
+        }
     }
     fn allow_native(&self, _: &u32) -> bool {
         self.native
@@ -457,6 +465,19 @@ fn hide_panels_keeps_protected_panels_and_the_except_set() {
     // A window keeps its rect with its hidden groups left out.
     d.step(vec![]);
     assert_eq!(d.title(6).min, pos2(300.0, 84.0), "below the resize band");
+}
+
+#[test]
+fn a_canvas_that_accepts_splits_is_still_protected() {
+    let mut d = Driver::new(workspace(), Profile::Dock);
+    d.content.beside = true;
+    d.hide = Hide::All;
+    d.step(vec![]);
+    d.content.drawn.clear();
+    d.step(vec![]);
+    assert_eq!(d.content.drawn, vec![0], "hiding every panel keeps the canvas");
+    assert!(d.tab(0).is_none());
+    assert!(d.response(DockArea::<u32>::hit_id(Id::new(AREA), &Hit::DragBar(0))).is_none());
 }
 
 #[test]
