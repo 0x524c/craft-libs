@@ -1,10 +1,36 @@
 # Shared Hayro reader snapshot
 
 The `hayro`, `hayro-interpret`, `hayro-syntax` and `hayro-jbig2` directories are transferred
-from [PdfCraft revision 7437bde378f43856eada40af25b983812e615e8a](https://github.com/storytold/pdfcraft/tree/7437bde378f43856eada40af25b983812e615e8a/vendor).
-The upstream [patch ledger](https://github.com/storytold/pdfcraft/blob/7437bde378f43856eada40af25b983812e615e8a/vendor/README.md)
+from [PdfCraft revision ec0a965074f376a5bf610435948e4e5184bf3299](https://github.com/storytold/pdfcraft/tree/ec0a965074f376a5bf610435948e4e5184bf3299/vendor)
+(`main`, 2026-10-19). The upstream [patch ledger](https://github.com/storytold/pdfcraft/blob/ec0a965074f376a5bf610435948e4e5184bf3299/vendor/README.md)
 describes the inherited patches. Source manifests record every transferred Git blob and
 SHA-256 alongside the local hash. The source manifests themselves are not self-hashed.
+
+The first transfer was from PdfCraft revision 7437bde378f43856eada40af25b983812e615e8a.
+The snapshot was then re-synced to ec0a965 by a three-way merge (base 7437bde, PdfCraft's
+current tree, this tree), so every local patch described below is carried unchanged. The
+re-sync brings these PdfCraft changes:
+
+| PdfCraft PR | Crate | Change |
+|---|---|---|
+| #1691 | hayro-interpret | Patch 28: images with few possible pixel values convert each value once (spot-colour images) |
+| #1903, #3316 | hayro-syntax | CCITT images that declare `/Rows 0`, or fewer `/Rows` than `/Height`, decode to their height |
+| #1954 | hayro-syntax | ASCII85 decoding stops at the stream's decode limit (here the per-document limit) |
+| #1982 | hayro-syntax | `Page::base_dimensions` keeps a one-point floor after `/UserUnit` |
+| #2027 | hayro-interpret | Reads a transparency group's `/I` and `/K`; a group that is neither isolated nor knockout composites directly onto its backdrop |
+| #2132 | hayro | A soft mask fades a gradient fill |
+| #1557 | hayro-interpret, hayro | Patch 29: devices are told where annotation drawing begins and ends |
+| 13e3154 | hayro-interpret | Annex D.2 alias codes in standard, TrueType, Type 1 and Type 3 fonts read as the glyphs they draw |
+| #2436 | hayro-interpret | Patches 31–33: faster sampled functions, image decodes reused across zoom levels, patch meshes interpolated once per grid point |
+| #2812 | hayro-interpret | Patch 34: a per-thread tint-transform counter for deterministic tests |
+| #2035 | hayro-syntax | Flate back-references are copied in runs |
+| #3356 | hayro | A tiling pattern drawn once shows its cell at full scale |
+| #3378 | hayro-syntax | Patch 20: spaces or tabs between `stream` and its line break are accepted |
+| #3363 | hayro-syntax | A JP2 image in a colour space the decoder refuses is drawn by its component count |
+| #3412 | hayro-interpret | Type 3 glyph bounding boxes are transformed to device space before shading bounds are intersected |
+
+PdfCraft's vendored `vello_common` patch (clip-intersection performance) is not part of this
+reader snapshot.
 
 The shared snapshot adds immutable per-document ordinary decode limits, threaded through
 initial xrefs, object streams, fallback and repair. Existing constructors retain their

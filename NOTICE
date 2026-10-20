@@ -99,7 +99,7 @@ Optional PDF reader
 Hayro 0.7.1, hayro-interpret 0.7.0, hayro-syntax 0.7.2 and hayro-jbig2 0.3.0
 (https://github.com/LaurenzV/hayro), MIT OR Apache-2.0, retain their upstream licence files.
 These patched sources are transferred from PdfCraft revision
-7437bde378f43856eada40af25b983812e615e8a (https://github.com/storytold/pdfcraft).
+ec0a965074f376a5bf610435948e4e5184bf3299 (https://github.com/storytold/pdfcraft).
 See vendor/README.craft-reader.md and each crate's SOURCE.json for provenance and local changes.
 The reader retains the existing Foxit/PDFium standard-14 font assets (BSD-3-Clause),
 Compact ICC Profiles by Clinton Ingram (CC0-1.0), and dependency CMaps (BSD-3-Clause).

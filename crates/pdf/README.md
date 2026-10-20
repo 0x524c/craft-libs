@@ -56,7 +56,7 @@ Cancellation is polled between operators, so a decoder may finish before noticin
 ## Backend provenance and consumer pins
 
 The shared reader vendors the current patched Hayro trees from PdfCraft revision
-`7437bde378f43856eada40af25b983812e615e8a`. See
+`ec0a965074f376a5bf610435948e4e5184bf3299`. See
 [`vendor/README.craft-reader.md`](../../vendor/README.craft-reader.md) for the transfer and
 local patches. Lopdf, COS editing, inspection fallback and application caches remain app-owned.
 
