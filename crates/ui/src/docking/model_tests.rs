@@ -320,7 +320,10 @@ fn locked_workspace_rejects_structure_but_allows_activate_open_minimize_and_resi
     // Opening at a chosen place works too; moving a shown panel there does not.
     workspace.apply(Action::OpenAt { panel: 13, anchor: 11, placement: Placement::Split(Zone::Bottom) }, allow).unwrap();
     assert!(workspace.layout.contains(&13));
-    assert_eq!(workspace.apply(Action::OpenAt { panel: 2, anchor: 11, placement: Placement::Split(Zone::Bottom) }, allow), Err(DockError::NotAllowed));
+    assert_eq!(
+        workspace.apply(Action::OpenAt { panel: 2, anchor: 11, placement: Placement::Split(Zone::Bottom) }, allow),
+        Err(DockError::NotAllowed)
+    );
 }
 
 #[test]
@@ -493,7 +496,10 @@ mod serde_tests {
             root: Some(Node::Split {
                 axis: SplitAxis::Horizontal,
                 size: SplitSize::FixedFirst(240.0),
-                first: Box::new(Node::Dock { side: Side::Start, columns: vec![Column::new(vec![Group::new(vec![s("layers"), s("pages")], 0)], 240.0)] }),
+                first: Box::new(Node::Dock {
+                    side: Side::Start,
+                    columns: vec![Column::new(vec![Group::new(vec![s("layers"), s("pages")], 0)], 240.0)],
+                }),
                 second: Box::new(Node::Split {
                     axis: SplitAxis::Horizontal,
                     size: SplitSize::Ratio(0.75),

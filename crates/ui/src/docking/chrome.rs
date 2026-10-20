@@ -198,13 +198,12 @@ impl<'a> FloatingFrame<'a> {
             response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), self.resize_label));
             let anchor_id = response.id.with("pointer-anchor");
             crate::layout::drag_focus(ui, &response);
-            if response.drag_started() {
-                if let Some(origin) = ui.input(|i| i.pointer.press_origin())
-                    && let Some(anchor) = AnchoredResize::new(rect, origin, direction)
-                {
-                    ui.ctx().data_mut(|data| data.insert_temp(anchor_id, anchor));
-                    started = Some(response.id);
-                }
+            if response.drag_started()
+                && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+                && let Some(anchor) = AnchoredResize::new(rect, origin, direction)
+            {
+                ui.ctx().data_mut(|data| data.insert_temp(anchor_id, anchor));
+                started = Some(response.id);
             }
             let mut delta = Vec2::ZERO;
             if response.has_focus() {

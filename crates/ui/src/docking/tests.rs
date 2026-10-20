@@ -228,7 +228,8 @@ fn invalid_saved_layouts_reject_duplicates_selection_depth_and_nonfinite_geometr
     for empty in [tabs(&[], 0), Node::Stack { entries: Vec::new() }] {
         let root = Layout { root: Some(empty.clone()), floating: Vec::new() };
         assert_eq!(root.validate(), Err(DockError::InvalidGeometry));
-        let beside = Node::Split { axis: SplitAxis::Horizontal, size: SplitSize::Ratio(0.5), first: Box::new(tabs(&[1], 0)), second: Box::new(empty) };
+        let beside =
+            Node::Split { axis: SplitAxis::Horizontal, size: SplitSize::Ratio(0.5), first: Box::new(tabs(&[1], 0)), second: Box::new(empty) };
         assert_eq!(Layout { root: Some(beside), floating: Vec::new() }.validate(), Err(DockError::InvalidGeometry));
     }
 }

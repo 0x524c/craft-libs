@@ -548,7 +548,8 @@ fn screen_reader_values_follow_the_column_width_on_either_edge() {
         d.ctx.enable_accesskit();
         d.settle();
         let id = DockArea::<u32>::hit_id(d.id, &Hit::Divider(Divider::Column(2)));
-        let request = |action, data| Event::AccessKitActionRequest(ActionRequest { action, target_tree: TreeId::ROOT, target_node: id.accesskit_id(), data });
+        let request =
+            |action, data| Event::AccessKitActionRequest(ActionRequest { action, target_tree: TreeId::ROOT, target_node: id.accesskit_id(), data });
         let case = format!("{side:?}, right to left {right_to_left}");
         let out = d.frame(vec![request(A::SetValue, Some(ActionData::NumericValue(300.0)))]);
         assert_eq!(out.actions, vec![Action::ResizeColumn { panel: 2, width: 300.0 }], "{case}");
