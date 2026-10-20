@@ -378,8 +378,9 @@ Words come from `ui::Text`. Apps on craft-i18n pass `I18nText`; others implement
 right-to-left languages, which mirror the layout. Chord text is never reordered. `ui::STRINGS`
 and `ui::PLURALS` list every string the dialog looks up, for the translation catalog.
 `Options` sets the conflict mode, double-press recording, area tabs, the on-screen keyboard,
-read-only rows for keys outside the catalog, the app's import and export formats, and an
-`accept` rule for which keys a command may get.
+read-only rows for keys outside the catalog, the app's import and export formats, an `accept`
+rule for which keys a command may get, and a `visible` rule for which catalog entries the table
+lists (hidden entries keep their keys and still count in conflicts).
 
 ## Features
 

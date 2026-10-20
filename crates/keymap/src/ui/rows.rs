@@ -186,12 +186,18 @@ fn is_tool(b: &Bindable) -> bool {
     matches!(b.kind, Kind::Tool { .. })
 }
 
+/// The catalog entries the table lists ([`Options::visible`]).
+fn listed<'k>(keymap: &'k Keymap, options: &Options) -> impl Iterator<Item = &'k Bindable> + Clone {
+    let visible = options.visible;
+    keymap.catalog().iter().filter(move |b| visible.is_none_or(|f| f(b)))
+}
+
 /// The Show entries, in catalog order, leaving out areas with no rows.
 pub(crate) fn areas(keymap: &Keymap, options: &Options, text: &dyn Text) -> Vec<AreaEntry> {
-    let catalog = keymap.catalog();
+    let catalog = listed(keymap, options);
     let mut out = vec![AreaEntry { id: AreaId::All, label: text.ui("All Commands").into_owned() }];
     let mut menus: Vec<&str> = Vec::new();
-    for m in catalog.iter().filter_map(top_menu) {
+    for m in catalog.clone().filter_map(top_menu) {
         if !menus.contains(&m) {
             menus.push(m);
         }
@@ -200,22 +206,22 @@ pub(crate) fn areas(keymap: &Keymap, options: &Options, text: &dyn Text) -> Vec<
         let label = craft_i18n::fmt(&text.ui("{menu} Menu"), &[("menu", &text.segment(m))]);
         out.push(AreaEntry { id: AreaId::Menu(m.to_string()), label });
     }
-    if catalog.iter().any(is_tool) {
+    if catalog.clone().any(is_tool) {
         out.push(AreaEntry { id: AreaId::Tools, label: text.ui("Tools").into_owned() });
     }
     let mut panels: Vec<&str> = keymap.scopes().panels().iter().map(String::as_str).collect();
-    for b in catalog.iter().filter(|b| !b.scope.is_app()) {
+    for b in catalog.clone().filter(|b| !b.scope.is_app()) {
         if !panels.contains(&b.scope.as_str()) {
             panels.push(b.scope.as_str());
         }
     }
-    for p in panels.into_iter().filter(|p| catalog.iter().any(|b| b.scope.as_str() == *p)) {
+    for p in panels.into_iter().filter(|p| catalog.clone().any(|b| b.scope.as_str() == *p)) {
         out.push(AreaEntry { id: AreaId::Panel(p.to_string()), label: panel_label(text, p) });
     }
-    if catalog.iter().any(|b| top_menu(b).is_none() && !is_tool(b)) {
+    if catalog.clone().any(|b| top_menu(b).is_none() && !is_tool(b)) {
         out.push(AreaEntry { id: AreaId::Other, label: text.ui("Other").into_owned() });
     }
-    for a in &options.areas {
+    for a in options.areas.iter().filter(|a| catalog.clone().any(a.rows)) {
         out.push(AreaEntry { id: AreaId::App(a.id), label: text.segment(a.label).into_owned() });
     }
     if !options.fixed.is_empty() {
@@ -344,14 +350,15 @@ fn build(keymap: &Keymap, options: &Options, text: &dyn Text, view: &View) -> Bu
         }
     }
     let submenus = match view.area {
-        AreaId::Menu(m) => catalog.iter().any(|b| top_menu(b) == Some(m.as_str()) && b.paths.first().is_some_and(|p| p.len() >= 3)),
+        AreaId::Menu(m) => listed(keymap, options).any(|b| top_menu(b) == Some(m.as_str()) && b.paths.first().is_some_and(|p| p.len() >= 3)),
         _ => false,
     };
 
     // Groups in first-seen order within their rank.
     let mut groups: Vec<(u8, Option<String>, Vec<Row>)> = Vec::new();
     for (index, (b, list)) in catalog.iter().zip(&bindings).enumerate() {
-        if !in_area(view.area, b, options) || !query.matches(b, list, text, platform) {
+        let hidden = options.visible.is_some_and(|f| !f(b));
+        if hidden || !in_area(view.area, b, options) || !query.matches(b, list, text, platform) {
             continue;
         }
         let key = b.command.key();
@@ -597,6 +604,22 @@ pub(crate) mod tests {
         let none = BTreeSet::new();
         let built = build(&km, &o, &English, &view("", &AreaId::All, Filter::All, &none));
         assert_eq!((built.clashes, built.matches), (1, 8));
+        Ok(())
+    }
+
+    #[test]
+    fn hidden_entries_are_not_listed_but_still_conflict() -> Result<(), crate::AssignError> {
+        let mut km = fixture(Platform::Mac);
+        let o = Options { visible: Some(|b| b.command.id != "file.export" && !b.command.id.starts_with("timeline.")), ..Options::default() };
+        let names: Vec<String> = areas(&km, &o, &English).into_iter().map(|a| a.label).collect();
+        assert_eq!(names, ["All Commands", "File Menu", "Object Menu", "Tools", "Other"]);
+        assert_eq!(lines(&km, &o, &English, "", AreaId::Menu("File".into()), Filter::All), ["Save: ⌘S", "Save As…: ⇧⌘S"]);
+        assert!(lines(&km, &o, &English, "export", AreaId::All, Filter::All).is_empty());
+
+        km.assign(&"file.save".into(), key("Cmd+E"), crate::Policy::Keep)?;
+        let none = BTreeSet::new();
+        assert_eq!(build(&km, &o, &English, &view("", &AreaId::All, Filter::All, &none)).clashes, 1);
+        assert_eq!(lines(&km, &o, &English, "", AreaId::All, Filter::Conflicts), ["# File", "Save: ⌘S, ⌘E"]);
         Ok(())
     }
 

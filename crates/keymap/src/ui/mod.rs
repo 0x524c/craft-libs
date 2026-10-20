@@ -125,6 +125,10 @@ pub struct Options {
     pub area_tabs: bool,
     /// The app's own Show entries.
     pub areas: Vec<Area>,
+    /// `None`: every catalog entry is listed. Otherwise the table, its Show entries and search
+    /// list only the entries it returns true for; the others keep their bindings and still count
+    /// in conflicts.
+    pub visible: Option<fn(&Bindable) -> bool>,
     /// false: the on-screen keyboard pane.
     pub keyboard: bool,
     pub fixed: Vec<FixedRow>,
@@ -152,6 +156,7 @@ impl Default for Options {
             sort_by_label: false,
             area_tabs: false,
             areas: Vec::new(),
+            visible: None,
             keyboard: false,
             fixed: Vec::new(),
             import_formats: Vec::new(),
