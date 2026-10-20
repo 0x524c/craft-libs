@@ -24,7 +24,8 @@ pub struct ResizeResponse {
 /// A focusable divider with pointer, arrow-key and accessibility resizing.
 ///
 /// This widget never stores or changes a pane size. IDs and labels are separate, so translated
-/// labels do not change identity. Pointer drags retain egui's immediate `Sense::drag` behavior.
+/// labels do not change identity. Pointer drags retain egui's immediate `Sense::drag` behavior
+/// and leave keyboard focus on the handle, highlighted once a key is pressed.
 /// Only arrows along the split axis are consumed, while this handle has focus. Tab remains
 /// available for normal focus traversal.
 pub struct ResizeHandle<'a> {
@@ -82,15 +83,12 @@ impl<'a> ResizeHandle<'a> {
         let mut response = ui.interact(if valid { hit } else { inert }, self.id, if valid { Sense::drag() } else { Sense::hover() });
         let enabled = valid && response.enabled();
         let mut delta = 0.0;
-        // Pointer resizing borrows focus only for the gesture. Keyboard focus acquired
-        // through traversal remains intact until the user chooses another control.
-        if response.drag_stopped() {
-            response.surrender_focus();
-        }
+        let mut quiet = false;
         if enabled {
             if response.drag_started() {
                 response.request_focus();
             }
+            quiet = pointer_focus(ui, &response);
             if response.dragged() {
                 let drag = response.drag_delta();
                 delta = match self.axis {
@@ -181,7 +179,7 @@ impl<'a> ResizeHandle<'a> {
         if enabled {
             let fill = if response.dragged() {
                 Some(self.style.dragged)
-            } else if response.has_focus() {
+            } else if response.has_focus() && !quiet {
                 Some(self.style.focused)
             } else if response.hovered() {
                 Some(self.style.hovered)
@@ -200,4 +198,17 @@ impl<'a> ResizeHandle<'a> {
         }
         ResizeResponse { response, delta }
     }
+}
+
+/// A pointer drag focuses its handle, and the handle keeps focus after the release so arrow
+/// keys resize it right away. That focus draws no highlight until a key is pressed. Call after
+/// the handle requests focus; true while its focus came from the pointer.
+pub(crate) fn pointer_focus(ui: &Ui, response: &Response) -> bool {
+    let key = response.id.with("pointer-focus");
+    if response.drag_started() {
+        ui.ctx().data_mut(|d| d.insert_temp(key, true));
+    } else if !response.has_focus() || ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))) {
+        ui.ctx().data_mut(|d| d.remove::<bool>(key));
+    }
+    ui.ctx().data(|d| d.get_temp::<bool>(key)).unwrap_or(false)
 }

@@ -171,14 +171,15 @@ fn resize_handle_preserves_pointer_drag_lifecycle_and_reports_per_frame_delta() 
     let (response, _) = h.frame(vec![pointer(center + vec2(16.0, 0.0), false)]);
     assert!(response.response.drag_stopped());
     assert_eq!(response.delta, 0.0);
-    assert!(!response.response.has_focus(), "pointer release must not leave a sticky focus highlight");
+    assert!(response.response.has_focus(), "a pointer drag leaves keyboard focus on the handle");
     let (_, output) = h.frame(vec![Event::PointerMoved(pos2(300.0, 180.0))]);
-    assert!(
-        !output
-            .shapes
-            .iter()
-            .any(|shape| { matches!(&shape.shape, egui::epaint::Shape::Rect(rect) if rect.rect == h.rect && rect.fill == Color32::BLUE) })
-    );
+    let handle = h.rect;
+    let highlighted =
+        |output: &FullOutput| output.shapes.iter().any(|shape| matches!(&shape.shape, egui::epaint::Shape::Rect(rect) if rect.rect == handle && rect.fill == Color32::BLUE));
+    assert!(!highlighted(&output), "focus from the pointer draws no highlight");
+    let (response, output) = h.frame(vec![key(Key::ArrowRight)]);
+    assert_eq!(response.delta, 8.0, "arrow keys resize right after the drag");
+    assert!(highlighted(&output));
     assert_eq!(h.value, 100.0, "the component never owns pane state");
 }
 

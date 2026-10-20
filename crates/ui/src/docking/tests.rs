@@ -1478,7 +1478,7 @@ fn pointer_floating_resize_stops_at_edges_and_waits_for_cursor_to_return() {
         step(&ctx, &mut layout, vec![Event::PointerMoved(start)]);
         assert_eq!(layout.floating[0].rect, original, "{name}: returning to the original handle restores its geometry");
         step(&ctx, &mut layout, vec![pointer_button(start, false)]);
-        assert!(!ctx.memory(|memory| memory.has_focus(id)));
+        assert!(ctx.memory(|memory| memory.has_focus(id)), "{name}: the grip keeps keyboard focus after the drag");
     }
 }
 

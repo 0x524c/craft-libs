@@ -194,6 +194,7 @@ impl<'a> FloatingFrame<'a> {
                     started = Some(response.id);
                 }
             }
+            let quiet = crate::layout::pointer_focus(ui, &response);
             let mut delta = Vec2::ZERO;
             if response.has_focus() {
                 ui.memory_mut(|memory| {
@@ -230,13 +231,10 @@ impl<'a> FloatingFrame<'a> {
             {
                 resized = Some(next);
             }
-            if response.drag_stopped() {
-                response.surrender_focus();
-            }
             if cancelled || !ui.input(|input| input.pointer.primary_down()) {
                 ui.ctx().data_mut(|data| data.remove::<AnchoredResize>(anchor_id));
             }
-            if name == "resize" && (response.hovered() || response.dragged() || response.has_focus()) {
+            if name == "resize" && (response.hovered() || response.dragged() || (response.has_focus() && !quiet)) {
                 ui.painter().line_segment([handle.left_bottom(), handle.right_top()], Stroke::new(2.0, style.accent));
             }
             responses.push(response);
