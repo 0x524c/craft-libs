@@ -999,3 +999,19 @@ fn an_app_error_shows_until_dismissed() {
     click(&mut h, "Dismiss");
     assert!(!has(&h, "⚠ The file could not be read"));
 }
+
+#[test]
+fn one_pointer_click_on_a_chip_of_another_row_records() {
+    let mut h = mac();
+    click(&mut h, "Save");
+    let c = h.get_by_label("Export…: ⌘E").rect().center();
+    let at = egui::pos2(c.x as f32, c.y as f32);
+    h.event(Event::PointerMoved(at));
+    h.run();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.step();
+    }
+    h.run();
+    assert!(has(&h, "Export…: press keys"));
+}
