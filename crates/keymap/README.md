@@ -95,7 +95,7 @@ stay in the entry when the command is edited, unless the edit leaves it without 
 `Keymap::problems` lists them.
 
 ```rust
-use craft_keymap::{Binding, Keymap, Overrides, Platform, Policy, Profiles, Scopes};
+use craft_keymap::{Binding, Keymap, Overrides, Platform, Policy, Scopes};
 use craft_settings::{Location, Settings, SettingsStore};
 use serde::{Deserialize, Serialize};
 
@@ -104,7 +104,6 @@ use serde::{Deserialize, Serialize};
 struct Prefs {
     #[serde(with = "craft_keymap::keymap::overrides_list")]
     shortcuts: Overrides,
-    shortcut_sets: Profiles,
 }
 
 impl Settings for Prefs {
@@ -140,8 +139,29 @@ store.update(|p| p.shortcuts = keymap.overrides().clone());
 
 `Profiles` holds the user's named sets of overrides and which one is active. The app's built-in
 sets (`&[(&str, Overrides)]`, the first one the default) are passed to each call and never change.
-Put `Profiles` next to the `Overrides` in the app's settings type. The sets, and each set's
+An app with sets stores only `Profiles`, in place of the `Overrides` field above: the keymap's
+overrides are the active set's, and the dialog's OK stores them there. The sets, and each set's
 overrides, are stored as arrays, so a deleted set or entry leaves a craft-settings file.
+
+```rust
+use craft_keymap::{Keymap, Platform, Profiles, Scopes};
+use craft_settings::{Location, SettingsStore};
+
+#[derive(Serialize, Deserialize, Default, Clone, PartialEq)]
+#[serde(default)]
+struct Prefs {
+    shortcut_sets: Profiles,
+}
+
+// `builtins` is the app's &[(&str, Overrides)], the first set the default.
+let (mut store, _report) = SettingsStore::<Prefs>::open(Location::Auto);
+let mut sets = store.get().shortcut_sets.clone();
+sets.reconcile(&builtins);
+let keymap = Keymap::new(catalog, Scopes::new(), Platform::current()).with_overrides(sets.active_overrides(&builtins).clone());
+
+// The dialog edits `sets` and `keymap`. On Outcome::Ok (or Changed, to save live):
+store.update(|p| p.shortcut_sets = sets.clone());
+```
 
 - `names`, `get`, `active_name`, `active_overrides` (hand them to `Keymap::set_overrides`).
 - `select` switches sets; `duplicate(from, to)` copies a built-in or user set; `save_as`,

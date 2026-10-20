@@ -72,7 +72,7 @@
 //! Without the attribute, overrides with at most one text per command are written as a table.
 //!
 //! ```no_run
-//! use craft_keymap::{Binding, Keymap, Overrides, Platform, Policy, Profiles, Scopes};
+//! use craft_keymap::{Binding, Keymap, Overrides, Platform, Policy, Scopes};
 //! use craft_settings::{Location, Settings, SettingsStore};
 //! use serde::{Deserialize, Serialize};
 //!
@@ -81,7 +81,6 @@
 //! struct Prefs {
 //!     #[serde(with = "craft_keymap::keymap::overrides_list")]
 //!     shortcuts: Overrides,
-//!     shortcut_sets: Profiles,
 //! }
 //!
 //! impl Settings for Prefs {
@@ -99,6 +98,10 @@
 //! keymap.assign(&"file.save".into(), Binding::parse("Cmd+Alt+S").unwrap(), Policy::Steal).ok();
 //! store.update(|p| p.shortcuts = keymap.overrides().clone());
 //! ```
+//!
+//! An app with named sets stores only [`Profiles`] in place of the `Overrides` field and builds
+//! the keymap from the active set:
+//! `with_overrides(prefs.shortcut_sets.active_overrides(&builtins).clone())`.
 //!
 //! # Importing a shortcut set
 //!
