@@ -39,6 +39,14 @@ same MIT OR Apache-2.0 licence. Code comments keep the pull request's patch numb
 |---|---|---|---|---|
 | [#2770](https://github.com/storytold/pdfcraft/pull/2770) | Guillem Hermida (guillehr2) | [6fcf2a4](https://github.com/guillehr2/pdfcraft/commit/6fcf2a4aca29e943e28cb69017ff8f87d00656c6) | hayro-interpret `color.rs`, `interpret/mod.rs`, `interpret/path.rs`, `interpret/state.rs`, `pattern.rs`, `shading.rs`, `soft_mask.rs`, `x_object.rs` | Patches 35 and 36, plate mode: `InterpreterSettings::plate` draws one ink's separation as a gray film (`color::Plate`, `ColorSpace::ink_use`/`ink_tint`); the graphics state reads `OP`, `op` and `OPM` and an overprinting paint that doesn't specify the plate's ink leaves the plate as it is (ISO 32000-2 §8.6.7); `InterpreterSettings::ink_sink` reports spot inks; `color::CmykSimulation` converts process colour to an output intent's CMYK. Only the vendored interpreter part is ported; PdfCraft's `separations.rs` and Output Preview UI are not |
 
+The output-intent conversion of patch 36 goes through a `color::CmykConversion` trait, so
+that callers can convert with their own colour management. `CmykSimulation::new` keeps
+#2770's moxcms conversion as the default, and `CmykSimulation::with_conversion` takes a
+caller's. Lab and ICCBased colours reach the conversion as CIE XYZ relative to the D50 PCS
+white (`color::PCS_WHITE`); the moxcms conversion takes them on through #2770's ProPhoto hub.
+`crates/pdf/tests/plates.rs` adapts #2770's plate tests to the raster path, with its
+synthetic ICC profiles in `crates/pdf/tests/support/synthetic_icc.rs`.
+
 The shared snapshot adds immutable per-document ordinary decode limits, threaded through
 initial xrefs, object streams, fallback and repair. Existing constructors retain their
 previous default. Known-size image budgets and streaming content budgets remain distinct.

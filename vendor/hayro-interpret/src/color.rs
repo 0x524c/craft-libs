@@ -785,11 +785,11 @@ impl Lab {
         ]
     }
 
-    /// PdfCraft patch (36): the colour `input` in the separation hub (see [`Hub`]), relative
+    /// PdfCraft patch (36): the colour `input` as XYZ relative to [`PCS_WHITE`], relative
     /// colorimetric: the space's white point becomes the PCS white (Bradford-adapted).
-    fn to_hub(&self, input: &[f32], manual_scale: bool) -> [f32; 3] {
+    fn to_pcs(&self, input: &[f32], manual_scale: bool) -> [f32; 3] {
         let xyz = self.xyz(self.components(input, manual_scale));
-        HUB.from_xyz(&Self::adapt(&self.usable_white_point(), &HUB.white, &xyz))
+        Self::adapt(&self.usable_white_point(), &PCS_WHITE, &xyz)
     }
 }
 
@@ -1091,10 +1091,11 @@ impl ICCProfile {
         })))
     }
 
-    /// PdfCraft patch (36): `input` (whole colours of this profile's components) in the
-    /// separation hub, three values per colour in `rgb`. L*a*b* components are scaled to the
-    /// profile's encoding unless `manual_scale` says they already are (an Indexed palette's).
-    fn to_hub(&self, input: &[f32], manual_scale: bool, rgb: &mut [f32]) -> Option<()> {
+    /// PdfCraft patch (36): `input` (whole colours of this profile's components) as XYZ
+    /// relative to [`PCS_WHITE`], three values per colour in `xyz`, through the separation hub
+    /// (see [`Hub`]). L*a*b* components are scaled to the profile's encoding unless
+    /// `manual_scale` says they already are (an Indexed palette's).
+    fn to_pcs(&self, input: &[f32], manual_scale: bool, xyz: &mut [f32]) -> Option<()> {
         let transform = self
             .0
             .to_hub
@@ -1110,7 +1111,7 @@ impl ICCProfile {
             .as_ref()?;
         let n = self.0.number_components;
         let samples = input.len() / n.max(1);
-        if samples > SIMULATION_CHUNK || rgb.len() != samples.checked_mul(3)? {
+        if samples > SIMULATION_CHUNK || xyz.len() != samples.checked_mul(3)? {
             return None;
         }
         // Values outside the encoding (or NaN) never reach the tables.
@@ -1123,7 +1124,12 @@ impl ICCProfile {
                 (false, _) => unit(*v),
             };
         }
-        transform.transform(encoded, rgb).ok()
+        transform.transform(encoded, xyz).ok()?;
+        for colour in xyz.chunks_exact_mut(3) {
+            let pcs = HUB.to_pcs(&[colour[0], colour[1], colour[2]]);
+            colour.copy_from_slice(&pcs);
+        }
+        Some(())
     }
 
     fn is_srgb(&self) -> bool {
@@ -1433,31 +1439,62 @@ const SIMULATION_CHUNK: usize = 256;
 ///
 /// - DeviceRGB as sRGB, as pages are drawn; CalRGB and CalGray through their sRGB colours;
 /// - Lab and ICCBased colours (RGB, gray, L\*a\*b\*, and CMYK in another profile) through
-///   the separation hub, a D50 RGB wide enough for every surface colour (see [`Hub`]);
+///   CIE XYZ relative to the PCS white ([`PCS_WHITE`]);
 /// - DeviceCMYK, ICCBased CMYK in this same profile, and DeviceGray stay as they are: gray is a
 ///   device colour, which a CMYK device prints with black ink alone (§10.4.2.2).
 ///
 /// Conversions are relative colorimetric, the initial rendering intent (§8.6.5.8; the
-/// graphics state's `ri` isn't read). A profile without colorimetric tables is used through
-/// its perceptual ones (tag 0, which every LUT-based ICC.1 profile has). Black point
-/// compensation isn't applied.
+/// graphics state's `ri` isn't read). A [`CmykConversion`] converts into the profile's CMYK:
+/// [`CmykSimulation::new`] makes one with moxcms, and [`CmykSimulation::with_conversion`]
+/// takes the caller's.
 #[derive(Clone)]
 pub struct CmykSimulation(Arc<SimulationRepr>);
 
 struct SimulationRepr {
-    description: Option<String>,
-    perceptual: bool,
     digest: u128,
-    from_srgb: Arc<TransformF32Executor>,
-    from_hub: Arc<TransformF32Executor>,
-    to_srgb: Option<Arc<Transform8BitExecutor>>,
+    conversion: Box<dyn CmykConversion>,
 }
+
+/// The conversion into a [`CmykSimulation`]'s CMYK, relative colorimetric. Each call converts
+/// whole colours, at most 256 of them; CMYK components are `0.0..=1.0`, four per colour. A
+/// method returns `None` when it can't convert, and the colour then separates by the device
+/// formulas.
+pub trait CmykConversion: Send + Sync {
+    /// sRGB colours, gamma-encoded, three components in `0.0..=1.0` per colour, to CMYK.
+    fn from_srgb(&self, rgb: &[f32], cmyk: &mut [f32]) -> Option<()>;
+
+    /// CIE XYZ colours relative to [`PCS_WHITE`] (the Y of white is 1), three components per
+    /// colour, to CMYK. The source's white has already been adapted to the PCS white.
+    fn from_pcs_xyz(&self, xyz: &[f32], cmyk: &mut [f32]) -> Option<()>;
+
+    /// CMYK bytes, four per pixel, to sRGB bytes, three per pixel, to show what the printing
+    /// condition prints.
+    fn to_srgb8(&self, cmyk: &[u8], rgb: &mut [u8]) -> Option<()> {
+        let _ = (cmyk, rgb);
+        None
+    }
+
+    /// The profile's description, to name the printing condition.
+    fn description(&self) -> Option<&str> {
+        None
+    }
+
+    /// Whether the conversions use the profile's perceptual tables, because it has no
+    /// colorimetric ones.
+    fn perceptual(&self) -> bool {
+        false
+    }
+}
+
+/// The D50 white of the ICC profile connection space (ICC.1 §7.2.16), the white that
+/// [`CmykConversion::from_pcs_xyz`] takes its colours relative to.
+pub const PCS_WHITE: [f32; 3] = [0.9642, 1.0, 0.8249];
 
 impl Debug for CmykSimulation {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CmykSimulation")
-            .field("description", &self.0.description)
-            .field("perceptual", &self.0.perceptual)
+            .field("description", &self.description())
+            .field("perceptual", &self.perceptual())
             .finish_non_exhaustive()
     }
 }
@@ -1481,12 +1518,72 @@ pub enum NoSimulation {
 }
 
 impl CmykSimulation {
+    /// The printing condition of the ICC profile `profile`, if it is a CMYK profile whose
+    /// PCS-to-device tables convert, converted to with moxcms. A profile without colorimetric
+    /// tables is used through its perceptual ones (tag 0, which every LUT-based ICC.1 profile
+    /// has). Black point compensation isn't applied.
+    pub fn new(profile: &[u8]) -> Result<Self, NoSimulation> {
+        Ok(Self::with_conversion(
+            profile,
+            MoxcmsConversion::new(profile)?,
+        ))
+    }
+
+    /// The printing condition of the CMYK ICC profile `profile`, converted to by `conversion`,
+    /// which the caller made from that profile. ICCBased CMYK colours in `profile` itself stay
+    /// as they are.
+    pub fn with_conversion(profile: &[u8], conversion: impl CmykConversion + 'static) -> Self {
+        Self(Arc::new(SimulationRepr {
+            digest: hash128(profile),
+            conversion: Box::new(conversion),
+        }))
+    }
+
+    /// The profile's description; `None` when it has none.
+    pub fn description(&self) -> Option<&str> {
+        self.0.conversion.description()
+    }
+
+    /// Whether conversions use the profile's perceptual tables, because it has no
+    /// colorimetric ones.
+    pub fn perceptual(&self) -> bool {
+        self.0.conversion.perceptual()
+    }
+
+    /// A digest of the profile's bytes, for cache keys.
+    pub(crate) fn digest(&self) -> u128 {
+        self.0.digest
+    }
+
+    fn conversion(&self) -> &dyn CmykConversion {
+        self.0.conversion.as_ref()
+    }
+
+    /// CMYK in this printing condition to sRGB, relative colorimetric, to show what it prints.
+    /// As [`cmyk_to_srgb8`]; also `None` when the conversion can't show CMYK.
+    pub fn cmyk_to_srgb8(&self, cmyk: &[u8], rgb: &mut [u8]) -> Option<()> {
+        if cmyk.len() % 4 != 0 || (cmyk.len() / 4).checked_mul(3)? != rgb.len() {
+            return None;
+        }
+        self.conversion().to_srgb8(cmyk, rgb)
+    }
+}
+
+/// PdfCraft patch (36): the conversion [`CmykSimulation::new`] makes with moxcms. XYZ colours
+/// pass through the separation hub (see [`Hub`]).
+struct MoxcmsConversion {
+    description: Option<String>,
+    perceptual: bool,
+    from_srgb: Arc<TransformF32Executor>,
+    from_hub: Arc<TransformF32Executor>,
+    to_srgb: Option<Arc<Transform8BitExecutor>>,
+}
+
+impl MoxcmsConversion {
     /// The longest description kept, in characters.
     const MAX_DESCRIPTION: usize = 160;
 
-    /// The printing condition of the ICC profile `profile`, if it is a CMYK profile whose
-    /// PCS-to-device tables convert.
-    pub fn new(profile: &[u8]) -> Result<Self, NoSimulation> {
+    fn new(profile: &[u8]) -> Result<Self, NoSimulation> {
         let parsed = ColorProfile::new_from_slice(profile).map_err(|_| NoSimulation::Unreadable)?;
         if parsed.color_space != DataColorSpace::Cmyk {
             return Err(NoSimulation::NotCmyk);
@@ -1500,40 +1597,40 @@ impl CmykSimulation {
         let (from_srgb, _) = transform_f32(&SRGB, Layout::Rgb, &parsed, Layout::Rgba)
             .ok_or(NoSimulation::NoPcsToDevice)?;
         let to_srgb = transform_u8(&parsed, Layout::Rgba, &SRGB, Layout::Rgb);
-        Ok(Self(Arc::new(SimulationRepr {
+        Ok(Self {
             description: profile_description(&parsed, Self::MAX_DESCRIPTION),
             perceptual,
-            digest: hash128(profile),
             from_srgb,
             from_hub,
             to_srgb,
-        })))
+        })
+    }
+}
+
+impl CmykConversion for MoxcmsConversion {
+    fn from_srgb(&self, rgb: &[f32], cmyk: &mut [f32]) -> Option<()> {
+        self.from_srgb.transform(rgb, cmyk).ok()
     }
 
-    /// The profile's description (its `desc` tag) without control characters; `None` when it
-    /// has none.
-    pub fn description(&self) -> Option<&str> {
-        self.0.description.as_deref()
-    }
-
-    /// Whether conversions use the profile's perceptual tables, because it has no
-    /// colorimetric ones.
-    pub fn perceptual(&self) -> bool {
-        self.0.perceptual
-    }
-
-    /// A digest of the profile's bytes, for cache keys.
-    pub(crate) fn digest(&self) -> u128 {
-        self.0.digest
-    }
-
-    /// CMYK in this printing condition to sRGB, relative colorimetric, to show what it prints.
-    /// As [`cmyk_to_srgb8`]; also `None` when the profile has no device-to-PCS tables.
-    pub fn cmyk_to_srgb8(&self, cmyk: &[u8], rgb: &mut [u8]) -> Option<()> {
-        if cmyk.len() % 4 != 0 || (cmyk.len() / 4).checked_mul(3)? != rgb.len() {
-            return None;
+    fn from_pcs_xyz(&self, xyz: &[f32], cmyk: &mut [f32]) -> Option<()> {
+        let mut rgb = [0.0_f32; SIMULATION_CHUNK * 3];
+        let rgb = rgb.get_mut(..xyz.len())?;
+        for (out, xyz) in rgb.chunks_exact_mut(3).zip(xyz.chunks_exact(3)) {
+            out.copy_from_slice(&HUB.from_pcs(&[xyz[0], xyz[1], xyz[2]]));
         }
-        self.0.to_srgb.as_ref()?.transform(cmyk, rgb).ok()
+        self.from_hub.transform(rgb, cmyk).ok()
+    }
+
+    fn to_srgb8(&self, cmyk: &[u8], rgb: &mut [u8]) -> Option<()> {
+        self.to_srgb.as_ref()?.transform(cmyk, rgb).ok()
+    }
+
+    fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    fn perceptual(&self) -> bool {
+        self.perceptual
     }
 }
 
@@ -1611,13 +1708,16 @@ fn transform_u8(
 
 static SRGB: LazyLock<ColorProfile> = LazyLock::new(ColorProfile::new_srgb);
 
-/// PdfCraft patch (36): the separation hub, the RGB that Lab and ICCBased colours pass through
-/// on their way to a simulated CMYK: ROMM RGB (ProPhoto) primaries, D50 white, gamma 1.8. Its
+/// PdfCraft patch (36): the separation hub, the RGB that ICCBased colours leave their profile
+/// in, and that [`MoxcmsConversion`] takes PCS XYZ to its CMYK through: ROMM RGB (ProPhoto)
+/// primaries, D50 white, gamma 1.8. Its
 /// gamut holds practically every surface colour, so nothing printable clips on the way, and
 /// paper white and black land on exact grid points of the conversion's tables. (moxcms
 /// converts CMYK to CMYK and gray to CMYK only through an intermediate.)
 struct Hub {
     profile: ColorProfile,
+    /// Linear hub RGB to XYZ, row-major.
+    to_xyz: [f32; 9],
     /// XYZ to linear hub RGB, row-major.
     from_xyz: [f32; 9],
     /// The XYZ of hub white, `(1, 1, 1)`.
@@ -1632,26 +1732,33 @@ impl Hub {
         let to_xyz = profile.rgb_to_xyz_matrix();
         let from_xyz = to_xyz.inverse().v;
         let white = to_xyz.v.map(|row| (row[0] + row[1] + row[2]) as f32);
+        let flat = |m: [[f64; 3]; 3]| {
+            let mut out = [0.0_f32; 9];
+            for (out, v) in out.iter_mut().zip(m.iter().flatten()) {
+                *out = *v as f32;
+            }
+            out
+        };
         Self {
             profile,
-            from_xyz: [
-                from_xyz[0][0] as f32,
-                from_xyz[0][1] as f32,
-                from_xyz[0][2] as f32,
-                from_xyz[1][0] as f32,
-                from_xyz[1][1] as f32,
-                from_xyz[1][2] as f32,
-                from_xyz[2][0] as f32,
-                from_xyz[2][1] as f32,
-                from_xyz[2][2] as f32,
-            ],
+            to_xyz: flat(to_xyz.v),
+            from_xyz: flat(from_xyz),
             white,
         }
     }
 
-    /// D50 XYZ (Y of white 1) as hub RGB, clipped to its gamut.
-    fn from_xyz(&self, xyz: &[f32; 3]) -> [f32; 3] {
-        CalRgb::matrix_product(&self.from_xyz, xyz).map(|v| unit(v).powf(1.0 / Self::GAMMA))
+    /// XYZ relative to [`PCS_WHITE`] as hub RGB, clipped to its gamut. The PCS white is scaled
+    /// onto the hub's own D50 white, so that paper white lands on hub white exactly.
+    fn from_pcs(&self, xyz: &[f32; 3]) -> [f32; 3] {
+        let xyz = [0, 1, 2].map(|k| xyz[k] * self.white[k] / PCS_WHITE[k]);
+        CalRgb::matrix_product(&self.from_xyz, &xyz).map(|v| unit(v).powf(1.0 / Self::GAMMA))
+    }
+
+    /// Hub RGB as XYZ relative to [`PCS_WHITE`]; the inverse of [`Hub::from_pcs`] in gamut.
+    fn to_pcs(&self, rgb: &[f32; 3]) -> [f32; 3] {
+        let linear = rgb.map(|v| unit(v).powf(Self::GAMMA));
+        let xyz = CalRgb::matrix_product(&self.to_xyz, &linear);
+        [0, 1, 2].map(|k| xyz[k] * PCS_WHITE[k] / self.white[k])
     }
 }
 
@@ -1700,6 +1807,8 @@ impl ColorSpace {
         if cmyk.len() != colours.checked_mul(4)? {
             return None;
         }
+        let conversion = simulation.conversion();
+        // sRGB or PCS XYZ, by the space.
         let mut rgb = [0.0_f32; SIMULATION_CHUNK * 3];
         let mut srgb = [0_u8; SIMULATION_CHUNK * 3];
         for (input, cmyk) in input
@@ -1709,12 +1818,12 @@ impl ColorSpace {
             let count = cmyk.len() / 4;
             let input = input.get(..count.checked_mul(n)?)?;
             let rgb = rgb.get_mut(..count * 3)?;
-            let to_cmyk = match self.0.as_ref() {
+            match self.0.as_ref() {
                 ColorSpaceType::DeviceRgb => {
                     for (out, v) in rgb.iter_mut().zip(input) {
                         *out = unit(*v);
                     }
-                    &simulation.0.from_srgb
+                    conversion.from_srgb(rgb, cmyk)?;
                 }
                 ColorSpaceType::CalRgb(_) | ColorSpaceType::CalGray(_) => {
                     let srgb = srgb.get_mut(..count * 3)?;
@@ -1722,21 +1831,20 @@ impl ColorSpace {
                     for (out, v) in rgb.iter_mut().zip(srgb.iter()) {
                         *out = u8_to_f32(*v);
                     }
-                    &simulation.0.from_srgb
+                    conversion.from_srgb(rgb, cmyk)?;
                 }
                 ColorSpaceType::Lab(lab) => {
                     for (out, colour) in rgb.chunks_exact_mut(3).zip(input.chunks_exact(3)) {
-                        out.copy_from_slice(&lab.to_hub(colour, manual_scale));
+                        out.copy_from_slice(&lab.to_pcs(colour, manual_scale));
                     }
-                    &simulation.0.from_hub
+                    conversion.from_pcs_xyz(rgb, cmyk)?;
                 }
                 ColorSpaceType::ICCBased(icc) if self.simulated_by(simulation) => {
-                    icc.to_hub(input, manual_scale, rgb)?;
-                    &simulation.0.from_hub
+                    icc.to_pcs(input, manual_scale, rgb)?;
+                    conversion.from_pcs_xyz(rgb, cmyk)?;
                 }
                 _ => return None,
-            };
-            to_cmyk.transform(rgb, cmyk).ok()?;
+            }
         }
         Some(())
     }
@@ -1848,7 +1956,7 @@ impl ColorSpace {
 
     /// PdfCraft patch (35): a process colour as DeviceCMYK: CMYK spaces (DeviceCMYK, ICC with
     /// four components) as they are, gray as black only (`k = 1 − gray`, §10.4.2.2), and RGB,
-    /// CIE-based and three-component ICC spaces through sRGB by [`rgb_to_cmyk`]. Patch 32:
+    /// CIE-based and three-component ICC spaces through sRGB by [`rgb_to_cmyk`]. Patch 36:
     /// the spaces `simulation` converts go through it instead, and only fall back to those
     /// formulas if the conversion fails.
     fn process_cmyk(
@@ -1933,7 +2041,7 @@ impl ColorSpace {
 pub(crate) struct PlateSpace {
     inner: ColorSpace,
     ink: Ink,
-    /// Patch 32: the printing condition process colour converts to, if any.
+    /// Patch 36: the printing condition process colour converts to, if any.
     simulation: Option<CmykSimulation>,
 }
 
