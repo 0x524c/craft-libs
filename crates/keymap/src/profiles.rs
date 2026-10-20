@@ -19,6 +19,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value, json};
 
@@ -34,6 +35,10 @@ pub const MAX_EXPORT_BYTES: usize = 4 << 20;
 
 const FORMAT: &str = "craft-keymap";
 const VERSION: u64 = 1;
+/// The version stored [`Profiles`] carry; stored profiles without one read as version 1.
+const STORE_VERSION: u64 = 1;
+// Load notes are kept for `Profiles::problems`; a hostile file must not grow them without bound.
+const MAX_NOTES: usize = 64;
 const IMPORTED: &str = "Imported";
 
 /// The app's built-in sets: name and overrides against the catalog defaults.
@@ -42,6 +47,7 @@ pub type Builtins<'a> = [(&'a str, Overrides)];
 /// Why a set operation was refused.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum ProfileError {
     /// Empty, over [`MAX_SET_NAME`] chars, or with control characters.
     BadName,
@@ -80,22 +86,50 @@ impl fmt::Display for ProfileError {
 
 impl std::error::Error for ProfileError {}
 
+/// Something loading dropped from stored [`Profiles`]; [`Profiles::problems`] lists them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub enum SetProblem {
+    /// A set without a valid name: none, empty, over [`MAX_SET_NAME`] chars, with control
+    /// characters or with spaces around it. `name` is what was stored, cut to [`MAX_SET_NAME`]
+    /// chars.
+    BadName { name: String },
+    /// A second set of this name; the first one stays.
+    Duplicate { name: String },
+    /// Overrides that are neither a list nor a map.
+    BadOverrides { name: String },
+    /// Sets past [`MAX_SETS`].
+    TooMany { ignored: usize },
+    /// Stored by a newer craft-keymap; what this version reads is loaded.
+    NewerVersion(u64),
+}
+
 /// The user's sets and which set is active. The built-in sets are passed to each call.
 ///
-/// An `active` name that matches no set means the first built-in set (or no overrides when the app
+/// An active name that matches no set means the first built-in set (or no overrides when the app
 /// has none).
 ///
 /// A user set may carry a built-in's name, for instance after an update adds that built-in. Until
 /// [`Profiles::reconcile`] renames it, the user set is the one that name reads and writes. Call
 /// `reconcile` after loading; every method that changes the profiles calls it first.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+///
+/// Stored as `{ version, active, sets }`. Loading never fails: what it drops is listed by
+/// [`Profiles::problems`], and the next save writes the profiles without it.
+#[derive(Clone, Debug, Default)]
 pub struct Profiles {
-    #[serde(deserialize_with = "lenient_name")]
-    pub active: String,
-    #[serde(serialize_with = "sets_as_list", deserialize_with = "capped_sets")]
-    pub sets: BTreeMap<String, Overrides>,
+    active: String,
+    sets: BTreeMap<String, Overrides>,
+    notes: Vec<SetProblem>,
 }
+
+impl PartialEq for Profiles {
+    fn eq(&self, other: &Profiles) -> bool {
+        self.active == other.active && self.sets == other.sets
+    }
+}
+
+impl Eq for Profiles {}
 
 static NO_OVERRIDES: Overrides = Overrides::new();
 
@@ -107,6 +141,22 @@ pub fn set_name(name: &str) -> Option<String> {
 }
 
 impl Profiles {
+    /// The stored active name, which may match no set; [`active_name`](Self::active_name) is the
+    /// set in use.
+    pub fn active(&self) -> &str {
+        &self.active
+    }
+
+    /// The user's sets.
+    pub fn sets(&self) -> &BTreeMap<String, Overrides> {
+        &self.sets
+    }
+
+    /// What loading dropped.
+    pub fn problems(&self) -> &[SetProblem] {
+        &self.notes
+    }
+
     /// Built-in names first, then the user's sets.
     pub fn names(&self, builtins: &Builtins) -> Vec<String> {
         builtins.iter().map(|(n, _)| n.to_string()).chain(self.sets.keys().cloned()).collect()
@@ -345,25 +395,105 @@ impl Profiles {
     }
 }
 
+impl Serialize for Profiles {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut s = serializer.serialize_struct("Profiles", 3)?;
+        s.serialize_field("version", &STORE_VERSION)?;
+        s.serialize_field("active", &self.active)?;
+        s.serialize_field("sets", &SetList(&self.sets))?;
+        s.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Profiles {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Profiles, D::Error> {
+        #[derive(Deserialize, Default)]
+        #[serde(default)]
+        struct Stored {
+            #[serde(deserialize_with = "lenient_version")]
+            version: Option<u64>,
+            #[serde(deserialize_with = "lenient_name")]
+            active: String,
+            #[serde(deserialize_with = "capped_sets")]
+            sets: Loaded,
+        }
+        let Stored { version, active, sets: Loaded { sets, mut notes, .. } } = Stored::deserialize(deserializer)?;
+        if let Some(v) = version.filter(|v| *v > STORE_VERSION) {
+            notes.insert(0, SetProblem::NewerVersion(v));
+            notes.truncate(MAX_NOTES);
+        }
+        Ok(Profiles { active, sets, notes })
+    }
+}
+
 fn lenient_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     let v = Value::deserialize(deserializer)?;
     Ok(v.as_str().and_then(set_name).unwrap_or_default())
 }
 
+fn lenient_version<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
+    Ok(Value::deserialize(deserializer)?.as_u64())
+}
+
 // An array of `{ name, overrides }` rather than a table, and each set's overrides in their array
 // form, so that craft-settings (which replaces arrays whole) drops a deleted set or entry from the
 // file.
-fn sets_as_list<S: Serializer>(sets: &BTreeMap<String, Overrides>, serializer: S) -> Result<S::Ok, S::Error> {
-    #[derive(Serialize)]
-    struct Set<'a> {
-        name: &'a str,
-        #[serde(serialize_with = "crate::keymap::overrides_list::serialize")]
-        overrides: &'a Overrides,
+struct SetList<'a>(&'a BTreeMap<String, Overrides>);
+
+impl Serialize for SetList<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Set<'a> {
+            name: &'a str,
+            #[serde(serialize_with = "crate::keymap::overrides_list::serialize")]
+            overrides: &'a Overrides,
+        }
+        serializer.collect_seq(self.0.iter().map(|(name, overrides)| Set { name, overrides }))
     }
-    serializer.collect_seq(sets.iter().map(|(name, overrides)| Set { name, overrides }))
 }
 
-fn capped_sets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<BTreeMap<String, Overrides>, D::Error> {
+/// The sets that loaded, and notes on the ones that did not.
+#[derive(Default)]
+struct Loaded {
+    sets: BTreeMap<String, Overrides>,
+    notes: Vec<SetProblem>,
+    ignored: usize,
+}
+
+impl Loaded {
+    fn note(&mut self, problem: SetProblem) {
+        if self.notes.len() < MAX_NOTES {
+            self.notes.push(problem);
+        }
+    }
+
+    /// Keeps a set with a valid name, stored as written, that is new and fits under [`MAX_SETS`];
+    /// notes why not otherwise.
+    fn add(&mut self, name: &str, overrides: Option<Overrides>) {
+        let shown = || name.chars().take(MAX_SET_NAME).collect::<String>();
+        if !set_name(name).is_some_and(|n| n == name) {
+            self.note(SetProblem::BadName { name: shown() });
+        } else if self.sets.contains_key(name) {
+            self.note(SetProblem::Duplicate { name: shown() });
+        } else if self.sets.len() >= MAX_SETS {
+            self.ignored += 1;
+        } else if let Some(o) = overrides {
+            self.sets.insert(name.to_string(), o);
+        } else {
+            self.note(SetProblem::BadOverrides { name: shown() });
+        }
+    }
+
+    fn done(mut self) -> Loaded {
+        if self.ignored > 0 {
+            let ignored = std::mem::take(&mut self.ignored);
+            self.note(SetProblem::TooMany { ignored });
+        }
+        self
+    }
+}
+
+fn capped_sets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Loaded, D::Error> {
     deserializer.deserialize_any(SetsVisitor)
 }
 
@@ -373,13 +503,13 @@ struct SetsVisitor;
 macro_rules! no_sets {
     ($($name:ident: $t:ty),*) => {
         $(fn $name<E: de::Error>(self, _: $t) -> Result<Self::Value, E> {
-            Ok(BTreeMap::new())
+            Ok(Loaded::default())
         })*
     };
 }
 
 impl<'de> Visitor<'de> for SetsVisitor {
-    type Value = BTreeMap<String, Overrides>;
+    type Value = Loaded;
 
     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str("a list of `{ name, overrides }` items or a map of set names to overrides")
@@ -388,11 +518,11 @@ impl<'de> Visitor<'de> for SetsVisitor {
     no_sets!(visit_bool: bool, visit_i64: i64, visit_u64: u64, visit_i128: i128, visit_u128: u128, visit_f64: f64, visit_str: &str, visit_bytes: &[u8], visit_char: char);
 
     fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
-        Ok(BTreeMap::new())
+        Ok(Loaded::default())
     }
 
     fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
-        Ok(BTreeMap::new())
+        Ok(Loaded::default())
     }
 
     fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
@@ -400,37 +530,27 @@ impl<'de> Visitor<'de> for SetsVisitor {
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
-        let mut out = BTreeMap::new();
+        let mut out = Loaded::default();
         while let Some(item) = access.next_element::<Value>()? {
-            let Some(name) = item.get("name").and_then(Value::as_str) else { continue };
-            if !admits(&out, name) {
-                continue;
-            }
-            if let Some(o) = item.get("overrides").and_then(overrides_of) {
-                out.insert(name.to_string(), o);
-            }
+            let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+            out.add(name, item.get("overrides").and_then(overrides_of));
         }
-        Ok(out)
+        Ok(out.done())
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
-        let mut out = BTreeMap::new();
+        let mut out = Loaded::default();
         while let Some(key) = access.next_key::<String>()? {
-            if admits(&out, &key) {
-                if let Some(o) = overrides_of(&access.next_value::<Value>()?) {
-                    out.insert(key, o);
-                }
-            } else {
+            if out.sets.len() >= MAX_SETS && !out.sets.contains_key(&key) {
                 access.next_value::<IgnoredAny>()?;
+                out.ignored += 1;
+            } else {
+                let overrides = overrides_of(&access.next_value::<Value>()?);
+                out.add(&key, overrides);
             }
         }
-        Ok(out)
+        Ok(out.done())
     }
-}
-
-/// A valid name, stored as written, with room under [`MAX_SETS`].
-fn admits(sets: &BTreeMap<String, Overrides>, name: &str) -> bool {
-    set_name(name).is_some_and(|n| n == name) && (sets.len() < MAX_SETS || sets.contains_key(name))
 }
 
 /// A set's overrides: a list or a map, anything else is no set.

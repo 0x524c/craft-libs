@@ -1,6 +1,6 @@
 use craft_keymap::{
     Bindable, Binding, CommandRef, ContextRule, Flavor, ForeignEntry, ForeignKey, ForeignSet, ImportOptions, Keymap, MAX_SETS, Overrides, Platform,
-    Policy, ProfileError, Profiles, Scope, Scopes, Start, plan,
+    Policy, ProfileError, SetProblem, Profiles, Scope, Scopes, Start, plan,
 };
 use serde_json::json;
 
@@ -46,7 +46,7 @@ fn profiles_copy_built_ins_on_edit_and_round_trip_as_json() {
     assert_eq!(p.delete("Classic", &builtins), Err(ProfileError::BuiltIn));
     assert_eq!(p.rename("Custom 3", "classic", &builtins), Err(ProfileError::NameTaken));
     assert_eq!(p.rename("Custom 3", "Mine", &builtins), Ok("Mine".into()));
-    assert_eq!(p.active, "Mine");
+    assert_eq!(p.active(), "Mine");
     assert_eq!(p.save_as(&"x".repeat(65), Overrides::new(), &builtins), Err(ProfileError::BadName));
     p.delete("Mine", &builtins).unwrap();
     assert_eq!(p.active_name(&builtins), "Craft");
@@ -59,10 +59,10 @@ fn profiles_copy_built_ins_on_edit_and_round_trip_as_json() {
     let text = serde_json::to_string(&p).unwrap();
     assert_eq!(serde_json::from_str::<Profiles>(&text).unwrap(), p);
     let junk: Profiles = serde_json::from_str(r#"{"active": 5, "sets": {"": {}, "ok": {"a": ["A"]}, "bad": 3}}"#).unwrap();
-    assert_eq!(junk.sets.keys().collect::<Vec<_>>(), ["ok"]);
+    assert_eq!(junk.sets().keys().collect::<Vec<_>>(), ["ok"]);
     let junk: Profiles =
         serde_json::from_str(r#"{"sets": [{"name": "ok", "overrides": [{"command": "a", "keys": ["A"]}, 4]}, {"name": ""}, 7]}"#).unwrap();
-    assert_eq!(junk.sets["ok"].get("a"), Some(&["A".to_string()][..]));
+    assert_eq!(junk.sets()["ok"].get("a"), Some(&["A".to_string()][..]));
     assert!(text.contains(r#""overrides":[{"command":"edit.copy","keys":[]}]"#), "{text}");
 }
 
@@ -71,7 +71,7 @@ fn rename_keeps_a_set_whose_name_differs_only_in_case() {
     let builtins = [("Craft", Overrides::new())];
     let mut p: Profiles = serde_json::from_str(r#"{"sets": {"Mine": {"a": "A"}, "mine": {"b": "B"}}}"#).unwrap();
     assert_eq!(p.rename("Mine", "mine", &builtins), Err(ProfileError::NameTaken));
-    assert_eq!(p.sets["mine"].get("b"), Some(&["B".to_string()][..]));
+    assert_eq!(p.sets()["mine"].get("b"), Some(&["B".to_string()][..]));
     assert_eq!(p.rename("Mine", "MINE", &builtins), Err(ProfileError::NameTaken));
     p.delete("mine", &builtins).unwrap();
     assert_eq!(p.rename("Mine", "MINE", &builtins), Ok("MINE".into()));
@@ -81,8 +81,8 @@ fn rename_keeps_a_set_whose_name_differs_only_in_case() {
 fn sets_that_are_not_a_list_or_map_load_as_none() {
     for text in [r#"{"active": "Mine", "sets": 5}"#, r#"{"active": "Mine", "sets": null}"#, r#"{"active": "Mine", "sets": "x"}"#] {
         let p: Profiles = serde_json::from_str(text).unwrap_or_else(|e| panic!("{text}: {e}"));
-        assert!(p.sets.is_empty(), "{text}");
-        assert_eq!(p.active, "Mine", "{text}");
+        assert!(p.sets().is_empty(), "{text}");
+        assert_eq!(p.active(), "Mine", "{text}");
     }
 }
 
@@ -107,9 +107,7 @@ fn a_user_set_named_like_a_new_built_in_keeps_its_edits() {
     assert_eq!(p.get("Classic", &builtins), Some(&classic));
     assert_eq!(builtins[1].1, classic);
 
-    let mut q = Profiles::default();
-    q.sets.insert("CRAFT".into(), mine.clone());
-    q.active = "CRAFT".into();
+    let mut q: Profiles = serde_json::from_value(json!({"active": "CRAFT", "sets": [{"name": "CRAFT", "overrides": {"edit.copy": "Cmd+K"}}]})).unwrap();
     assert!(q.reconcile(&builtins));
     assert_eq!(q.active_name(&builtins), "CRAFT 2");
     assert_eq!(q.active_overrides(&builtins), &mine);
@@ -128,7 +126,7 @@ fn an_exported_set_imports_as_a_new_set_with_the_same_keymap() {
 
     let text = p.export("Mine", &builtins).unwrap();
     assert_eq!(p.import(&text, &builtins), Ok("Mine 2".into()));
-    assert_eq!(p.active, "Mine 2");
+    assert_eq!(p.active(), "Mine 2");
 
     let mut again = keymap();
     again.set_overrides(p.active_overrides(&builtins).clone());
@@ -146,14 +144,14 @@ fn duplicate_copies_built_in_and_user_sets() {
     let mut p = Profiles::default();
 
     assert_eq!(p.duplicate("Classic", "Classic", &builtins), Ok("Classic 2".into()));
-    assert_eq!(p.active, "Classic 2");
+    assert_eq!(p.active(), "Classic 2");
     assert_eq!(p.active_overrides(&builtins), &classic);
     assert_eq!(p.duplicate("Classic 2", " Mine ", &builtins), Ok("Mine".into()));
     assert_eq!(p.duplicate("Mine", "mine", &builtins), Ok("mine 2".into()), "names compare without case");
     assert_eq!(p.duplicate("Nope", "X", &builtins), Err(ProfileError::NotFound));
     assert_eq!(p.duplicate("Craft", "", &builtins), Err(ProfileError::BadName));
 
-    while p.sets.len() < MAX_SETS {
+    while p.sets().len() < MAX_SETS {
         p.duplicate("Craft", "Spare", &builtins).unwrap();
     }
     assert_eq!(p.duplicate("Craft", "Spare", &builtins), Err(ProfileError::TooMany));
@@ -173,11 +171,39 @@ fn a_foreign_set_imports_as_a_new_set_and_leaves_the_keymap_alone() {
     assert_eq!(name, "Other App");
     assert_eq!(report.changed.len(), 1);
     assert!(km.overrides().is_empty());
-    assert_eq!(p.active, "Other App");
+    assert_eq!(p.active(), "Other App");
     let mut imported = keymap();
     imported.set_overrides(p.active_overrides(&builtins).clone());
     assert_eq!(imported.bindings(&"file.save".into()), [b("Cmd+Shift+S")]);
 
     let (name, _) = p.import_plan(&planned, &km, Some("Craft"), &builtins).unwrap();
     assert_eq!(name, "Craft 2", "a built-in's name is not reused");
+}
+
+#[test]
+fn loading_lists_the_sets_it_drops_and_the_store_has_a_version() {
+    let text = r#"{"version": 2, "active": "ok", "sets": [
+        {"name": "ok", "overrides": {}}, {"name": " pad ", "overrides": {}}, {"name": "ok", "overrides": {"a": "A"}}, {"name": "bad", "overrides": 3}
+    ]}"#;
+    let p: Profiles = serde_json::from_str(text).unwrap();
+    assert_eq!(p.sets().keys().collect::<Vec<_>>(), ["ok"]);
+    assert!(p.sets()["ok"].is_empty(), "the first of two sets with one name stays");
+    let name = |n: &str| n.to_string();
+    assert_eq!(
+        p.problems(),
+        [
+            SetProblem::NewerVersion(2),
+            SetProblem::BadName { name: name(" pad ") },
+            SetProblem::Duplicate { name: name("ok") },
+            SetProblem::BadOverrides { name: name("bad") }
+        ]
+    );
+
+    let many: Vec<_> = (0..MAX_SETS + 3).map(|i| json!({"name": format!("s{i}"), "overrides": {}})).collect();
+    let p: Profiles = serde_json::from_value(json!({ "sets": many })).unwrap();
+    assert_eq!((p.sets().len(), p.problems()), (MAX_SETS, &[SetProblem::TooMany { ignored: 3 }][..]));
+
+    assert_eq!(serde_json::to_value(&p).unwrap()["version"], 1);
+    let unversioned: Profiles = serde_json::from_str(r#"{"active": "x", "sets": []}"#).unwrap();
+    assert!(unversioned.problems().is_empty());
 }

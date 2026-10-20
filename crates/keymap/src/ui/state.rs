@@ -1354,21 +1354,21 @@ mod tests {
         st.new_set(&mut fx.env(), "Mine", None);
         record(&mut st, &mut fx, add("object.front"), &["F2"]);
         st.save_set(&mut fx.env());
-        let kept = fx.p.sets["Mine"].clone();
+        let kept = fx.p.sets()["Mine"].clone();
         assert!(!kept.is_empty());
         st.switch_set(&mut fx.env(), "Fixture Defaults");
         for name in ["Mine", " mine ", "fixture defaults"] {
             for based_on in [None, Some("Fixture Defaults")] {
                 st.new_set(&mut fx.env(), name, based_on);
                 assert!(st.message.as_ref().is_some_and(|m| m.refused), "{name:?} from {based_on:?}");
-                assert_eq!((fx.p.sets.len(), fx.p.active.as_str()), (1, "Fixture Defaults"));
-                assert_eq!(fx.p.sets["Mine"], kept);
+                assert_eq!((fx.p.sets().len(), fx.p.active()), (1, "Fixture Defaults"));
+                assert_eq!(fx.p.sets()["Mine"], kept);
             }
         }
         st.new_set(&mut fx.env(), "Other", None);
         st.rename_set(&mut fx.env(), "MINE");
         assert!(st.message.as_ref().is_some_and(|m| m.refused));
-        assert_eq!(fx.p.sets["Mine"], kept);
+        assert_eq!(fx.p.sets()["Mine"], kept);
     }
 
     #[test]
@@ -1379,11 +1379,11 @@ mod tests {
         let mut st = open(&mut fx);
         record(&mut st, &mut fx, add("object.front"), &["F2"]);
         st.new_set(&mut fx.env(), "Other", None);
-        assert_eq!(fx.p.active, "Other");
+        assert_eq!(fx.p.active(), "Other");
         st.ask_delete_set(&fx.env());
         assert_eq!(st.prompt, Some(Prompt::DeleteSet("Other".into())));
         st.answer(&mut fx.env(), Answer::Yes);
-        assert!(!fx.p.sets.contains_key("Other"));
+        assert!(!fx.p.sets().contains_key("Other"));
         st.cancel(&mut fx.env());
         assert_eq!((fx.km.overrides(), &fx.p), (&km0, &p0));
     }
@@ -1397,13 +1397,13 @@ mod tests {
         st.ask_delete_set(&fx.env());
         assert!(st.modal());
         st.switch_set(&mut fx.env(), "Mine");
-        assert_eq!((st.prompt.clone(), fx.p.active.as_str()), (None, "Mine"), "switching closes the prompt");
+        assert_eq!((st.prompt.clone(), fx.p.active()), (None, "Mine"), "switching closes the prompt");
 
         record(&mut st, &mut fx, add("object.front"), &["F2"]);
         st.prompt = Some(Prompt::DeleteSet("Other".into()));
         st.answer(&mut fx.env(), Answer::Yes);
-        assert!(!fx.p.sets.contains_key("Other"));
-        assert_eq!((fx.p.active.as_str(), fx.keys("object.front")), ("Mine", vec!["F2".to_string()]), "the active set keeps its edits");
+        assert!(!fx.p.sets().contains_key("Other"));
+        assert_eq!((fx.p.active(), fx.keys("object.front")), ("Mine", vec!["F2".to_string()]), "the active set keeps its edits");
         assert!(st.can_undo());
     }
 
@@ -1419,9 +1419,9 @@ mod tests {
         st.ask_delete_set(&fx.env());
         st.answer(&mut fx.env(), Answer::Yes);
         assert!(st.message.is_none(), "{:?}", st.message);
-        assert!(fx.p.sets.is_empty() && fx.km.overrides().is_empty() && !st.can_undo());
+        assert!(fx.p.sets().is_empty() && fx.km.overrides().is_empty() && !st.can_undo());
         st.ok(&mut fx.env());
-        assert!(fx.p.sets.is_empty(), "OK stores no copy of the deleted set");
+        assert!(fx.p.sets().is_empty(), "OK stores no copy of the deleted set");
     }
 
     #[test]
@@ -1432,7 +1432,7 @@ mod tests {
         assert!(DialogState::is_modified(&fx.env()));
         st.ok(&mut fx.env());
         assert!(matches!(st.finish(), Some(Outcome::Ok)));
-        assert_eq!(fx.p.active, "Custom");
+        assert_eq!(fx.p.active(), "Custom");
         assert_eq!(fx.p.get("Custom", &fx.b).and_then(|o| o.get("object.front")), Some(&["F2".to_string()][..]));
     }
 
@@ -1445,7 +1445,7 @@ mod tests {
         st.switch_set(&mut fx.env(), "Fixture Defaults");
         assert!(matches!(&st.prompt, Some(Prompt::SaveChanges { set, .. }) if set == "Mine"));
         st.answer(&mut fx.env(), Answer::No);
-        assert_eq!(fx.p.active, "Fixture Defaults");
+        assert_eq!(fx.p.active(), "Fixture Defaults");
         assert!(fx.km.overrides().is_empty() && !st.can_undo(), "the set loads with a fresh undo history");
         assert!(fx.p.get("Mine", &fx.b).is_some_and(Overrides::is_empty), "Don't Save keeps the stored set");
     }
@@ -1466,7 +1466,7 @@ mod tests {
         let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() };
         st.review_import(&mut fx.env(), set, options);
         st.import_reviewed(&mut fx.env());
-        assert_eq!(fx.p.active, "Theirs");
+        assert_eq!(fx.p.active(), "Theirs");
         assert_eq!(fx.p.get("Theirs", &fx.b).and_then(|o| o.get("object.front")), None);
         assert!(fx.p.get("Mine", &fx.b).is_some_and(Overrides::is_empty));
     }
@@ -1550,7 +1550,7 @@ mod tests {
         assert_eq!(r.map(|r| (r.name.as_str(), r.plan.commands.len(), r.plan.report.unmatched.len())), Some(("Theirs", 1, 1)));
         assert!(fx.km.overrides().is_empty(), "review changes nothing");
         st.import_reviewed(&mut fx.env());
-        assert_eq!(fx.p.active, "Theirs");
+        assert_eq!(fx.p.active(), "Theirs");
         assert_eq!(fx.keys("file.save"), ["Cmd+Alt+S"]);
         assert!(st.review.as_ref().is_some_and(|r| r.done.is_some()));
         st.escape(&mut fx.env());

@@ -230,7 +230,7 @@ fn dialog_screenshots() {
                     }
                     (p, builtins)
                 });
-                let options = Options { keyboard: case.keyboard, ..Options::default() };
+                let options = Options::default().with(|o| o.keyboard = case.keyboard);
                 let km = if case.long { with_long_label(fixture(case.platform)) } else { fixture(case.platform) };
                 let text: Box<dyn Text> = match case.words {
                     Words::English => Box::new(English),

@@ -163,7 +163,8 @@ let keymap = Keymap::new(catalog, Scopes::new(), Platform::current()).with_overr
 store.update(|p| p.shortcut_sets = sets.clone());
 ```
 
-- `names`, `get`, `active_name`, `active_overrides` (hand them to `Keymap::set_overrides`).
+- `names`, `get`, `active_name`, `active_overrides` (hand them to `Keymap::set_overrides`);
+  `sets` (the user's sets) and `active` (the stored name, which `active_name` resolves to a set).
 - `select` switches sets; `duplicate(from, to)` copies a built-in or user set; `save_as`,
   `rename` and `delete` work on user sets only.
 - `store(overrides, builtins, copy_name)` saves the editor's result to the active set. Editing a
@@ -173,6 +174,10 @@ store.update(|p| p.shortcut_sets = sets.clone());
 - `export(name)` writes one set as JSON
   (`{"format":"craft-keymap","version":1,"name":…,"overrides":…}`); `import(text)` reads it into
   a new set. A file from a newer version is refused (`ProfileError::NewerVersion`).
+- Loading never fails. `problems()` lists what loading dropped: sets with a bad or repeated name,
+  overrides that are neither a list nor a map, sets past `MAX_SETS`, and a `version` newer than
+  this crate writes. The app shows them before the next save writes the sets without them.
+  Stored `Profiles` carry `version = 1`; a file without it reads as version 1.
 - `import_plan(&plan, &keymap, name)` applies an import plan (see Importing a shortcut set) to a
   copy of the keymap and keeps the result as a new set, so another application's set becomes one
   the user can switch to and away from.

@@ -648,17 +648,17 @@ fn cancel_restores_keymap_and_sets() {
     let mut h = with_sets(p);
     click(&mut h, "Set:");
     click_last(&mut h, "Mine");
-    assert_eq!(profiles(&h).active, "Mine");
+    assert_eq!(profiles(&h).active(), "Mine");
     click(&mut h, "Save: ⌘S");
     press(&mut h, Modifiers::NONE, EguiKey::F2);
     assert!(has(&h, "(modified)"));
     new_set(&mut h, "Other");
-    assert_eq!(profiles(&h).active, "Other");
+    assert_eq!(profiles(&h).active(), "Other");
     assert_eq!(h.state().bindings("file.save"), ["F2"], "based on the current shortcuts");
     click(&mut h, "Delete");
     assert!(has(&h, "Delete the set “Other”?"));
     click_last(&mut h, "Delete");
-    assert!(!profiles(&h).sets.contains_key("Other"));
+    assert!(!profiles(&h).sets().contains_key("Other"));
     click(&mut h, "Cancel");
     assert!(h.state().canceled());
     assert_eq!(profiles(&h), &before);
@@ -692,8 +692,8 @@ fn ok_stores_edits_of_a_builtin_as_a_copy() {
     click(&mut h, "OK");
     assert!(h.state().outcomes.iter().any(|o| matches!(o, Outcome::Ok)));
     let p = profiles(&h);
-    assert_eq!(p.active, "Custom");
-    assert_eq!(p.sets.get("Custom").and_then(|o| o.get("file.save")), Some(&["F2".to_string()][..]));
+    assert_eq!(p.active(), "Custom");
+    assert_eq!(p.sets().get("Custom").and_then(|o| o.get("file.save")), Some(&["F2".to_string()][..]));
 }
 
 #[test]
@@ -717,7 +717,7 @@ fn set_export_import_round_trip() {
     let (d, state) = dialog(fresh.state_mut());
     assert_eq!(d.import_json(state, &json), Ok("Name 2".into()));
     fresh.run();
-    assert_eq!(profiles(&fresh).active, "Name 2");
+    assert_eq!(profiles(&fresh).active(), "Name 2");
     assert_eq!(fresh.state().km.overrides(), &edited);
     assert_eq!(fresh.get_by_label("Set:").accesskit_node().value().as_deref(), Some("Name 2"), "the picker shows it");
 }
@@ -756,7 +756,7 @@ fn foreign_import_review_lists_skipped_and_unreadable() {
     assert!(h.query_by_label_contains("numeric keypad key read as main key").is_some());
     assert!(h.state().km.overrides().is_empty(), "the review changes nothing");
     click(&mut h, "Import as New Set");
-    assert_eq!(profiles(&h).active, "Theirs");
+    assert_eq!(profiles(&h).active(), "Theirs");
     assert_eq!(h.state().bindings("file.save"), ["Cmd+Alt+S"]);
     assert!(has(&h, "Imported as “Theirs”"));
     click(&mut h, "Done");

@@ -31,6 +31,7 @@ use state::Env;
 
 /// What the dialog reports for a frame.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum Outcome {
     /// Closed with OK: save `Profiles` (with sets) or `keymap.overrides()`.
     Ok,
@@ -55,6 +56,7 @@ pub enum Outcome {
 
 /// What happens when a recorded chord is held by other commands.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConflictMode {
     /// Ask with the conflict bar: Take It, Take It and Go to Conflict, Keep Both, Cancel.
     #[default]
@@ -97,7 +99,9 @@ pub type Accept = Box<dyn Fn(&Bindable, &Binding) -> Result<(), String>>;
 /// Called for every control once per frame with (automation id, rect, label).
 pub type OnWidget = Box<dyn Fn(&str, egui::Rect, &str)>;
 
-/// How the dialog looks and behaves. [`Options::default`] gives the defaults noted on each field.
+/// How the dialog looks and behaves. [`Options::default`] gives the defaults noted on each field;
+/// set fields on it, or with [`Options::with`].
+#[non_exhaustive]
 pub struct Options {
     /// "Keyboard Shortcuts".
     pub title: &'static str,
@@ -157,6 +161,15 @@ impl Default for Options {
             on_widget: None,
             style: None,
         }
+    }
+}
+
+impl Options {
+    /// `self` with `f` applied, for options built in one expression:
+    /// `Options::default().with(|o| o.keyboard = true)`.
+    pub fn with(mut self, f: impl FnOnce(&mut Options)) -> Options {
+        f(&mut self);
+        self
     }
 }
 

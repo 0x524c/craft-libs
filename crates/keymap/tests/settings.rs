@@ -77,7 +77,7 @@ fn overrides_round_trip_through_craft_settings() {
     let problems = km.problems();
     assert!(problems.contains(&Problem::Dropped { key: "edit.cut".into(), reason: DropReason::NotAList }), "{problems:?}");
     assert!(problems.iter().any(|p| matches!(p, Problem::BadBinding { text, .. } if text == "Cmd+Nope")), "{problems:?}");
-    assert_eq!(store.get().profiles.sets.len(), 2);
+    assert_eq!(store.get().profiles.sets().len(), 2);
 
     store.update(|p| p.general.language = "de".into());
     store.flush().unwrap();
@@ -101,8 +101,8 @@ fn overrides_round_trip_through_craft_settings() {
     assert!(!line.contains("window.panel") && !text.contains("Spare"), "{text}");
     let reloaded = open(tmp.path());
     assert!(keymap(reloaded.get().shortcuts.clone()).bindings(&layers).is_empty());
-    assert_eq!(reloaded.get().profiles.sets.keys().collect::<Vec<_>>(), ["Mine"]);
-    assert_eq!(reloaded.get().profiles.sets["Mine"].get("text.bold"), Some(&["Text: Cmd+B".to_string()][..]));
+    assert_eq!(reloaded.get().profiles.sets().keys().collect::<Vec<_>>(), ["Mine"]);
+    assert_eq!(reloaded.get().profiles.sets()["Mine"].get("text.bold"), Some(&["Text: Cmd+B".to_string()][..]));
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn a_sets_value_that_is_not_a_list_keeps_the_rest_of_the_profiles() {
         let text = format!("schema_version = 1\n\n[profiles]\nactive = \"Mine\"\nsets = {value}\n");
         std::fs::write(tmp.path().join("config.toml"), text).unwrap();
         let store = open(tmp.path());
-        assert_eq!(store.get().profiles.active, "Mine", "{value}");
-        assert!(store.get().profiles.sets.is_empty(), "{value}");
+        assert_eq!(store.get().profiles.active(), "Mine", "{value}");
+        assert!(store.get().profiles.sets().is_empty(), "{value}");
     }
 }
