@@ -235,7 +235,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let steps = total.trunc();
         ui.ctx().data_mut(|d| d.insert_temp(key, total - steps));
         // A wheel turned down scrolls content up: a negative delta selects the next tab.
-        let to = (active as i64 - steps as i64).clamp(0, panels.len().saturating_sub(1) as i64) as usize;
+        let to = (active as i64).saturating_sub(steps as i64).clamp(0, panels.len().saturating_sub(1) as i64) as usize;
         if to != active
             && let Some(panel) = panels.get(to)
         {

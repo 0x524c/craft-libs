@@ -687,6 +687,10 @@ fn frame_tabs_follow_the_wheel_and_close_on_a_middle_click() {
     let out = d.step(vec![wheel(egui::MouseWheelUnit::Point, -30.0)]);
     assert_eq!(second(&d), tabs(&[2, 3], 1));
     assert_eq!(out.focused, Some(3));
+    d.step(vec![wheel(egui::MouseWheelUnit::Line, -1e30)]);
+    assert_eq!(second(&d), tabs(&[2, 3], 1), "a huge delta stops at the last tab");
+    d.step(vec![wheel(egui::MouseWheelUnit::Line, 1e30)]);
+    assert_eq!(second(&d), tabs(&[2, 3], 0), "and at the first");
 
     d.step(vec![middle(over, true)]);
     let out = d.step(vec![middle(over, false)]);
