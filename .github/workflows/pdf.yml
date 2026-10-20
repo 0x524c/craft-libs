@@ -3,9 +3,9 @@ name: Shared PDF
 on:
   push:
     branches: [main]
-    paths: ["crates/pdf/**", "crates/plate-test/**", "vendor/hayro*/**", "vendor/krilla/**", "scripts/test-pdf-backends.sh", "scripts/*fetch-pdf-test-fonts.py", "Cargo.toml", "Cargo.lock", ".github/workflows/pdf.yml"]
+    paths: ["crates/pdf/**", "crates/plate-test/**", "crates/prepress/**", "vendor/hayro*/**", "vendor/krilla/**", "scripts/test-pdf-backends.sh", "scripts/*fetch-pdf-test-fonts.py", "Cargo.toml", "Cargo.lock", ".github/workflows/pdf.yml"]
   pull_request:
-    paths: ["crates/pdf/**", "crates/plate-test/**", "vendor/hayro*/**", "vendor/krilla/**", "scripts/test-pdf-backends.sh", "scripts/*fetch-pdf-test-fonts.py", "Cargo.toml", "Cargo.lock", ".github/workflows/pdf.yml"]
+    paths: ["crates/pdf/**", "crates/plate-test/**", "crates/prepress/**", "vendor/hayro*/**", "vendor/krilla/**", "scripts/test-pdf-backends.sh", "scripts/*fetch-pdf-test-fonts.py", "Cargo.toml", "Cargo.lock", ".github/workflows/pdf.yml"]
   workflow_dispatch:
 
 permissions:
@@ -87,12 +87,15 @@ jobs:
       - run: cargo test -p craft-pdf --all-features --locked --target wasm32-unknown-unknown
       - run: cargo test --manifest-path crates/pdf/read-only-contract/Cargo.toml --locked --target wasm32-unknown-unknown
   plate-test:
-    name: Plate test scenes
+    name: Plate tests and craft-prepress
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           key: craft-plate-test
-      - run: cargo test -p craft-plate-test --locked
+      - run: cargo clippy -p craft-plate-test -p craft-prepress --all-targets --locked -- -D warnings
+      - run: cargo test -p craft-plate-test -p craft-prepress --locked
