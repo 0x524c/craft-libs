@@ -279,8 +279,7 @@ pub struct Failed {
     pub command: CommandRef,
     pub label: String,
     pub change: FailedChange,
-    /// The set's shortcuts for [`FailedChange::Bind`], the one left on the command for
-    /// [`FailedChange::Unbind`]; empty for [`FailedChange::Clear`].
+    /// The set's shortcuts for [`FailedChange::Bind`]; empty for [`FailedChange::Clear`].
     pub shortcuts: Vec<String>,
 }
 
@@ -288,13 +287,11 @@ pub struct Failed {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FailedChange {
-    /// Giving the command the set's bindings.
+    /// Giving the command the set's bindings, or taking one of them from another command.
     Bind,
     /// Leaving the command without shortcuts: the set has it without keys and
     /// [`NoneDefined::Clear`] applies.
     Clear,
-    /// Taking a chord the set gives to another command; both commands keep it.
-    Unbind,
 }
 
 /// Why keys of an entry were not used.
@@ -548,7 +545,8 @@ impl ImportPlan {
     ///
     /// A change that finds the overrides full is left out and reported in
     /// [`ImportReport::failed`]; the others still apply, and a chord it would have taken from an
-    /// earlier entry stays with that entry. With [`Start::Defaults`] that cannot happen.
+    /// earlier entry stays with that entry. That includes taking a chord from another command:
+    /// both commands keep the bindings they had. With [`Start::Defaults`] that cannot happen.
     pub fn apply(&self, keymap: &mut Keymap) -> ImportReport {
         let before: Vec<Vec<Binding>> = self.commands.iter().map(|p| keymap.bindings(&p.command)).collect();
         // Dropping every entry leaves room for all of them: each catalogue command takes at most one
@@ -598,7 +596,10 @@ impl ImportPlan {
                 decided.insert(p.command.key());
             }
 
-            for (p, list) in self.commands.iter().zip(&accepted) {
+            // A command that cannot take a chord from another command is dropped, so both keep
+            // the bindings they had.
+            let mut unbind_failed = false;
+            for (c, (p, list)) in self.commands.iter().zip(&accepted).enumerate() {
                 if list.is_empty() || !decided.contains(&p.command.key()) {
                     continue;
                 }
@@ -612,9 +613,21 @@ impl ImportPlan {
                     if keymap.remove(&h.command, &h.binding) {
                         report.conflicts_cleared.push(Cleared { command: h.command, label, shortcut });
                     } else {
-                        report.failed.push(Failed { command: h.command, label, change: FailedChange::Unbind, shortcuts: vec![shortcut] });
+                        let home = home_of(keymap, &p.command);
+                        let list = in_default_order(keymap, &p.command, list);
+                        let shortcuts = list.iter().map(|b| b.text(&home)).collect();
+                        dropped.insert(
+                            c,
+                            Failed { command: p.command.clone(), label: label_of(keymap, &p.command), change: FailedChange::Bind, shortcuts },
+                        );
+                        unbind_failed = true;
+                        break;
                     }
                 }
+            }
+            if unbind_failed {
+                *keymap = start.clone();
+                continue 'attempt;
             }
 
             for (p, from) in self.commands.iter().zip(&before) {

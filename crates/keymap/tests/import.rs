@@ -330,10 +330,11 @@ fn changes_that_find_the_overrides_full_are_reported() {
     };
     let options = |start| ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], start, ..ImportOptions::default() };
 
-    // file.close has an entry to rewrite; the other changes each need a new one.
+    // file.close has an entry to rewrite, but taking Cmd+J from view.goToPage needs a new one, so
+    // both stay as they were. The other changes each need a new entry too.
     let mut km = keymap(Platform::Windows).with_overrides(full());
     let r = plan(&set, &km, &options(Start::Current)).apply(&mut km);
-    has(&km, "file.close", &["Cmd+J"]);
+    has(&km, "file.close", &["Cmd+Q"]);
     has(&km, "view.goToPage", &["Cmd+J"]);
     has(&km, "file.save", &["Cmd+S"]);
     has(&km, "edit.duplicate", &["Cmd+Alt+Shift+D"]);
@@ -346,16 +347,16 @@ fn changes_that_find_the_overrides_full_are_reported() {
     assert_eq!(
         r.failed,
         [
+            row("file.close", "Close", FailedChange::Bind, &["Cmd+J"]),
             row("file.save", "Save", FailedChange::Bind, &["Cmd+Alt+S"]),
             row("edit.duplicate", "Duplicate", FailedChange::Clear, &[]),
-            row("view.goToPage", "Go to Page…", FailedChange::Unbind, &["Cmd+J"]),
         ]
     );
-    assert_eq!(r.imported, 1);
+    assert_eq!(r.imported, 0);
     assert!(r.conflicts_cleared.is_empty());
     let v = serde_json::to_value(&r).unwrap();
     assert_eq!(
-        v["failed"][0],
+        v["failed"][1],
         json!({"command": {"id": "file.save", "params": null}, "label": "Save", "change": "bind", "shortcuts": ["Cmd+Alt+S"]})
     );
 
