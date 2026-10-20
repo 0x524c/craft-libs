@@ -104,6 +104,15 @@ pub fn trigger_text(text: &dyn Text, trigger: &Trigger, platform: Platform) -> S
     if trigger.double { format!("{one} {one}") } else { one }
 }
 
+/// `s` in display order with `chord`, text inside it, left as it is: chord text never goes
+/// through [`Text::visual`]. Right to left, the parts before and after the chord change sides.
+pub(crate) fn visual_around(text: &dyn Text, s: &str, chord: &str) -> String {
+    let Some(i) = s.find(chord).filter(|_| !chord.is_empty()) else { return text.visual(s) };
+    let (before, rest) = s.split_at(i);
+    let (before, after) = (text.visual(before), text.visual(&rest[chord.len()..]));
+    if text.rtl() { format!("{after}{chord}{before}") } else { format!("{before}{chord}{after}") }
+}
+
 /// Plural forms the dialog looks up, as `one|other`, the key of craft-i18n's `@plural` rows.
 pub const PLURALS: &[(&str, &str)] = &[
     ("{n} shortcut is assigned more than once", "{n} shortcuts are assigned more than once"),
@@ -149,6 +158,8 @@ pub const STRINGS: &[&str] = &[
     "Conflicts",
     "No matching commands",
     "(cycles)",
+    "{label} (cycles)",
+    "{label} (Changed)",
     // Table and detail pane.
     "Command",
     "Commands",
@@ -156,9 +167,13 @@ pub const STRINGS: &[&str] = &[
     "Select a command to see and change its shortcuts",
     "Shortcut",
     "Default",
+    "{chord} (Default)",
+    "{chord} ({scope})",
+    "{label} ({scope})",
     "Application",
     "Current shortcuts:",
     "New shortcut:",
+    "New shortcut: {chord}",
     "press keys",
     "{chord} (press again for a double press)",
     "Type…",
@@ -166,7 +181,6 @@ pub const STRINGS: &[&str] = &[
     "Assign",
     "Use Default",
     "Clear",
-    "Remove",
     "Default: {chord}",
     "None",
     "Currently assigned to:",
@@ -178,6 +192,13 @@ pub const STRINGS: &[&str] = &[
     "{label}: {chord}",
     "{label}: press keys",
     "Now used by {label}",
+    "{label}: {chord} (Now used by {holder})",
+    // Typed shortcuts and saved texts that do not parse.
+    "the shortcut has no key",
+    "unknown modifier {key}",
+    "modifier {key} given twice",
+    "key sequences are not supported",
+    "the scope name is not valid",
     // On-screen keyboard.
     "Keyboard",
     "Keyboard: US",
@@ -263,7 +284,8 @@ pub const STRINGS: &[&str] = &[
     "Not matched",
     "Unreadable",
     "Approximated",
-    "Suggestions",
+    "{title} ({n})",
+    "Suggestions ({n})",
     "numeric keypad key read as main key",
     "Matched without change",
     "Command for {item}",

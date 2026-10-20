@@ -7,7 +7,7 @@ use crate::chord::{Platform, Trigger};
 use crate::command::CommandRef;
 use crate::keymap::{Bindable, Binding, ConflictKind, Keymap, Kind, Overrides};
 use crate::ui::Options;
-use crate::ui::text::{Text, trigger_text};
+use crate::ui::text::{Text, trigger_text, visual_around};
 
 /// One entry of the Show menu.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -375,9 +375,9 @@ fn build(keymap: &Keymap, options: &Options, text: &dyn Text, view: &View) -> Bu
             .map(|x| {
                 let mut t = trigger_text(text, &x.trigger, platform);
                 if x.scope_or(&b.scope) != &b.scope {
-                    let scope = format!("({})", text.segment(x.scope_or(&b.scope).as_str()));
-                    // Display order; the chord itself is never reordered.
-                    t = if text.rtl() { format!("{} {t}", text.visual(&scope)) } else { format!("{t} {scope}") };
+                    let scope = text.segment(x.scope_or(&b.scope).as_str());
+                    let s = craft_i18n::fmt(&text.ui("{chord} ({scope})"), &[("chord", &t), ("scope", &scope)]);
+                    t = visual_around(text, &s, &t);
                 }
                 Chip { binding: x.clone(), text: t, changed: !defaults.contains(x) }
             })

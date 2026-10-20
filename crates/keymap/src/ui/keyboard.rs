@@ -366,7 +366,7 @@ impl Draw<'_, '_> {
     /// The holder's label, with its scope when that is not Application.
     fn holder_text(&self, h: &KeyHolder) -> String {
         let label = self.label_of(&h.holder.command);
-        if h.scope.is_app() { label } else { format!("{label} ({})", self.scope_name(&h.scope)) }
+        if h.scope.is_app() { label } else { fill(self.ui("{label} ({scope})"), &[("label", &label), ("scope", &self.scope_name(&h.scope))]) }
     }
 
     pub(super) fn keyboard_pane(&mut self, ui: &mut Ui) {

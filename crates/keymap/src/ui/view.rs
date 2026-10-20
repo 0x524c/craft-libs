@@ -24,9 +24,9 @@ use crate::keymap::{Binding, MAX_BINDINGS, Problem};
 use crate::scope::Scope;
 use crate::ui::capture;
 use crate::ui::rows::{AreaId, Filter, FixedLine, Line, Row};
-use crate::ui::state::{Answer, DialogState, Env, Prompt, Recording, Target};
+use crate::ui::state::{Answer, DialogState, Env, Prompt, Recording, Target, binding_error};
 use crate::ui::style::{self, DialogStyle};
-use crate::ui::text::trigger_text;
+use crate::ui::text::{trigger_text, visual_around};
 
 #[path = "keyboard.rs"]
 pub(crate) mod keyboard;
@@ -165,13 +165,7 @@ impl Draw<'_, '_> {
     /// `s` in display order with `chord`, text inside it, left as it is: chord text never goes
     /// through [`Text::visual`](crate::ui::Text::visual).
     fn vis_chord(&self, s: &str, chord: &str) -> String {
-        match s.find(chord).filter(|_| !chord.is_empty()) {
-            None => self.vis(s),
-            Some(i) => {
-                let (before, rest) = s.split_at(i);
-                self.joined(vec![self.vis(before), chord.to_string(), self.vis(&rest[chord.len()..])])
-            }
-        }
+        visual_around(self.env.text, s, chord)
     }
 
     /// `text` after a ⚠, in display order.
@@ -192,20 +186,11 @@ impl Draw<'_, '_> {
         if s.is_app() { self.ui("Application") } else { self.env.text.segment(s.as_str()).into_owned() }
     }
 
-    /// [`binding_text`](Self::binding_text) in display order.
-    fn binding_shown(&self, b: &Binding, home: Option<&Scope>) -> String {
-        let chord = self.chord(&b.trigger);
-        match &b.scope {
-            Some(s) if Some(s) != home => self.joined(vec![chord, " ".into(), self.vis(&format!("({})", self.scope_name(s)))]),
-            _ => chord,
-        }
-    }
-
-    /// A binding as text, with ` (Scope)` when its scope is not the command's home scope.
+    /// A binding as text, with its scope when that is not the command's home scope.
     fn binding_text(&self, b: &Binding, home: Option<&Scope>) -> String {
         let chord = self.chord(&b.trigger);
         match &b.scope {
-            Some(s) if Some(s) != home => format!("{chord} ({})", self.scope_name(s)),
+            Some(s) if Some(s) != home => fill(self.ui("{chord} ({scope})"), &[("chord", &chord), ("scope", &self.scope_name(s))]),
             _ => chord,
         }
     }
@@ -832,10 +817,10 @@ impl Draw<'_, '_> {
         let resp = ui.interact(rect, self.base.with(("row", &r.key)), Sense::CLICK);
         let mut a11y = r.label.clone();
         if r.cycles {
-            a11y = format!("{a11y} {}", self.ui("(cycles)"));
+            a11y = fill(self.ui("{label} (cycles)"), &[("label", &a11y)]);
         }
         if r.changed {
-            a11y = format!("{a11y} ({})", self.ui("Changed"));
+            a11y = fill(self.ui("{label} (Changed)"), &[("label", &a11y)]);
         }
         resp.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, &a11y));
         ui.ctx().accesskit_node_builder(resp.id, |node| node.set_selected(selected));
@@ -983,18 +968,20 @@ impl Draw<'_, '_> {
         let (keys, _) = self.one_line(ui.painter(), &[(f.keys.clone(), fmt)], shortcut_w);
         ui.painter().galley(pos2(m.x(rect.max.x - shortcut_w - ICON - 4.0, keys.size().x), rect.center().y - keys.size().y / 2.0), keys, color);
         let resp = ui.interact(rect, self.base.with(("fixed", &f.label, &f.keys)), Sense::hover());
-        let label = fill(self.ui("{label}: {chord}"), &[("label", &f.label), ("chord", &f.keys)]);
         let mut tip = Vec::new();
         if cut {
             tip.push(self.vis(&f.label));
         }
         match &f.now_used_by {
             Some(by) => {
-                let used = fill(self.ui("Now used by {label}"), &[("label", by)]);
-                resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, format!("{label} ({used})")));
-                tip.push(self.vis(&used));
+                let label = fill(self.ui("{label}: {chord} (Now used by {holder})"), &[("label", &f.label), ("chord", &f.keys), ("holder", by)]);
+                resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &label));
+                tip.push(self.vis(&fill(self.ui("Now used by {label}"), &[("label", by)])));
             }
-            None => resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &label)),
+            None => {
+                let label = fill(self.ui("{label}: {chord}"), &[("label", &f.label), ("chord", &f.keys)]);
+                resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &label));
+            }
         }
         if !tip.is_empty() {
             resp.on_hover_text(tip.join("\n"));
@@ -1040,12 +1027,8 @@ impl Draw<'_, '_> {
             let text = self.binding_text(binding, home);
             ui.horizontal(|ui| {
                 ui.add_space(8.0);
-                let shown = if defaults.contains(binding) {
-                    self.joined(vec![self.binding_shown(binding, home), " ".into(), self.vis(&format!("({})", self.ui("Default")))])
-                } else {
-                    self.binding_shown(binding, home)
-                };
-                ui.label(shown);
+                let shown = if defaults.contains(binding) { fill(self.ui("{chord} (Default)"), &[("chord", &text)]) } else { text.clone() };
+                ui.label(self.vis_chord(&shown, &self.chord(&binding.trigger)));
                 if editable {
                     let a11y = fill(self.ui("Remove {chord} from {label}"), &[("chord", &text), ("label", &label)]);
                     let r = self.icon_button(ui, &a11y, false, paint_cross).on_hover_text(self.vis(&a11y));
@@ -1117,7 +1100,7 @@ impl Draw<'_, '_> {
                 }
             }
             if let Some(e) = &self.state.type_error {
-                ui.add(Label::new(RichText::new(format!("⚠ {e}")).color(self.style.warning)).wrap());
+                ui.add(Label::new(RichText::new(self.warned(self.vis(e))).color(self.style.warning)).wrap());
             }
             return;
         }
@@ -1130,7 +1113,8 @@ impl Draw<'_, '_> {
             let size = vec2(FIELD_W, ui.spacing().interact_size.y);
             let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
             let resp = ui.interact(rect, field_id, Sense::click());
-            let a11y = format!("{title} {}", if shown.is_empty() { self.ui("None") } else { shown.clone() });
+            let value = if shown.is_empty() { self.ui("None") } else { shown.clone() };
+            let a11y = fill(self.ui("New shortcut: {chord}"), &[("chord", &value)]);
             resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &a11y));
             let v = ui.visuals();
             let stroke = if recording || resp.has_focus() { v.selection.stroke } else { v.widgets.inactive.bg_stroke };
@@ -1201,7 +1185,7 @@ impl Draw<'_, '_> {
             let label = self.label_of(&h.command);
             let home = self.env.keymap.bindable(&h.command).map(|b| b.scope.clone());
             let text = match &h.binding.scope {
-                Some(s) if Some(s) != home.as_ref() => format!("{label} ({})", self.scope_name(s)),
+                Some(s) if Some(s) != home.as_ref() => fill(self.ui("{label} ({scope})"), &[("label", &label), ("scope", &self.scope_name(s))]),
                 _ => label,
             };
             ui.horizontal(|ui| {
@@ -1361,7 +1345,8 @@ impl Draw<'_, '_> {
         match p {
             Problem::UnknownCommand { key } => fill(self.ui("{key}: no command has this name"), &[("key", key)]),
             Problem::BadBinding { key, text, error } => {
-                fill(self.ui("{key}: “{text}” is not a shortcut ({error})"), &[("key", key), ("text", text), ("error", &error.to_string())])
+                let error = binding_error(self.env, error);
+                fill(self.ui("{key}: “{text}” is not a shortcut ({error})"), &[("key", key), ("text", text), ("error", &error)])
             }
             Problem::Reserved { key, text } => fill(self.ui("{key}: {text} is reserved by the system"), &[("key", key), ("text", text)]),
             Problem::UnknownScope { key, text } => fill(self.ui("{key}: the scope in “{text}” is unknown"), &[("key", key), ("text", text)]),

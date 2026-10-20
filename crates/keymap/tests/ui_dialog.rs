@@ -549,9 +549,17 @@ fn typed_entry_parses_and_shows_errors() {
     h.get_by_label("Save").click();
     h.run();
     click(&mut h, "Type…");
+    h.get_by_role_and_label(Role::TextInput, "New shortcut:").type_text("Cmd+Nope");
+    h.run();
+    press(&mut h, Modifiers::NONE, EguiKey::Enter);
+    assert!(has(&h, "⚠ unknown key Nope"));
+    h.get_by_role_and_label(Role::TextInput, "New shortcut:").focus();
+    h.run();
+    press(&mut h, Modifiers::COMMAND, EguiKey::A);
     h.get_by_role_and_label(Role::TextInput, "New shortcut:").type_text("Cmd+Shift+K");
     h.run();
     press(&mut h, Modifiers::NONE, EguiKey::Enter);
+    assert!(!has(&h, "⚠ unknown key Nope"));
     click(&mut h, "Assign");
     assert_eq!(h.state().bindings("file.save"), ["Cmd+S", "Cmd+Shift+K"]);
 }

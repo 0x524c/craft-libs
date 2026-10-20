@@ -3,11 +3,11 @@
 
 use std::collections::BTreeSet;
 
-use crate::chord::{Chord, Key, Trigger};
+use crate::chord::{Chord, Key, ParseError, Trigger};
 use crate::command::CommandRef;
 use crate::editor::{self, DOUBLE_PRESS, EditSession, Recorded, Recorder};
 use crate::import::{self, ForeignSet, ImportOptions, ImportPlan, ImportReport};
-use crate::keymap::{AssignError, Assigned, Binding, Holder, Keymap, MAX_BINDINGS, Overrides, Policy};
+use crate::keymap::{AssignError, Assigned, Binding, BindingError, Holder, Keymap, MAX_BINDINGS, Overrides, Policy};
 use crate::profiles::{Builtins, ProfileError, Profiles, set_name};
 use crate::scope::Scope;
 use crate::ui::rows::{AreaEntry, AreaId, Built, Filter, RowCache, View};
@@ -38,7 +38,7 @@ impl Env<'_> {
         for h in holders {
             let label = self.label(&h.command);
             let s = match &h.binding.scope {
-                Some(scope) => format!("{label} ({})", self.text.segment(scope.as_str())),
+                Some(scope) => self.ui("{label} ({scope})", &[("label", &label), ("scope", &self.text.segment(scope.as_str()))]),
                 None => label,
             };
             if !out.contains(&s) {
@@ -501,9 +501,9 @@ impl DialogState {
     }
 
     /// Typed entry: the text as [`Binding::parse`] reads it, committed like a recorded chord.
-    /// `Err` is the parse error for under the field.
+    /// `Err` is the parse error for under the field, translated.
     pub(crate) fn type_binding(&mut self, env: &mut Env, command: &CommandRef, text: &str) -> Result<(), String> {
-        let binding = Binding::parse(text).map_err(|e| e.to_string())?;
+        let binding = Binding::parse(text).map_err(|e| binding_error(env, &e))?;
         self.select_row(command);
         if let Some(scope) = binding.scope.clone() {
             self.context = Some(scope);
@@ -1097,6 +1097,23 @@ fn assign_error(env: &Env, e: &AssignError) -> String {
     }
 }
 
+/// Why a binding text does not parse, translated.
+pub(crate) fn binding_error(env: &Env, e: &BindingError) -> String {
+    match e {
+        BindingError::TooLong => env.ui("the shortcut is too long", &[]),
+        BindingError::Scope => env.ui("the scope name is not valid", &[]),
+        BindingError::Trigger(e) => match e {
+            ParseError::Empty => env.ui("empty shortcut", &[]),
+            ParseError::TooLong => env.ui("the shortcut is too long", &[]),
+            ParseError::MissingKey => env.ui("the shortcut has no key", &[]),
+            ParseError::UnknownKey(k) => env.ui("unknown key {key}", &[("key", k)]),
+            ParseError::UnknownModifier(m) => env.ui("unknown modifier {key}", &[("key", m)]),
+            ParseError::DuplicateModifier(m) => env.ui("modifier {key} given twice", &[("key", m)]),
+            ParseError::Sequence => env.ui("key sequences are not supported", &[]),
+        },
+    }
+}
+
 fn profile_error(env: &Env, e: &ProfileError) -> String {
     match e {
         ProfileError::BadName => env.ui("The name is empty, too long or has control characters", &[]),
@@ -1327,7 +1344,7 @@ mod tests {
         assert_eq!(st.type_binding(&mut fx.env(), &"file.save".into(), "F7 F7"), Ok(()));
         st.assign_field(&mut fx.env());
         assert_eq!(fx.keys("file.save"), ["Cmd+S", "F7 F7"]);
-        assert!(st.type_binding(&mut fx.env(), &"file.save".into(), "Cmd+Nope").is_err());
+        assert_eq!(st.type_binding(&mut fx.env(), &"file.save".into(), "Cmd+Nope"), Err("unknown key Nope".into()));
     }
 
     #[test]

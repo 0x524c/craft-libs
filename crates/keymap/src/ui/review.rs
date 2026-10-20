@@ -84,7 +84,7 @@ impl Draw<'_, '_> {
             return;
         }
         ui.add_space(4.0);
-        ui.label(RichText::new(self.vis(&format!("{title} ({})", entries.len()))).strong());
+        ui.label(RichText::new(self.vis(&fill(self.ui("{title} ({n})"), &[("title", title), ("n", &entries.len().to_string())]))).strong());
         for e in entries {
             self.entry(ui, e);
         }
@@ -181,7 +181,8 @@ impl Draw<'_, '_> {
 
             if !report.suggestions.is_empty() {
                 ui.add_space(4.0);
-                ui.label(RichText::new(self.vis(&format!("{} ({})", self.ui("Suggestions"), report.suggestions.len()))).strong());
+                let title = fill(self.ui("Suggestions ({n})"), &[("n", &report.suggestions.len().to_string())]);
+                ui.label(RichText::new(self.vis(&title)).strong());
                 for (si, s) in report.suggestions.iter().enumerate() {
                     ui.horizontal_wrapped(|ui| {
                         self.entry(
