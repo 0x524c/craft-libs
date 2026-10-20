@@ -139,8 +139,9 @@ by the app's own Close items and commands.
 `DockArea::chrome_has_focus` tells whether keyboard focus is on docking chrome (any control a
 `Hit` names) rather than on a panel body. Focus follows only the user's input: a tab keeps keyboard focus until a command or a
 workspace reset hides, closes or moves its panel, and then gives it up. A divider or a floating
-window's resize grip keeps keyboard focus after a pointer drag, so arrow keys resize it right
-away; its focus highlight shows once a key is pressed. Hovering focuses nothing. `begin_drag` hands a drag that started in the app's own chrome to the area.
+window's resize grip holds focus only while the pointer drags it, so the app's shortcuts and
+canvas arrow keys work right after; one reached with Tab or F6 keeps its focus, and arrow keys
+resize it. Hovering focuses nothing. `begin_drag` hands a drag that started in the app's own chrome to the area.
 `docking::chrome` has the floating frame, the title bar and `drop_preview` (the drop preview
 docking and `craft_ui::panes` both draw) for apps that draw their own windows.
 

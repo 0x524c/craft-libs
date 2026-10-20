@@ -25,7 +25,7 @@ pub struct ResizeResponse {
 ///
 /// This widget never stores or changes a pane size. IDs and labels are separate, so translated
 /// labels do not change identity. Pointer drags retain egui's immediate `Sense::drag` behavior
-/// and leave keyboard focus on the handle, highlighted once a key is pressed.
+/// and hold focus only for the gesture (see [`drag_focus`]).
 /// Only arrows along the split axis are consumed, while this handle has focus. Tab remains
 /// available for normal focus traversal.
 pub struct ResizeHandle<'a> {
@@ -83,12 +83,8 @@ impl<'a> ResizeHandle<'a> {
         let mut response = ui.interact(if valid { hit } else { inert }, self.id, if valid { Sense::drag() } else { Sense::hover() });
         let enabled = valid && response.enabled();
         let mut delta = 0.0;
-        let mut quiet = false;
         if enabled {
-            if response.drag_started() {
-                response.request_focus();
-            }
-            quiet = pointer_focus(ui, &response);
+            drag_focus(ui, &response);
             if response.dragged() {
                 let drag = response.drag_delta();
                 delta = match self.axis {
@@ -179,7 +175,7 @@ impl<'a> ResizeHandle<'a> {
         if enabled {
             let fill = if response.dragged() {
                 Some(self.style.dragged)
-            } else if response.has_focus() && !quiet {
+            } else if response.has_focus() {
                 Some(self.style.focused)
             } else if response.hovered() {
                 Some(self.style.hovered)
@@ -200,15 +196,18 @@ impl<'a> ResizeHandle<'a> {
     }
 }
 
-/// A pointer drag focuses its handle, and the handle keeps focus after the release so arrow
-/// keys resize it right away. That focus draws no highlight until a key is pressed. Call after
-/// the handle requests focus; true while its focus came from the pointer.
-pub(crate) fn pointer_focus(ui: &Ui, response: &Response) -> bool {
+/// A pointer drag focuses its handle for the gesture only and gives the focus up on release,
+/// so the app's shortcuts and its canvas arrow keys work again (they defer to a focused
+/// widget). A handle focused from the keyboard (Tab, F6) before the drag keeps its focus.
+pub(crate) fn drag_focus(ui: &Ui, response: &Response) {
     let key = response.id.with("pointer-focus");
     if response.drag_started() {
-        ui.ctx().data_mut(|d| d.insert_temp(key, true));
-    } else if !response.has_focus() || ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))) {
-        ui.ctx().data_mut(|d| d.remove::<bool>(key));
+        if !response.has_focus() {
+            ui.ctx().data_mut(|d| d.insert_temp(key, ()));
+        }
+        response.request_focus();
     }
-    ui.ctx().data(|d| d.get_temp::<bool>(key)).unwrap_or(false)
+    if response.drag_stopped() && ui.ctx().data_mut(|d| d.remove_temp::<()>(key)).is_some() {
+        response.surrender_focus();
+    }
 }

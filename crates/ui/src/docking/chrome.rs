@@ -197,8 +197,8 @@ impl<'a> FloatingFrame<'a> {
             let response = ui.interact(handle, self.id.with(name), Sense::drag()).on_hover_cursor(cursor);
             response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), self.resize_label));
             let anchor_id = response.id.with("pointer-anchor");
+            crate::layout::drag_focus(ui, &response);
             if response.drag_started() {
-                response.request_focus();
                 if let Some(origin) = ui.input(|i| i.pointer.press_origin())
                     && let Some(anchor) = AnchoredResize::new(rect, origin, direction)
                 {
@@ -206,7 +206,6 @@ impl<'a> FloatingFrame<'a> {
                     started = Some(response.id);
                 }
             }
-            let quiet = crate::layout::pointer_focus(ui, &response);
             let mut delta = Vec2::ZERO;
             if response.has_focus() {
                 ui.memory_mut(|memory| {
@@ -246,7 +245,7 @@ impl<'a> FloatingFrame<'a> {
             if canceled || !ui.input(|input| input.pointer.primary_down()) {
                 ui.ctx().data_mut(|data| data.remove::<AnchoredResize>(anchor_id));
             }
-            if name == "resize" && (response.hovered() || response.dragged() || (response.has_focus() && !quiet)) {
+            if name == "resize" && (response.hovered() || response.dragged() || response.has_focus()) {
                 ui.painter().line_segment([handle.left_bottom(), handle.right_top()], Stroke::new(2.0, style.accent));
             }
             responses.push(response);
