@@ -43,7 +43,7 @@ impl Draw<'_, '_> {
         let modified = DialogState::is_modified(self.env);
         let items = self.set_items(builtin, modified);
         let mut act = None;
-        ui.add_enabled_ui(self.state.review.is_none(), |ui| {
+        ui.add_enabled_ui(!self.state.modal(), |ui| {
             ui.horizontal(|ui| {
                 let set_label = self.ui("Set:");
                 let l = ui.label(self.vis(&set_label));

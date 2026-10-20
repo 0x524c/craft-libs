@@ -310,7 +310,7 @@ impl Draw<'_, '_> {
             }
             return;
         }
-        if text_focus || !self.env.options.editable {
+        if text_focus || !self.env.options.editable || self.state.modal() {
             return;
         }
         let mac = self.env.keymap.platform().is_mac();
@@ -351,7 +351,13 @@ impl Draw<'_, '_> {
             let mid_bottom = (rest.max.y - bottom_h - gap).max(rest.min.y);
             let mid = Rect::from_min_max(rest.min, pos2(rest.max.x, mid_bottom));
             if !self.review(ui, mid) {
-                self.middle(ui, mid);
+                let prompt = self.state.prompt.is_some();
+                ui.scope(|ui| {
+                    if prompt {
+                        ui.disable();
+                    }
+                    self.middle(ui, mid);
+                });
             }
             let top = (mid.max.y + gap).min(rest.max.y);
             let bottom = Rect::from_min_max(pos2(rest.min.x, top), rest.max);
@@ -1303,7 +1309,7 @@ impl Draw<'_, '_> {
             if m.goto.is_some() && self.button(ui, true, &self.ui("Go to Conflict"), "shortcuts.message.goto") {
                 act = 1;
             }
-            if m.undo && self.button(ui, self.state.can_undo(), &self.ui("Undo"), "shortcuts.message.undo") {
+            if m.undo && self.button(ui, self.state.can_undo() && !self.state.modal(), &self.ui("Undo"), "shortcuts.message.undo") {
                 act = 2;
             }
         });
@@ -1374,15 +1380,16 @@ impl Draw<'_, '_> {
         } else {
             vec![(self.ui("Close"), "shortcuts.close")]
         };
+        let idle = !self.state.modal();
         ui.horizontal(|ui| {
             if editable {
-                if self.button(ui, self.state.can_undo(), &self.ui("Undo"), "shortcuts.undo") {
+                if self.button(ui, idle && self.state.can_undo(), &self.ui("Undo"), "shortcuts.undo") {
                     self.state.undo(self.env);
                 }
-                if self.button(ui, self.state.can_redo(), &self.ui("Redo"), "shortcuts.redo") {
+                if self.button(ui, idle && self.state.can_redo(), &self.ui("Redo"), "shortcuts.redo") {
                     self.state.redo(self.env);
                 }
-                if self.button(ui, !self.env.keymap.overrides().is_empty(), &self.ui("Reset All…"), "shortcuts.resetAll") {
+                if self.button(ui, idle && !self.env.keymap.overrides().is_empty(), &self.ui("Reset All…"), "shortcuts.resetAll") {
                     self.state.ask_reset_all();
                 }
             }
@@ -1397,7 +1404,8 @@ impl Draw<'_, '_> {
             let width: f32 = right.iter().map(|(t, _)| self.button_width(ui, t) + gap).sum();
             ui.add_space((ui.available_width() - width).max(0.0));
             for (text, id) in &right {
-                if self.button(ui, true, text, id) {
+                // OK waits for the open prompt or review; Cancel and Close never do.
+                if self.button(ui, idle || *id != "shortcuts.ok", text, id) {
                     if editable && *id == "shortcuts.ok" {
                         self.state.ok(self.env);
                     } else {

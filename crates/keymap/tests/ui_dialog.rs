@@ -631,6 +631,24 @@ fn cancel_restores_keymap_and_sets() {
 }
 
 #[test]
+fn an_open_prompt_holds_the_set_row_table_and_edit_actions() {
+    let mut h = with_sets(Profiles::default());
+    click(&mut h, "Save: ⌘S");
+    press(&mut h, Modifiers::NONE, EguiKey::F2);
+    new_set(&mut h, "Other");
+    click(&mut h, "Delete");
+    assert!(has(&h, "Delete the set “Other”?"));
+    for label in ["Set:", "New Set…", "Save: F2", "Undo", "Reset All…", "OK"] {
+        assert!(h.get_by_label(label).accesskit_node().is_disabled(), "{label}");
+    }
+    assert!(h.get_all_by_label("Cancel").all(|n| !n.accesskit_node().is_disabled()), "the prompt's and the dialog's");
+    h.get_all_by_label("Cancel").next().expect("the prompt's Cancel").click();
+    h.run();
+    assert!(h.state().state.is_open());
+    assert!(!h.get_by_label("OK").accesskit_node().is_disabled());
+}
+
+#[test]
 fn ok_stores_edits_of_a_builtin_as_a_copy() {
     let mut h = with_sets(Profiles::default());
     assert!(h.get_by_label("Rename…").accesskit_node().is_disabled(), "built-ins cannot be renamed");

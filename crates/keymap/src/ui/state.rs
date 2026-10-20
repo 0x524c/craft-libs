@@ -787,13 +787,26 @@ impl DialogState {
     fn load_set(&mut self, env: &mut Env, name: &str) -> Result<(), ProfileError> {
         let Some((p, b)) = env.sets.as_mut() else { return Err(ProfileError::NotFound) };
         p.select(name, b)?;
-        env.keymap.set_overrides(p.active_overrides(b).clone());
+        self.load_active(env);
+        Ok(())
+    }
+
+    /// Loads the active set (no overrides when none is left), with a fresh undo history.
+    fn load_active(&mut self, env: &mut Env) {
+        if let Some((p, b)) = env.sets.as_ref() {
+            env.keymap.set_overrides(p.active_overrides(b).clone());
+        }
         self.session = Some(EditSession::begin(env.keymap));
         self.recording = None;
         self.conflict = None;
         self.field = None;
+        self.prompt = None;
         self.changed = true;
-        Ok(())
+    }
+
+    /// A prompt or the import review is open: the set row, the table and the edit actions wait.
+    pub(crate) fn modal(&self) -> bool {
+        self.prompt.is_some() || self.review.is_some()
     }
 
     fn report(&mut self, env: &Env, result: Result<(), ProfileError>) {
@@ -805,6 +818,7 @@ impl DialogState {
 
     /// The set picker. With unsaved edits it asks to save them first.
     pub(crate) fn switch_set(&mut self, env: &mut Env, name: &str) {
+        self.prompt = None;
         self.after_save_prompt(env, Then::Switch(name.to_string()));
     }
 
@@ -891,13 +905,22 @@ impl DialogState {
         }
     }
 
+    /// Deletes a user set. Deleting the active set loads the one that becomes active, or no
+    /// overrides when no set is left.
     fn delete_set(&mut self, env: &mut Env, name: &str) {
         let result = match env.sets.as_mut() {
-            Some((p, b)) => p.delete(name, b).map(|()| p.active_name(b).to_string()),
+            Some((p, b)) => {
+                let was_active = p.active_name(b) == name;
+                p.delete(name, b).map(|()| was_active)
+            }
             None => Err(ProfileError::NotFound),
         };
-        let result = result.and_then(|active| self.load_set(env, &active));
-        self.report(env, result);
+        match result {
+            Ok(true) => self.load_active(env),
+            Ok(false) => self.changed = true,
+            Err(_) => {}
+        }
+        self.report(env, result.map(|_| ()));
     }
 
     /// Save: stores the edits; a built-in's become a copy. The undo history stays.
@@ -1346,6 +1369,42 @@ mod tests {
         assert!(!fx.p.sets.contains_key("Other"));
         st.cancel(&mut fx.env());
         assert_eq!((fx.km.overrides(), &fx.p), (&km0, &p0));
+    }
+
+    #[test]
+    fn a_stale_delete_prompt_neither_reloads_nor_drops_edits() {
+        let mut fx = Fx::new(Options::default());
+        fx.p.save_as("Mine", Overrides::new(), &fx.b).ok();
+        fx.p.save_as("Other", Overrides::new(), &fx.b).ok();
+        let mut st = open(&mut fx);
+        st.ask_delete_set(&fx.env());
+        assert!(st.modal());
+        st.switch_set(&mut fx.env(), "Mine");
+        assert_eq!((st.prompt.clone(), fx.p.active.as_str()), (None, "Mine"), "switching closes the prompt");
+
+        record(&mut st, &mut fx, add("object.front"), &["F2"]);
+        st.prompt = Some(Prompt::DeleteSet("Other".into()));
+        st.answer(&mut fx.env(), Answer::Yes);
+        assert!(!fx.p.sets.contains_key("Other"));
+        assert_eq!((fx.p.active.as_str(), fx.keys("object.front")), ("Mine", vec!["F2".to_string()]), "the active set keeps its edits");
+        assert!(st.can_undo());
+    }
+
+    #[test]
+    fn deleting_the_last_set_without_builtins_loads_no_overrides() {
+        let mut fx = Fx::new(Options::default());
+        fx.b.clear();
+        let mut mine = Overrides::new();
+        mine.insert("object.front", vec!["F2".into()]);
+        fx.p.save_as("Mine", mine.clone(), &fx.b).ok();
+        fx.km.set_overrides(mine);
+        let mut st = open(&mut fx);
+        st.ask_delete_set(&fx.env());
+        st.answer(&mut fx.env(), Answer::Yes);
+        assert!(st.message.is_none(), "{:?}", st.message);
+        assert!(fx.p.sets.is_empty() && fx.km.overrides().is_empty() && !st.can_undo());
+        st.ok(&mut fx.env());
+        assert!(fx.p.sets.is_empty(), "OK stores no copy of the deleted set");
     }
 
     #[test]
