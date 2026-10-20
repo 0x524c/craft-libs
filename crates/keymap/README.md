@@ -57,7 +57,12 @@ assert_eq!(press("M", &editing), Lookup::None, "plain keys go to the text field"
 
 While a text field has the keyboard (`Active::typing`), the keymap's `TypingRule` decides which
 app and panel bindings wait: plain keys (the default), everything without the command modifier,
-or everything. Bindings in an active context always fire, so `Text: Cmd+B` works while typing.
+or everything. Under every rule, the platform's text-editing chords (`text_editing_chords`) go
+to the field too: undo and redo, select all, and moving and deleting by word, line and text
+(Cmd+Z, Alt+Left and Cmd+Backspace on macOS; Ctrl+Z, Ctrl+Y, Ctrl+Left and Ctrl+Home
+elsewhere). Other command chords, such as Cmd+S, still fire. Bindings in an active context
+always fire, so `Text: Cmd+B` works while typing, and a `Text: Cmd+Z` binding takes undo from
+the field.
 
 With the `egui` feature, `egui::Dispatcher` does this for a frame's key events (see Features).
 

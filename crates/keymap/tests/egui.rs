@@ -352,6 +352,23 @@ fn typing_blocks_plain_keys_but_not_command_chords() {
 }
 
 #[test]
+fn undo_goes_to_the_text_field_and_save_still_runs() {
+    let km = Keymap::new(
+        vec![
+            Bindable::new("edit.undo", "Undo", Scope::app()).with_default(Binding::parse("Cmd+Z").unwrap()),
+            Bindable::new("file.save", "Save", Scope::app()).with_default(Binding::parse("Cmd+S").unwrap()),
+        ],
+        Scopes::new(),
+        Platform::Windows,
+    );
+    let typing = Active { typing: true, ..Active::NONE };
+    let events = vec![press(EguiKey::Z, CTRL), press(EguiKey::S, CTRL)];
+    let (ran, left) = run(&mut Dispatcher::new(), &km, &typing, frame(1.0, CTRL, events));
+    assert_eq!(ran, ["file.save"]);
+    assert_eq!(left, [press(EguiKey::Z, CTRL)]);
+}
+
+#[test]
 fn the_focused_panel_wins_and_tool_groups_cycle() {
     let km = dispatch_keymap();
     let mut d = Dispatcher::new();

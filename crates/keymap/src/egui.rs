@@ -223,6 +223,10 @@ struct LastPress {
 ///   AltGr: the browser on Windows reports AltGr+Q (`@` on a German layout) as Ctrl+Alt+Q, and
 ///   the web build's text agent sends the `@` after it. egui-winit reports AltGr with neither Ctrl
 ///   nor Alt. A Ctrl+Alt press without text is a command chord.
+///
+/// Other presses are looked up; the keymap's [`TypingRule`](crate::TypingRule) and
+/// [`text_editing_chords`](crate::text_editing_chords) leave plain keys and the text-editing chords
+/// (Cmd+Z, word moves) to the field.
 #[derive(Clone, Debug)]
 pub struct Dispatcher {
     last: Option<LastPress>,

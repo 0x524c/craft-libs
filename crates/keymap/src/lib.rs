@@ -145,6 +145,6 @@ pub use command::{CommandRef, MAX_KEY};
 pub use import::{ContextRule, ForeignEntry, ForeignKey, ForeignSet, ImportOptions, ImportPlan, ImportReport, NoneDefined, Start, plan};
 pub use keymap::{
     AssignError, Assigned, Bindable, Binding, BindingError, Conflict, ConflictKind, DropReason, Holder, Keymap, Kind, Lookup, MAX_BINDING_TEXT,
-    MAX_BINDINGS, MAX_COMMANDS, MAX_CONFLICTS, Overrides, Policy, Problem, TypingRule,
+    MAX_BINDINGS, MAX_COMMANDS, MAX_CONFLICTS, Overrides, Policy, Problem, TypingRule, text_editing_chords,
 };
 pub use scope::{Active, MAX_SCOPE_NAME, Scope, ScopeKind, Scopes};
