@@ -12,6 +12,7 @@ use craft_ui::buttons::{IconButton, IconButtonStyle};
 use craft_ui::layout::{ResizeHandle, SplitAxis, SplitSize, split_rect};
 use craft_ui::tabs::{self, Tab};
 use egui::Galley;
+use egui::accesskit::Live;
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{
     Align, Button, Color32, ComboBox, EventFilter, Id, Key as EguiKey, Label, Layout, Modifiers, Painter, Rect, Response, RichText, ScrollArea,
@@ -686,13 +687,24 @@ impl Draw<'_, '_> {
                 action = self.rows(ui, range, shortcut_w, has_focus);
             });
         });
+        // Screen readers follow the selected row while the table has focus.
+        let row_id = position.filter(|p| shown.contains(p)).and_then(|p| match self.state.lines_cached().get(p) {
+            Some(Line::Row(r)) => Some(self.base.with(("row", &r.key))),
+            _ => None,
+        });
+        if let Some(id) = row_id {
+            ui.ctx().accesskit_node_builder(table_id, |node| node.set_active_descendant(id.accesskit_id()));
+        }
         self.state.visible = shown;
         if has_focus {
             ui.painter().rect_stroke(rect, 2.0, ui.visuals().selection.stroke, StrokeKind::Inside);
         }
 
         if let Some(a) = action {
-            focus.request_focus();
+            // A group header is a Tab stop of its own and keeps focus.
+            if !matches!(a, RowAction::Toggle(_)) {
+                focus.request_focus();
+            }
             match a {
                 RowAction::Select(c) => self.state.select_row(&c),
                 RowAction::Record(c, old, chip) => {
@@ -788,9 +800,14 @@ impl Draw<'_, '_> {
         action
     }
 
+    /// A group's header; a Tab stop, toggled with Enter or Space.
     fn group_header(&self, ui: &mut Ui, rect: Rect, name: &str, collapsed: bool) -> Option<RowAction> {
-        let resp = ui.interact(rect, self.base.with(("group", name)), Sense::CLICK);
-        resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, name));
+        let resp = ui.interact(rect, self.base.with(("group", name)), Sense::click());
+        resp.widget_info(|| WidgetInfo::labeled(WidgetType::CollapsingHeader, true, name));
+        ui.ctx().accesskit_node_builder(resp.id, |node| node.set_expanded(!collapsed));
+        if resp.has_focus() {
+            ui.painter().rect_stroke(rect, 2.0, ui.visuals().selection.stroke, StrokeKind::Inside);
+        }
         let v = ui.visuals();
         let color = v.strong_text_color();
         let m = self.mirror(rect);
@@ -1254,7 +1271,8 @@ impl Draw<'_, '_> {
     fn conflict_bar(&mut self, ui: &mut Ui) {
         let Some(c) = self.state.conflict.clone() else { return };
         let text = self.vis_chord(&c.text, &self.chord(&c.binding.trigger));
-        ui.add(Label::new(RichText::new(text).color(self.style.warning)).wrap());
+        let r = ui.add(Label::new(RichText::new(text).color(self.style.warning)).wrap());
+        ui.ctx().accesskit_node_builder(r.id, |node| node.set_live(Live::Polite));
         let mut act = 0;
         ui.horizontal_wrapped(|ui| {
             if self.button(ui, true, &self.ui("Take It"), "shortcuts.conflict.take") {
@@ -1289,7 +1307,8 @@ impl Draw<'_, '_> {
             let text = self.vis_chord(&m.text, m.chord.as_deref().unwrap_or_default());
             let text = if m.refused { self.warned(text) } else { text };
             let color = if m.refused { self.style.warning } else { ui.visuals().text_color() };
-            ui.add(Label::new(RichText::new(text).color(color)).wrap());
+            let r = ui.add(Label::new(RichText::new(text).color(color)).wrap());
+            ui.ctx().accesskit_node_builder(r.id, |node| node.set_live(Live::Polite));
             if m.goto.is_some() && self.button(ui, true, &self.ui("Go to Conflict"), "shortcuts.message.goto") {
                 act = 1;
             }

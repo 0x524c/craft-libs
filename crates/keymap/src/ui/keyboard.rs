@@ -559,7 +559,7 @@ impl Draw<'_, '_> {
         }
         let a11y = if names.is_empty() { spoken } else { fill(self.ui("{chord}: {label}"), &[("chord", &spoken), ("label", &names.join(", "))]) };
         let selected = self.state.keyboard.key == Some(key);
-        let resp = ui.interact(r, self.base.with(("key", key.name())), Sense::CLICK);
+        let resp = ui.interact(r, self.base.with(("key", key.name())), Sense::click());
         resp.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, &a11y));
         let description = match class(holders) {
             Class::Free => self.ui("Not assigned"),
@@ -572,6 +572,8 @@ impl Draw<'_, '_> {
         let v = ui.visuals();
         if selected {
             ui.painter().rect_stroke(r, CornerRadius::same(3), Stroke::new(2.0, v.strong_text_color()), StrokeKind::Outside);
+        } else if resp.has_focus() {
+            ui.painter().rect_stroke(r, CornerRadius::same(3), v.selection.stroke, StrokeKind::Outside);
         } else if resp.hovered() {
             ui.painter().rect_stroke(r, CornerRadius::same(3), Stroke::new(1.5, ink), StrokeKind::Inside);
         }

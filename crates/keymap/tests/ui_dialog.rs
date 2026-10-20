@@ -114,8 +114,9 @@ fn has(h: &Harness<'_, Fx>, label: &str) -> bool {
     h.query_by_label(label).is_some()
 }
 
+/// The table itself has focus (a screen reader sees its selected row, the active descendant).
 fn table_focused(h: &Harness<'_, Fx>) -> bool {
-    h.get_by_label("Commands").is_focused()
+    h.get_by_label("Commands").accesskit_node().is_focused_in_tree()
 }
 
 fn chord(text: &str, platform: Platform) -> String {
@@ -359,7 +360,8 @@ fn search(h: &mut Harness<'_, Fx>, text: &str) {
 fn choose_area(h: &mut Harness<'_, Fx>, area: &str) {
     h.get_by_role_and_label(Role::ComboBox, "Show:").click();
     h.run();
-    h.get_by_role_and_label(Role::Button, area).click();
+    // The popup's item, after a group header of the same name.
+    h.get_all_by_role_and_label(Role::Button, area).last().unwrap_or_else(|| panic!("{area}")).click();
     h.run();
 }
 
@@ -409,7 +411,7 @@ fn areas_follow_paths_kind_and_scope() {
     for area in ["All Commands", "File Menu", "Object Menu", "Tools", "Timeline Panel", "Other"] {
         assert!(h.get_all_by_label(area).count() >= 1, "{area}");
     }
-    h.get_by_role_and_label(Role::Button, "Tools").click();
+    h.get_all_by_role_and_label(Role::Button, "Tools").last().expect("the Tools item").click();
     h.run();
     assert!(has(&h, "Marquee Tool: M") && has(&h, "Elliptical Marquee Tool: M"));
     assert!(!has(&h, "Save: ⌘S"));
@@ -461,6 +463,31 @@ fn table_keys_move_record_and_delete() {
     assert!(h.state().state.is_recording());
     press(&mut h, Modifiers::NONE, EguiKey::F7);
     assert_eq!(h.state().bindings("file.saveAs"), ["F7"]);
+}
+
+#[test]
+fn group_headers_take_focus_and_toggle_with_enter() {
+    let mut h = mac();
+    h.get_by_label("Save").click();
+    h.run();
+    assert!(tab_to(&mut h, "File", 3));
+    press(&mut h, Modifiers::NONE, EguiKey::Enter);
+    assert!(!has(&h, "Export…: ⌘E"), "File is collapsed");
+    assert!(h.get_by_label("File").is_focused());
+    press(&mut h, Modifiers::NONE, EguiKey::Enter);
+    assert!(has(&h, "Export…: ⌘E"));
+}
+
+#[test]
+fn table_names_the_selected_row_and_messages_are_live() {
+    let mut h = mac();
+    h.get_by_label("Save").click();
+    h.run();
+    let row = h.get_by_role_and_label(Role::Button, "Save").accesskit_node().id();
+    assert_eq!(h.get_by_label("Commands").accesskit_node().active_descendant().map(|n| n.id()), Some(row));
+    click(&mut h, "Export…: ⌘E");
+    press(&mut h, Modifiers::COMMAND, EguiKey::S);
+    assert_eq!(h.get_by_label("⚠ ⌘S is used by Save").accesskit_node().live(), egui::accesskit::Live::Polite);
 }
 
 #[test]
