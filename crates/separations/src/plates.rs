@@ -5,7 +5,7 @@
 //! that overprints without naming the ink leaves the film as it is (ISO 32000-2 §8.6.7).
 //! Clipping, anti-aliasing, soft masks, transparency groups and blending stay the renderer's
 //! own. `Separation` and `DeviceN` colorants paint their own plates, DeviceCMYK its four
-//! components, DeviceGray black only, and other process colour converts to CMYK through the
+//! components, DeviceGray black only, and other process color converts to CMYK through the
 //! printing condition (see [`Conversion`]).
 //!
 //! Ported from PdfCraft #2770 by Guillem Hermida (`crates/render/src/separations.rs` at
@@ -50,7 +50,7 @@ const MAX_PROFILE_BYTES: usize = 16 << 20;
 /// The longest output condition kept, in characters.
 const MAX_CONDITION: usize = 160;
 
-/// The printing condition process colour converts to when the page has no usable output
+/// The printing condition process color converts to when the page has no usable output
 /// intent.
 #[derive(Clone, Debug, Default)]
 pub enum Fallback {
@@ -59,7 +59,7 @@ pub enum Fallback {
     Fogra39,
     /// The caller's CMYK ICC profile.
     Profile(Arc<[u8]>),
-    /// The ISO 32000-2 §10.4.2.4 device formulas, black generation and undercolour removal the
+    /// The ISO 32000-2 §10.4.2.4 device formulas, black generation and undercolor removal the
     /// identity: neutral RGB goes to black alone, ICCBased CMYK separates as it is.
     DeviceFormulas,
 }
@@ -67,7 +67,7 @@ pub enum Fallback {
 /// How [`plates`] separates.
 #[derive(Clone, Debug)]
 pub struct Options {
-    /// Honour `OP`, `op` and `OPM` as a separating device does. Without it every paint knocks
+    /// Honor `OP`, `op` and `OPM` as a separating device does. Without it every paint knocks
     /// out what is under it.
     pub overprint: bool,
     /// The printing condition when the page has no output intent with a usable CMYK profile.
@@ -80,7 +80,7 @@ impl Default for Options {
     }
 }
 
-/// How process colour that isn't CMYK already became CMYK.
+/// How process color that isn't CMYK already became CMYK.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Conversion {
     /// Through the CMYK profile of the page's or document's output intent (ISO 32000-2
@@ -179,7 +179,7 @@ pub fn plates(pdf: &[u8], page: usize, dpi: f32, opts: &Options) -> Result<Plate
         }
         let alternate = Alternate::Lab(srgb8_to_lab(swatch).unwrap_or([0.0; 3]));
         let spot = Ink::Spot(Spot { name: ink.name().to_string(), alternate, solidity: None });
-        // A name that normalises to one already listed (`A#2341` and `AA`) has no plate of its
+        // A name that normalizes to one already listed (`A#2341` and `AA`) has no plate of its
         // own.
         match inks.add(spot) {
             Some(id) if id.index() == separated.len() => separated.push(ink),
@@ -207,7 +207,7 @@ fn render<'a>(
     settings: &InterpreterSettings,
     scale: f32,
 ) -> Result<raster::Raster, Error> {
-    // The plate's gray film must keep its tints: no colour replacement.
+    // The plate's gray film must keep its tints: no color replacement.
     let options = raster::Options { scale: [scale, scale], background: [255; 4], color_replacement: None, ..Default::default() };
     Ok(raster::render(page, cache, settings, &options)?)
 }

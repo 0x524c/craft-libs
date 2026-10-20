@@ -86,12 +86,12 @@ fn inks(spots: &[&str]) -> Vec<Ink> {
     Ink::PROCESS.into_iter().chain(spots.iter().map(|s| spot(s))).collect()
 }
 
-/// The process plates and Gold, overprint honoured.
+/// The process plates and Gold, overprint honored.
 fn separate(pdf: &[u8]) -> Plates {
     plates(pdf, &inks(&["Gold"]), true, None)
 }
 
-/// A spot colour whose alternate is a yellowish CMYK.
+/// A spot color whose alternate is a yellowish CMYK.
 const GOLD: &str = "[/Separation /Gold /DeviceCMYK << /FunctionType 2 /Domain [0 1] /C0 [0 0 0 0] /C1 [0 0.3 1 0] /N 1 >>]";
 
 fn gold_resource() -> String {
@@ -109,15 +109,15 @@ fn device_cmyk_puts_each_component_on_its_own_plate() {
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-fn a_spot_colour_paints_its_own_plate_and_knocks_out_the_process_plates() {
+fn a_spot_color_paints_its_own_plate_and_knocks_out_the_process_plates() {
     let s = separate(&page_pdf("0 0 0 1 k 0 0 40 40 re f /CS0 cs 0.5 scn 10 10 20 20 re f", &gold_resource(), &[]));
-    assert_eq!(s.at(20, 20), [0, 0, 0, 0, 50], "knocked out under the spot colour");
+    assert_eq!(s.at(20, 20), [0, 0, 0, 0, 50], "knocked out under the spot color");
     assert_eq!(s.at(2, 2), [0, 0, 0, 100, 0]);
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-fn overprinting_keeps_the_plates_a_colour_does_not_specify() {
+fn overprinting_keeps_the_plates_a_color_does_not_specify() {
     let resources = format!("{} /ExtGState << /GS1 << /op true >> >>", gold_resource());
     let pdf = page_pdf("0 0 0 1 k 0 0 40 40 re f /GS1 gs /CS0 cs 0.5 scn 10 10 20 20 re f", &resources, &[]);
     assert_eq!(separate(&pdf).at(20, 20), [0, 0, 0, 100, 50], "overprinted");
@@ -147,7 +147,7 @@ fn nonzero_overprint_mode_leaves_zero_device_cmyk_components() {
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-fn gray_and_rgb_are_process_colour_and_never_take_the_nonzero_overprint_mode() {
+fn gray_and_rgb_are_process_color_and_never_take_the_nonzero_overprint_mode() {
     let process = inks(&[]);
     let gray = page_pdf("1 0 0 0 k 0 0 40 40 re f /M1 gs 0.25 g 10 10 20 20 re f", "/ExtGState << /M1 << /OP true /OPM 1 >> >>", &[]);
     assert_eq!(plates(&gray, &process, true, None).at(20, 20), [0, 0, 0, 75], "gray is black only, and knocks out cyan");
@@ -172,7 +172,7 @@ fn the_all_colorant_paints_every_plate_and_none_paints_nothing() {
     let resources = format!("/ColorSpace << /CS0 {GOLD} /Reg [/Separation /All {gray}] /No [/Separation /None {gray}] >>");
     let content = "/CS0 cs 0.2 scn 0 0 40 40 re f /Reg cs 1 scn 0 0 20 40 re f /No cs 1 scn 20 0 20 40 re f";
     let s = separate(&page_pdf(content, &resources, &[]));
-    assert_eq!(s.at(10, 20), [100, 100, 100, 100, 100], "registration colour");
+    assert_eq!(s.at(10, 20), [100, 100, 100, 100, 100], "registration color");
     assert_eq!(s.at(30, 20), [0, 0, 0, 0, 20], "None leaves every plate as it is");
 }
 
@@ -194,7 +194,7 @@ fn images_are_separated_sample_by_sample() {
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-fn a_spot_colour_image_overprints_like_any_paint() {
+fn a_spot_color_image_overprints_like_any_paint() {
     let image = stream(&format!("/Type /XObject /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace {GOLD}"), &[128]);
     let resources = "/XObject << /Im1 5 0 R >> /ExtGState << /GS1 << /op true >> >>";
     let pdf = |gs: &str| page_pdf(&format!("0 0 0 1 k 0 0 40 40 re f {gs} q 20 0 0 20 10 10 cm /Im1 Do Q"), resources, std::slice::from_ref(&image));
@@ -204,7 +204,7 @@ fn a_spot_colour_image_overprints_like_any_paint() {
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-fn shadings_are_separated_through_their_colour_space() {
+fn shadings_are_separated_through_their_color_space() {
     let shading = format!(
         "<< /ShadingType 2 /ColorSpace {GOLD} /Coords [0 0 40 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> /Extend [true true] >>"
     );
@@ -216,16 +216,16 @@ fn shadings_are_separated_through_their_colour_space() {
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-fn an_uncoloured_pattern_paints_the_film_of_the_colour_it_is_used_with() {
+fn an_uncolored_pattern_paints_the_film_of_the_color_it_is_used_with() {
     let cell = stream("/PatternType 1 /PaintType 2 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << >>", b"0 0 10 10 re f");
     let resources = format!("/ColorSpace << /PCS [/Pattern {GOLD}] >> /Pattern << /P1 5 0 R >>");
     let s = separate(&page_pdf("0 0 0 1 k 0 0 40 40 re f /PCS cs 0.5 /P1 scn 0 0 40 40 re f", &resources, &[cell]));
-    assert_eq!(s.at(20, 20), [0, 0, 0, 0, 50], "the pattern's spot colour, knocking out black");
+    assert_eq!(s.at(20, 20), [0, 0, 0, 0, 50], "the pattern's spot color, knocking out black");
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-fn soft_masks_keep_the_luminosity_of_their_own_colours() {
+fn soft_masks_keep_the_luminosity_of_their_own_colors() {
     // A mask drawn in blue lets about a tenth of the black through. Drawn as the black
     // plate's film, blue (no black ink) would read as white and let all of it through.
     let group = stream("/Type /XObject /Subtype /Form /BBox [0 0 40 40] /Group << /S /Transparency /CS /DeviceRGB >>", b"0 0 1 rg 0 0 40 40 re f");
@@ -263,12 +263,12 @@ fn the_ink_sink_reports_spot_inks_of_patterns_and_images_but_not_of_soft_masks()
     let seen = seen.lock().unwrap();
     let names: Vec<&str> = seen.iter().map(|(ink, _)| ink.name()).collect();
     assert_eq!(names, ["Silver", "Gold"], "in the order first painted; a mask's ink doesn't print");
-    assert_eq!(seen[0].1, [128, 128, 128], "Silver at 100% is its alternate colour");
+    assert_eq!(seen[0].1, [128, 128, 128], "Silver at 100% is its alternate color");
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-fn malformed_colour_spaces_and_overprint_parameters_draw_what_they_can() {
+fn malformed_color_spaces_and_overprint_parameters_draw_what_they_can() {
     let resources = "/ColorSpace << /A [/DeviceN [] /DeviceGray 0] /B [/Separation] /C [/Indexed /DeviceCMYK 300 <00>] >> /ExtGState << /G << /OP 7 /OPM /X /op (y) >> >>";
     let pdf = page_pdf("/G gs /A cs 1 scn 0 0 9 9 re f /B cs 1 scn /C cs 255 scn 0 0 40 40 re f", resources, &[]);
     plates(&pdf, &inks(&["Gold"]), true, None);
@@ -343,7 +343,7 @@ fn device_gray_stays_on_the_black_plate_under_a_simulation() {
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-fn cie_and_icc_colours_convert_through_the_profile_relative_to_their_white() {
+fn cie_and_icc_colors_convert_through_the_profile_relative_to_their_white() {
     let resources =
         "/ColorSpace << /D50 [/Lab << /WhitePoint [0.9642 1 0.8249] >>] /D65 [/Lab << /WhitePoint [0.9505 1 1.089] >>] /Gray [/ICCBased 5 0 R] >>";
     let content = "/D50 cs 50 20 -10 scn 0 0 10 40 re f /D65 cs 100 0 0 scn 10 0 10 40 re f /Gray cs 0.5 scn 20 0 10 40 re f";
@@ -426,7 +426,7 @@ impl CmykConversion for Fixed {
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-fn a_callers_cmyk_conversion_separates_process_colour() {
+fn a_callers_cmyk_conversion_separates_process_color() {
     let profile = synthetic_icc::cmyk_profile(PRESS, true);
     let xyz = Arc::default();
     let simulation = CmykSimulation::with_conversion(&profile, Fixed(Arc::clone(&xyz)));

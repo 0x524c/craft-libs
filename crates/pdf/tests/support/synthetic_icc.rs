@@ -17,7 +17,7 @@
 
 #![allow(dead_code)]
 
-/// Grid points per input of the BToA table: fine enough that colours a little off the neutral
+/// Grid points per input of the BToA table: fine enough that colors a little off the neutral
 /// axis interpolate between unclamped grid points.
 const BTOA_GRID: usize = 17;
 

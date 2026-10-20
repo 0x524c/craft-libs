@@ -13,7 +13,7 @@ re-sync brings these PdfCraft changes:
 
 | PdfCraft PR | Crate | Change |
 |---|---|---|
-| #1691 | hayro-interpret | Patch 28: images with few possible pixel values convert each value once (spot-colour images) |
+| #1691 | hayro-interpret | Patch 28: images with few possible pixel values convert each value once (spot-color images) |
 | #1903, #3316 | hayro-syntax | CCITT images that declare `/Rows 0`, or fewer `/Rows` than `/Height`, decode to their height |
 | #1954 | hayro-syntax | ASCII85 decoding stops at the stream's decode limit (here the per-document limit) |
 | #1982 | hayro-syntax | `Page::base_dimensions` keeps a one-point floor after `/UserUnit` |
@@ -26,19 +26,19 @@ re-sync brings these PdfCraft changes:
 | #2035 | hayro-syntax | Flate back-references are copied in runs |
 | #3356 | hayro | A tiling pattern drawn once shows its cell at full scale |
 | #3378 | hayro-syntax | Patch 20: spaces or tabs between `stream` and its line break are accepted |
-| #3363 | hayro-syntax | A JP2 image in a colour space the decoder refuses is drawn by its component count |
+| #3363 | hayro-syntax | A JP2 image in a color space the decoder refuses is drawn by its component count |
 | #3412 | hayro-interpret | Type 3 glyph bounding boxes are transformed to device space before shading bounds are intersected |
 
 PdfCraft's vendored `vello_common` patch (clip-intersection performance) is not part of this
 reader snapshot.
 
 Changes ported from PdfCraft pull requests that were open when they were ported, under the
-same MIT OR Apache-2.0 licence. Code comments keep the pull request's patch numbers, except
+same MIT OR Apache-2.0 license. Code comments keep the pull request's patch numbers, except
 where noted below.
 
 | PdfCraft PR | Author | Source commit | Files | Change |
 |---|---|---|---|---|
-| [#2770](https://github.com/storytold/pdfcraft/pull/2770) | Guillem Hermida (guillehr2) | [6fcf2a4](https://github.com/guillehr2/pdfcraft/commit/6fcf2a4aca29e943e28cb69017ff8f87d00656c6) | hayro-interpret `color.rs`, `interpret/mod.rs`, `interpret/path.rs`, `interpret/state.rs`, `pattern.rs`, `shading.rs`, `soft_mask.rs`, `x_object.rs` | Patches 35 and 36, plate mode: `InterpreterSettings::plate` draws one ink's separation as a gray film (`color::Plate`, `ColorSpace::ink_use`/`ink_tint`); the graphics state reads `OP`, `op` and `OPM` and an overprinting paint that doesn't specify the plate's ink leaves the plate as it is (ISO 32000-2 §8.6.7); `InterpreterSettings::ink_sink` reports spot inks; `color::CmykSimulation` converts process colour to an output intent's CMYK. Only the vendored interpreter part is ported; PdfCraft's `separations.rs` and Output Preview UI are not |
+| [#2770](https://github.com/storytold/pdfcraft/pull/2770) | Guillem Hermida (guillehr2) | [6fcf2a4](https://github.com/guillehr2/pdfcraft/commit/6fcf2a4aca29e943e28cb69017ff8f87d00656c6) | hayro-interpret `color.rs`, `interpret/mod.rs`, `interpret/path.rs`, `interpret/state.rs`, `pattern.rs`, `shading.rs`, `soft_mask.rs`, `x_object.rs` | Patches 35 and 36, plate mode: `InterpreterSettings::plate` draws one ink's separation as a gray film (`color::Plate`, `ColorSpace::ink_use`/`ink_tint`); the graphics state reads `OP`, `op` and `OPM` and an overprinting paint that doesn't specify the plate's ink leaves the plate as it is (ISO 32000-2 §8.6.7); `InterpreterSettings::ink_sink` reports spot inks; `color::CmykSimulation` converts process color to an output intent's CMYK. Only the vendored interpreter part is ported; PdfCraft's `separations.rs` and Output Preview UI are not |
 | [#2974](https://github.com/storytold/pdfcraft/pull/2974) | mtlcl410 | [bae6981](https://github.com/mtlcl410/pdfcraft/commit/bae69819594a6385a027fec1f67e6b3c36c259b4) | hayro-interpret `device.rs`, `x_object.rs`; hayro `renderer.rs` | Knockout groups (`/K true`) knock out: while one is innermost, fills, strokes, glyph outlines and shadings are drawn with `Compose::Copy` (weighted by coverage); an unmasked image's rectangle (`Device::knockout_image`) and a nested group's shape (an erase pass between `Device::begin_knockout_erase` and `end_knockout_erase`) are cleared before their layer composites; a transparency group drawn in a knockout group always gets a layer of its own. Masked images and stencils composite as before |
 
 Code comments label #2974's changes `Knockout patch (pdfcraft #2974)` instead of a number: the
@@ -49,9 +49,9 @@ object where two objects overlap. The erase pass resolves the group's resources 
 `Resources::from_scope`, as the group's own draw does in this tree.
 
 The output-intent conversion of patch 36 goes through a `color::CmykConversion` trait, so
-that callers can convert with their own colour management. `CmykSimulation::new` keeps
+that callers can convert with their own color management. `CmykSimulation::new` keeps
 #2770's moxcms conversion as the default, and `CmykSimulation::with_conversion` takes a
-caller's. Lab and ICCBased colours reach the conversion as CIE XYZ relative to the D50 PCS
+caller's. Lab and ICCBased colors reach the conversion as CIE XYZ relative to the D50 PCS
 white (`color::PCS_WHITE`); the moxcms conversion takes them on through #2770's ProPhoto hub.
 `crates/pdf/tests/plates.rs` adapts #2770's plate tests to the raster path, with its
 synthetic ICC profiles in `crates/pdf/tests/support/synthetic_icc.rs`.

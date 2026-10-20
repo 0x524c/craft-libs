@@ -11,7 +11,7 @@ Print separations for the Craft apps:
 - `coverage`: ink coverage at a pixel and over a page, total area coverage (TAC) per pixel,
   and the pixels and regions over a TAC limit.
 - `composite`: an sRGB preview of chosen plates.
-- `cms`: process colour conversion into a CMYK printing condition through craft-cms.
+- `cms`: process color conversion into a CMYK printing condition through craft-cms.
 
 ## Plates from an exported PDF
 
@@ -44,9 +44,9 @@ Inks are found by a low-resolution pass that records each spot ink a paint uses,
 first painted. Spot inks used only inside soft masks are left out. Each spot gets a Lab
 alternate measured from its sRGB appearance at 100%, so out-of-sRGB spots are clipped.
 
-### Process colour
+### Process color
 
-RGB, CIE-based and ICCBased colours become CMYK through, in order:
+RGB, CIE-based and ICCBased colors become CMYK through, in order:
 
 1. the CMYK profile of the page's or the document's output intent (a `GTS_PDFX` intent first),
    when craft-cms can convert into it;

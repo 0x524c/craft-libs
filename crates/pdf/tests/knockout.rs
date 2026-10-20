@@ -138,7 +138,7 @@ fn knockout_groups_replace_what_their_elements_cover() {
 
     // A stencil mask must not erase the red beside it. Where the stencil paints (every sample 0)
     // its blue is drawn; a stencil composites rather than knocking the red out, and its exact
-    // colour also depends on its fill opacity (pdfcraft #2975), so only "blue was drawn here" is
+    // color also depends on its fill opacity (pdfcraft #2975), so only "blue was drawn here" is
     // pinned.
     let stencil = render(ko, &format!("{red}0 0 1 rg q 150 0 0 120 100 50 cm /Msk Do Q"));
     check(&stencil, 50, 40, [255, 128, 128], "red beside a stencil");

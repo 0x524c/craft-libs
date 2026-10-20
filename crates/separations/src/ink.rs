@@ -1,4 +1,4 @@
-//! The ink model: which inks a job prints with, and colours as tints of those inks.
+//! The ink model: which inks a job prints with, and colors as tints of those inks.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,7 +21,7 @@ impl Process {
     /// The four process inks, in plate order.
     pub const ALL: [Process; 4] = [Process::Cyan, Process::Magenta, Process::Yellow, Process::Black];
 
-    /// The colorant name a `Separation` or `DeviceN` colour space gives this ink.
+    /// The colorant name a `Separation` or `DeviceN` color space gives this ink.
     pub fn name(self) -> &'static str {
         match self {
             Self::Cyan => "Cyan",
@@ -36,13 +36,13 @@ impl Process {
         Self::ALL.into_iter().find(|p| p.name() == name)
     }
 
-    /// The ink's position in a CMYK colour.
+    /// The ink's position in a CMYK color.
     pub fn index(self) -> usize {
         self as usize
     }
 }
 
-/// How a spot ink looks, for previews and for printing it as process colour.
+/// How a spot ink looks, for previews and for printing it as process color.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Alternate {
     /// CMYK components, `0.0..=1.0`.
@@ -54,7 +54,7 @@ pub enum Alternate {
 /// A spot ink.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Spot {
-    /// The colorant name, as a `Separation` colour space would name it, without PDF name
+    /// The colorant name, as a `Separation` color space would name it, without PDF name
     /// escapes (see [`normalize_name`]).
     pub name: String,
     /// The ink at 100%.
@@ -135,7 +135,7 @@ impl InkSet {
 
     /// Adds `ink` and returns its id. An ink whose name is already in the set (compared after
     /// [`normalize_name`]) is not added again, and its existing id is returned; a spot named
-    /// `Cyan` … `Black` is the process ink. A spot's name is stored normalised. `None` for the
+    /// `Cyan` … `Black` is the process ink. A spot's name is stored normalized. `None` for the
     /// names `All` and `None`, which are not inks (§8.6.6.4), and when the set is full
     /// (65 536 inks).
     pub fn add(&mut self, ink: Ink) -> Option<InkId> {
@@ -338,14 +338,14 @@ impl InkSet {
     }
 }
 
-/// A colour as ink tints.
+/// A color as ink tints.
 #[derive(Clone, Debug, PartialEq)]
 pub enum InkColor {
     /// Tints `0.0..=1.0` of the listed inks; other inks are unspecified (they keep what is
     /// under the paint when it overprints, and are knocked out otherwise). One entry is a
-    /// `Separation` colour, several a `DeviceN` one.
+    /// `Separation` color, several a `DeviceN` one.
     Tints(Vec<(InkId, f32)>),
-    /// The same tint on every plate: the registration colour (the `All` colorant).
+    /// The same tint on every plate: the registration color (the `All` colorant).
     All(f32),
     /// No ink on any plate (the `None` colorant).
     None,

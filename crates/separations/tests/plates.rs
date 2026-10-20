@@ -29,7 +29,7 @@ fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
     out
 }
 
-/// A spot colour whose alternate is a yellowish CMYK.
+/// A spot color whose alternate is a yellowish CMYK.
 const GOLD: &str = "[/Separation /Gold /DeviceCMYK << /FunctionType 2 /Domain [0 1] /C0 [0 0 0 0] /C1 [0 0.3 1 0] /N 1 >>]";
 
 /// Black over the page, Gold at 50% in the middle square, overprinting when `gs` sets `op`.
@@ -101,7 +101,7 @@ fn near(got: [u8; 4], expected: [u8; 4]) -> bool {
 }
 
 #[test]
-fn process_colour_converts_through_the_output_intent_else_the_fallback() {
+fn process_color_converts_through_the_output_intent_else_the_fallback() {
     let synthetic = builtin::COATED_CMYK_ICC;
     let intent = "/OutputIntents [<< /Type /OutputIntent /S /GTS_PDFX /OutputConditionIdentifier (Synthetic press) /DestOutputProfile 5 0 R >>]";
     let red = |catalog: &str| page_pdf("1 0 0 rg 0 0 40 40 re f", "", catalog, &[stream("/N 4", synthetic)]);
@@ -145,7 +145,7 @@ fn spot_inks_past_the_cap_are_listed_not_separated_and_bad_input_is_refused() {
 }
 
 #[test]
-fn lab_colours_convert_through_the_profile_and_lab_white_is_paper() {
+fn lab_colors_convert_through_the_profile_and_lab_white_is_paper() {
     let resources = "/ColorSpace << /D50 [/Lab << /WhitePoint [0.9642 1 0.8249] >>] /D65 [/Lab << /WhitePoint [0.9505 1 1.089] >>] >>";
     let pdf = page_pdf("/D50 cs 50 20 -10 scn 0 0 20 40 re f /D65 cs 100 0 0 scn 20 0 20 40 re f", resources, "", &[]);
     let p = plates(&pdf, 0, 72.0, &Options::default()).unwrap();

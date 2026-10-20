@@ -785,7 +785,7 @@ impl Lab {
         ]
     }
 
-    /// PdfCraft patch (36): the colour `input` as XYZ relative to [`PCS_WHITE`], relative
+    /// PdfCraft patch (36): the color `input` as XYZ relative to [`PCS_WHITE`], relative
     /// colorimetric: the space's white point becomes the PCS white (Bradford-adapted).
     fn to_pcs(&self, input: &[f32], manual_scale: bool) -> [f32; 3] {
         let xyz = self.xyz(self.components(input, manual_scale));
@@ -1091,8 +1091,8 @@ impl ICCProfile {
         })))
     }
 
-    /// PdfCraft patch (36): `input` (whole colours of this profile's components) as XYZ
-    /// relative to [`PCS_WHITE`], three values per colour in `xyz`, through the separation hub
+    /// PdfCraft patch (36): `input` (whole colors of this profile's components) as XYZ
+    /// relative to [`PCS_WHITE`], three values per color in `xyz`, through the separation hub
     /// (see [`Hub`]). L*a*b* components are scaled to the profile's encoding unless
     /// `manual_scale` says they already are (an Indexed palette's).
     fn to_pcs(&self, input: &[f32], manual_scale: bool, xyz: &mut [f32]) -> Option<()> {
@@ -1125,9 +1125,9 @@ impl ICCProfile {
             };
         }
         transform.transform(encoded, xyz).ok()?;
-        for colour in xyz.chunks_exact_mut(3) {
-            let pcs = HUB.to_pcs(&[colour[0], colour[1], colour[2]]);
-            colour.copy_from_slice(&pcs);
+        for color in xyz.chunks_exact_mut(3) {
+            let pcs = HUB.to_pcs(&[color[0], color[1], color[2]]);
+            color.copy_from_slice(&pcs);
         }
         Some(())
     }
@@ -1456,15 +1456,15 @@ struct SimulationRepr {
 }
 
 /// The conversion into a [`CmykSimulation`]'s CMYK, relative colorimetric. Each call converts
-/// whole colours, at most 256 of them; CMYK components are `0.0..=1.0`, four per colour. A
-/// method returns `None` when it can't convert, and the colour then separates by the device
+/// whole colors, at most 256 of them; CMYK components are `0.0..=1.0`, four per color. A
+/// method returns `None` when it can't convert, and the color then separates by the device
 /// formulas.
 pub trait CmykConversion: Send + Sync {
-    /// sRGB colours, gamma-encoded, three components in `0.0..=1.0` per colour, to CMYK.
+    /// sRGB colors, gamma-encoded, three components in `0.0..=1.0` per color, to CMYK.
     fn from_srgb(&self, rgb: &[f32], cmyk: &mut [f32]) -> Option<()>;
 
-    /// CIE XYZ colours relative to [`PCS_WHITE`] (the Y of white is 1), three components per
-    /// colour, to CMYK. The source's white has already been adapted to the PCS white.
+    /// CIE XYZ colors relative to [`PCS_WHITE`] (the Y of white is 1), three components per
+    /// color, to CMYK. The source's white has already been adapted to the PCS white.
     fn from_pcs_xyz(&self, xyz: &[f32], cmyk: &mut [f32]) -> Option<()>;
 
     /// CMYK bytes, four per pixel, to sRGB bytes, three per pixel, to show what the printing
@@ -1487,7 +1487,7 @@ pub trait CmykConversion: Send + Sync {
 }
 
 /// The D50 white of the ICC profile connection space (ICC.1 §7.2.16), the white that
-/// [`CmykConversion::from_pcs_xyz`] takes its colours relative to.
+/// [`CmykConversion::from_pcs_xyz`] takes its colors relative to.
 pub const PCS_WHITE: [f32; 3] = [0.9642, 1.0, 0.8249];
 
 impl Debug for CmykSimulation {
@@ -1530,7 +1530,7 @@ impl CmykSimulation {
     }
 
     /// The printing condition of the CMYK ICC profile `profile`, converted to by `conversion`,
-    /// which the caller made from that profile. ICCBased CMYK colours in `profile` itself stay
+    /// which the caller made from that profile. ICCBased CMYK colors in `profile` itself stay
     /// as they are.
     pub fn with_conversion(profile: &[u8], conversion: impl CmykConversion + 'static) -> Self {
         Self(Arc::new(SimulationRepr {
@@ -1569,7 +1569,7 @@ impl CmykSimulation {
     }
 }
 
-/// PdfCraft patch (36): the conversion [`CmykSimulation::new`] makes with moxcms. XYZ colours
+/// PdfCraft patch (36): the conversion [`CmykSimulation::new`] makes with moxcms. XYZ colors
 /// pass through the separation hub (see [`Hub`]).
 struct MoxcmsConversion {
     description: Option<String>,
@@ -1708,7 +1708,7 @@ fn transform_u8(
 
 static SRGB: LazyLock<ColorProfile> = LazyLock::new(ColorProfile::new_srgb);
 
-/// PdfCraft patch (36): the separation hub, the RGB that ICCBased colours leave their profile
+/// PdfCraft patch (36): the separation hub, the RGB that ICCBased colors leave their profile
 /// in, and that [`MoxcmsConversion`] takes PCS XYZ to its CMYK through: ROMM RGB (ProPhoto)
 /// primaries, D50 white, gamma 1.8. Its
 /// gamut holds practically every surface colour, so nothing printable clips on the way, and

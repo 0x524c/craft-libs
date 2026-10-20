@@ -1,11 +1,11 @@
-//! Process colour conversion for plate mode through craft-cms.
+//! Process color conversion for plate mode through craft-cms.
 
 use std::sync::{Arc, OnceLock};
 
 use craft_cms::{Builtin, ColorSpace, Intent, Profile, Transform, TransformOptions, builtin, cached, math};
 use craft_pdf::interpret::color::{CmykConversion, CmykSimulation};
 
-/// Converts process colour into a CMYK printing condition with craft-cms: relative
+/// Converts process color into a CMYK printing condition with craft-cms: relative
 /// colorimetric, without black point compensation, as the plate renderer expects (see
 /// [`CmykConversion`]). CMYK shows as sRGB relative colorimetric with black point
 /// compensation. Transforms are built on first use and shared through craft-cms's cache.
@@ -55,7 +55,7 @@ impl CmsConversion {
     }
 
     /// A plate-mode printing condition converting through this, for the profile bytes `icc`
-    /// this was made from. ICCBased CMYK colours embedding those same bytes separate as they
+    /// this was made from. ICCBased CMYK colors embedding those same bytes separate as they
     /// are.
     pub fn simulation(self, icc: &[u8]) -> CmykSimulation {
         CmykSimulation::with_conversion(icc, self)
@@ -131,7 +131,7 @@ impl CmykConversion for CmsConversion {
     }
 }
 
-/// CIE L\*a\*b\* (D50) of an sRGB colour, relative colorimetric; `None` if craft-cms can't
+/// CIE L\*a\*b\* (D50) of an sRGB color, relative colorimetric; `None` if craft-cms can't
 /// convert.
 pub(crate) fn srgb8_to_lab(rgb: [u8; 3]) -> Option<[f32; 3]> {
     static T: OnceLock<Option<Arc<Transform>>> = OnceLock::new();
