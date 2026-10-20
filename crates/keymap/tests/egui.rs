@@ -82,6 +82,7 @@ fn dispatch_keymap() -> Keymap {
         app("edit.copy", &["Cmd+C", "Cmd+Insert"]),
         app("edit.paste", &["Cmd+V", "Shift+Insert"]),
         app("app.quit", &["Cmd+Alt+Q"]),
+        app("type.pageNumber", &["Cmd+Alt+Shift+N"]),
         app("view.refresh", &["Cmd+Alt+F5"]),
         app("file.save", &["Cmd+S"]),
         app("view.zoomIn", &["="]),
@@ -283,31 +284,23 @@ fn a_press_that_types_text_stays_with_the_text_field() {
 }
 
 #[test]
-fn ctrl_alt_on_a_printable_key_is_left_to_the_text_field() {
+fn ctrl_alt_is_left_to_the_text_field_only_when_it_types() {
     let km = dispatch_keymap();
     let mut d = Dispatcher::new();
     let typing = Active { typing: true, ..Active::NONE };
-    // AltGr+Q on a German layout types `@`; Windows reports it as Ctrl+Alt+Q, and egui-winit sends
-    // no Text event while Ctrl is held.
+    // AltGr+Q on a German layout types `@`: the browser on Windows reports Ctrl+Alt+Q and the text
+    // agent sends the text after it.
     let alt_gr = Modifiers { alt: true, ..CTRL };
-    let events = vec![press(EguiKey::Q, alt_gr)];
+    let events = vec![press(EguiKey::Q, alt_gr), Event::Text("@".into())];
     let (ran, left) = run(&mut d, &km, &typing, frame(1.0, alt_gr, events.clone()));
     assert!(ran.is_empty(), "{ran:?}");
     assert_eq!(left, events);
-    let (ran, _) = run(&mut d, &km, &typing, frame(2.0, alt_gr, vec![press(EguiKey::F5, alt_gr)]));
-    assert_eq!(ran, ["view.refresh"], "a key that types nothing");
-    let (ran, left) = run(&mut d, &km, &Active::NONE, frame(3.0, alt_gr, events));
-    assert_eq!(ran, ["app.quit"], "outside a text field");
+    // A real Ctrl+Alt chord types nothing, so it runs while typing.
+    let all = Modifiers { shift: true, ..alt_gr };
+    let (ran, left) = run(&mut d, &km, &typing, frame(2.0, all, vec![press(EguiKey::N, all)]));
+    assert_eq!(ran, ["type.pageNumber"]);
     assert!(left.is_empty());
-
-    // macOS has no AltGr: Cmd+Option+Q is a command chord while typing.
-    let mac = Keymap::new(
-        vec![Bindable::new("app.quit", "Quit", Scope::app()).with_default(Binding::parse("Cmd+Alt+Q").unwrap())],
-        Scopes::new(),
-        Platform::Mac,
-    );
-    let cmd_opt = Modifiers { alt: true, mac_cmd: true, command: true, ..Modifiers::NONE };
-    let (ran, _) = run(&mut Dispatcher::new(), &mac, &typing, frame(4.0, cmd_opt, vec![press(EguiKey::Q, cmd_opt)]));
+    let (ran, _) = run(&mut d, &km, &typing, frame(3.0, alt_gr, vec![press(EguiKey::Q, alt_gr)]));
     assert_eq!(ran, ["app.quit"]);
 }
 

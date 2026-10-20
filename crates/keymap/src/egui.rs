@@ -214,12 +214,10 @@ struct LastPress {
 /// While [`Active::typing`], the text field keeps, without lookup:
 /// - clipboard events, and the clipboard key presses the web build sends with them (Cmd+C, Cmd+X,
 ///   Cmd+V, Shift+Delete, Shift+Insert, Ctrl+Insert);
-/// - a press followed by a Text event before the next press, since it typed that text (the web
-///   build's text agent can send these);
-/// - off macOS, a printable key (letter, digit, punctuation, Space) pressed with Ctrl and Alt.
-///   Windows and some Linux setups report AltGr as Ctrl+Alt, so AltGr+Q (`@` on a German layout)
-///   arrives as Ctrl+Alt+Q, and egui-winit sends no Text event while Ctrl is held, so the press
-///   cannot be told from a command chord. Ctrl+Alt with other keys (F-keys, arrows) still runs.
+/// - a press with a Text event of its own in the frame, since it typed that text. This covers
+///   AltGr: the browser on Windows reports AltGr+Q (`@` on a German layout) as Ctrl+Alt+Q, and
+///   the web build's text agent sends the `@` after it. egui-winit reports AltGr with neither Ctrl
+///   nor Alt. A Ctrl+Alt press without text is a command chord.
 #[derive(Clone, Debug)]
 pub struct Dispatcher {
     last: Option<LastPress>,
@@ -292,7 +290,7 @@ impl Dispatcher {
                     if let Some(key) = Key::from_egui(*key) {
                         let clip = clipboard_kind(key, held);
                         let keep = if active.typing {
-                            text_of[i].is_some() || clip.is_some() || may_be_alt_gr(key, held, platform)
+                            text_of[i].is_some() || clip.is_some()
                         } else {
                             !self.clipboard && causes[i].is_some()
                         };
@@ -422,33 +420,6 @@ fn text_of_press(events: &[Event], text_first: bool) -> Vec<Option<usize>> {
         }
     }
     out
-}
-
-/// Whether a press could be AltGr typing a character: Ctrl+Alt off macOS on a key that types.
-fn may_be_alt_gr(key: Key, held: Mods, platform: Platform) -> bool {
-    !platform.is_mac() && held.cmd && held.alt && types_text(key)
-}
-
-/// Letters, digits, punctuation and Space.
-fn types_text(key: Key) -> bool {
-    !key.is_function_key()
-        && !matches!(
-            key,
-            Key::Escape
-                | Key::Tab
-                | Key::Backspace
-                | Key::Enter
-                | Key::Insert
-                | Key::Delete
-                | Key::Home
-                | Key::End
-                | Key::PageUp
-                | Key::PageDown
-                | Key::Up
-                | Key::Down
-                | Key::Left
-                | Key::Right
-        )
 }
 
 fn event_clip(event: &Event) -> Option<Clip> {
