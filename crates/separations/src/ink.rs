@@ -1,6 +1,12 @@
 //! The ink model: which inks a job prints with, and colours as tints of those inks.
 
 use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
+
+use craft_cms::math;
+use craft_pdf::interpret::color::CmykConversion;
+
+use crate::cms::lab_to_srgb8;
 
 /// A process ink, in plate order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -97,9 +103,17 @@ impl InkId {
 
 /// The inks of one document or job: the four process inks, always first and in plate order,
 /// then spot inks in the order added. Ids stay valid as inks are added.
+///
+/// The set is also the job's ink manager, as InDesign's Ink Manager states it: a spot ink can
+/// print on another ink's plate ([`alias`](Self::alias)) or as process colour
+/// ([`set_to_process`](Self::set_to_process), [`set_all_to_process`](Self::set_all_to_process)).
+/// [`resolve`](Self::resolve) applies both to a colour.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InkSet {
     inks: Vec<Ink>,
+    aliases: BTreeMap<InkId, InkId>,
+    to_process: BTreeSet<InkId>,
+    all_to_process: bool,
 }
 
 impl Default for InkSet {
@@ -111,7 +125,12 @@ impl Default for InkSet {
 impl InkSet {
     /// The four process inks.
     pub fn new() -> Self {
-        Self { inks: Process::ALL.into_iter().map(Ink::Process).collect() }
+        Self {
+            inks: Process::ALL.into_iter().map(Ink::Process).collect(),
+            aliases: BTreeMap::new(),
+            to_process: BTreeSet::new(),
+            all_to_process: false,
+        }
     }
 
     /// Adds `ink` and returns its id. An ink whose name is already in the set (compared after
@@ -174,6 +193,149 @@ impl InkSet {
     pub fn is_empty(&self) -> bool {
         self.inks.is_empty()
     }
+
+    fn spot(&self, id: InkId) -> Option<&Spot> {
+        match self.get(id)? {
+            Ink::Spot(s) => Some(s),
+            Ink::Process(_) => None,
+        }
+    }
+
+    /// Prints spot ink `from` on ink `to`'s plate. `to` may be a process ink or another spot,
+    /// which may itself be aliased or printed as process colour; `resolve` follows the chain.
+    /// `to == from` removes the alias. Returns `false`, changing nothing, when `from` is not a
+    /// spot ink of the set, `to` is not in the set, or the alias would make a loop.
+    pub fn alias(&mut self, from: InkId, to: InkId) -> bool {
+        if self.spot(from).is_none() || self.get(to).is_none() {
+            return false;
+        }
+        if from == to {
+            self.aliases.remove(&from);
+            return true;
+        }
+        if self.plate_chain(to).any(|id| id == from) {
+            return false;
+        }
+        self.aliases.insert(from, to);
+        true
+    }
+
+    /// The ink spot ink `from` is aliased to, if any.
+    pub fn alias_of(&self, from: InkId) -> Option<InkId> {
+        self.aliases.get(&from).copied()
+    }
+
+    /// Prints spot ink `ink` as process colour (`on`), converted from its alternate, or on its
+    /// own plate. Returns `false`, changing nothing, when `ink` is not a spot ink of the set.
+    pub fn set_to_process(&mut self, ink: InkId, on: bool) -> bool {
+        if self.spot(ink).is_none() {
+            return false;
+        }
+        if on {
+            self.to_process.insert(ink);
+        } else {
+            self.to_process.remove(&ink);
+        }
+        true
+    }
+
+    /// Prints every spot ink as process colour ("All Spots to Process"), whatever
+    /// [`set_to_process`](Self::set_to_process) says for each. Aliases still apply first: a
+    /// spot aliased to a process ink prints on that ink's plate.
+    pub fn set_all_to_process(&mut self, on: bool) {
+        self.all_to_process = on;
+    }
+
+    pub fn all_to_process(&self) -> bool {
+        self.all_to_process
+    }
+
+    /// Whether spot ink `ink` prints as process colour when a colour names it directly (an
+    /// alias of it is followed first, see [`plate_of`](Self::plate_of)).
+    pub fn is_to_process(&self, ink: InkId) -> bool {
+        self.spot(ink).is_some() && (self.all_to_process || self.to_process.contains(&ink))
+    }
+
+    /// `id`, then each ink it is aliased to in turn. Stops after as many steps as there are
+    /// inks, so a loop can't make it endless.
+    fn plate_chain(&self, id: InkId) -> impl Iterator<Item = InkId> + '_ {
+        std::iter::successors(Some(id), |id| self.alias_of(*id)).take(self.inks.len())
+    }
+
+    /// The ink whose plate a tint of `id` prints on after aliases: `id` itself, the end of its
+    /// alias chain, or `None` when that ink prints as process colour (or `id` is not in the
+    /// set).
+    pub fn plate_of(&self, id: InkId) -> Option<InkId> {
+        self.get(id)?;
+        let end = self.plate_chain(id).last()?;
+        (!self.is_to_process(end)).then_some(end)
+    }
+
+    /// Spot ink `id` at 100% as process colour, `0.0..=1.0` per component: its CMYK alternate
+    /// as it is, a Lab alternate through `cms`, or, when `cms` can't convert, through sRGB and
+    /// the ISO 32000-2 §10.4.2.4 formulas (full black generation and undercolour removal).
+    /// `None` for process inks, inks not in the set, and Lab colours craft-cms can't convert.
+    pub fn spot_cmyk(&self, id: InkId, cms: &dyn CmykConversion) -> Option<[f32; 4]> {
+        let lab = match self.spot(id)?.alternate {
+            Alternate::Cmyk(cmyk) => return Some(cmyk.map(|v| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 })),
+            Alternate::Lab(lab) => lab,
+        };
+        let mut cmyk = [0.0_f32; 4];
+        if cms.from_pcs_xyz(&math::lab_to_xyz_f32(lab), &mut cmyk).is_some() {
+            return Some(cmyk);
+        }
+        let mut rgb = [0_u8; 3];
+        lab_to_srgb8(&lab, &mut rgb)?;
+        let [c, m, y] = rgb.map(|v| 1.0 - f32::from(v) / 255.0);
+        let k = c.min(m).min(y);
+        Some([c - k, m - k, y - k, k])
+    }
+
+    /// `color` as it prints with this set's aliases and to-process settings: each tint moves
+    /// to the plate [`plate_of`](Self::plate_of) names, and a tint of an ink printed as process
+    /// colour becomes that tint of its [`spot_cmyk`](Self::spot_cmyk). Tints that land on one
+    /// plate combine as overlapping halftones, `1 − (1 − a)(1 − b)`. When any tint became
+    /// process colour the result lists all four process inks first (a CMYK colour if no spot
+    /// is left); otherwise inks keep their order. Inks not in the set, and spots whose Lab
+    /// alternate can't be converted, stay as they are. `All` and `None` are unchanged.
+    pub fn resolve(&self, color: &InkColor, cms: &dyn CmykConversion) -> InkColor {
+        let InkColor::Tints(tints) = color else { return color.clone() };
+        let mut out: Vec<(InkId, f32)> = Vec::with_capacity(tints.len());
+        let mut process: Option<[f32; 4]> = None;
+        let combine = |a: f32, b: f32| 1.0 - (1.0 - a) * (1.0 - b);
+        for &(id, tint) in tints {
+            let end = match self.get(id) {
+                Some(_) => self.plate_chain(id).last().unwrap_or(id),
+                None => id,
+            };
+            if self.is_to_process(end)
+                && let Some(cmyk) = self.spot_cmyk(end, cms)
+            {
+                let acc = process.get_or_insert([0.0; 4]);
+                for (a, c) in acc.iter_mut().zip(cmyk) {
+                    *a = combine(*a, c * tint);
+                }
+                continue;
+            }
+            match out.iter_mut().find(|(i, _)| *i == end) {
+                Some((_, t)) => *t = combine(*t, tint),
+                None => out.push((end, tint)),
+            }
+        }
+        let Some(mut cmyk) = process else { return InkColor::Tints(out) };
+        out.retain(|(id, tint)| match Process::ALL.get(id.index()) {
+            Some(p) => {
+                if let Some(c) = cmyk.get_mut(p.index()) {
+                    *c = combine(*c, *tint);
+                }
+                false
+            }
+            None => true,
+        });
+        let mut all: Vec<(InkId, f32)> = Process::ALL.iter().zip(cmyk).map(|(p, c)| (InkId::process(*p), c)).collect();
+        all.extend(out);
+        InkColor::Tints(all)
+    }
 }
 
 /// A colour as ink tints.
@@ -187,6 +349,20 @@ pub enum InkColor {
     All(f32),
     /// No ink on any plate (the `None` colorant).
     None,
+}
+
+impl InkColor {
+    /// The colour as DeviceCMYK components when every tint is of a process ink, as
+    /// [`InkSet::resolve`] leaves a spot printed as process colour; process inks not listed
+    /// are 0. `None` when a spot ink is listed, and for `All` and `None`.
+    pub fn as_cmyk(&self) -> Option<[f32; 4]> {
+        let Self::Tints(tints) = self else { return None };
+        let mut cmyk = [0.0; 4];
+        for (id, tint) in tints {
+            *cmyk.get_mut(id.index())? = *tint;
+        }
+        Some(cmyk)
+    }
 }
 
 /// Overprint parameters of a paint (ISO 32000-2 §8.6.7).
@@ -250,6 +426,54 @@ mod tests {
         let names: Vec<&str> = set.iter().map(|(_, ink)| ink.name()).collect();
         assert_eq!(names, ["Cyan", "Magenta", "Yellow", "Black", "Gold Foil"]);
         assert_eq!(set.spots().count(), 1);
+    }
+
+    fn close(got: Option<[f32; 4]>, expected: [f32; 4]) -> bool {
+        got.is_some_and(|got| got.iter().zip(expected).all(|(g, e)| (g - e).abs() < 1e-4))
+    }
+
+    #[test]
+    fn aliases_and_spots_to_process_resolve_colours() {
+        let mut set = InkSet::new();
+        let gold = set.add(Ink::Spot(Spot { name: "Gold".into(), alternate: Alternate::Cmyk([0.0, 0.3, 1.0, 0.0]), solidity: None })).unwrap();
+        let yellow = set.add(spot("Lab Yellow")).unwrap();
+        let varnish = set.add(spot("Varnish")).unwrap();
+        let k = InkId::process(Process::Black);
+        let cms = crate::CmsConversion::fogra39();
+        let tints = |t: &[(InkId, f32)]| InkColor::Tints(t.to_vec());
+
+        let plain = tints(&[(gold, 0.5), (k, 1.0)]);
+        assert_eq!(set.resolve(&plain, &cms), plain, "no settings: unchanged");
+        assert_eq!(set.resolve(&InkColor::All(1.0), &cms), InkColor::All(1.0));
+
+        assert!(set.alias(varnish, gold));
+        assert_eq!((set.alias_of(varnish), set.plate_of(varnish)), (Some(gold), Some(gold)));
+        assert_eq!(set.resolve(&tints(&[(varnish, 0.5)]), &cms), tints(&[(gold, 0.5)]));
+        assert_eq!(set.resolve(&tints(&[(gold, 0.5), (varnish, 0.5)]), &cms), tints(&[(gold, 0.75)]), "one plate: tints overlap");
+        assert!(!set.alias(gold, varnish), "a loop is refused");
+        assert!(!set.alias(k, gold), "process inks aren't aliased");
+        assert!(!set.alias(gold, InkId(99)));
+
+        assert!(set.set_to_process(gold, true));
+        assert!(!set.set_to_process(k, true));
+        assert_eq!(set.plate_of(varnish), None, "aliased to a spot printed as process");
+        assert!(close(set.resolve(&tints(&[(varnish, 0.5)]), &cms).as_cmyk(), [0.0, 0.15, 0.5, 0.0]));
+        let rich = set.resolve(&tints(&[(k, 0.5), (gold, 1.0)]), &cms);
+        assert!(close(rich.as_cmyk(), [0.0, 0.3, 1.0, 0.5]), "{rich:?}");
+        let InkColor::Tints(mixed) = set.resolve(&tints(&[(yellow, 0.4), (gold, 1.0)]), &cms) else { panic!() };
+        let order: Vec<InkId> = mixed.iter().map(|(id, _)| *id).collect();
+        assert_eq!(order[..4], Process::ALL.map(InkId::process), "process inks first");
+        assert_eq!(mixed[4], (yellow, 0.4), "the spot left on its plate");
+
+        set.set_all_to_process(true);
+        assert!(set.is_to_process(yellow) && !set.is_to_process(k));
+        let lab = set.resolve(&tints(&[(yellow, 1.0)]), &cms).as_cmyk().unwrap();
+        assert!(lab[2] > 0.4 && lab[2] > lab[0] && lab[3] < 0.2, "a light yellow through FOGRA39: {lab:?}");
+        assert!(set.alias(yellow, k));
+        assert_eq!(set.resolve(&tints(&[(yellow, 0.5)]), &cms), tints(&[(k, 0.5)]), "aliases apply first");
+
+        assert!(set.alias(varnish, varnish));
+        assert_eq!(set.alias_of(varnish), None);
     }
 
     #[test]

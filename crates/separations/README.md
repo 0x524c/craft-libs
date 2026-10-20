@@ -3,10 +3,14 @@
 Print separations for the Craft apps:
 
 - `ink`: the ink model the writers and previews share. `InkSet` holds the four process inks
-  (always first, in plate order) and the spot inks of a job; `InkColor` is a colour as ink
-  tints (`Separation`, `DeviceN`, registration or none); `Overprint` holds `op`, `OP` and
-  `OPM`. Spot names are compared as PDF names: `/Gold#20Foil` and `Gold Foil` are one ink.
+  (always first, in plate order) and the spot inks of a job, and is the job's ink manager
+  (aliases, spots to process); `InkColor` is a colour as ink tints (`Separation`, `DeviceN`,
+  registration or none); `Overprint` holds `op`, `OP` and `OPM`. Spot names are compared as
+  PDF names: `/Gold#20Foil` and `Gold Foil` are one ink.
 - `plates`: one 8-bit plane per ink (255 = 100% ink) rendered from a PDF page.
+- `coverage`: ink coverage at a pixel and over a page, total area coverage (TAC) per pixel,
+  and the pixels and regions over a TAC limit.
+- `composite`: an sRGB preview of chosen plates.
 - `cms`: process colour conversion into a CMYK printing condition through craft-cms.
 
 ## Plates from an exported PDF
@@ -68,9 +72,93 @@ The renderer's side limit (`craft_pdf::raster::MAX_SIDE`) also lowers the resolu
 - The graphics state's rendering intent is not read; transfer functions and halftones are not
   applied.
 
+## Coverage and TAC
+
+Every reading takes `enabled`, indexed by `InkId::index` like a Separations Preview's
+toggles: inks past its end count, so `&[]` counts every ink. Values are percent of one ink at
+100%, so TAC runs to 100 × the number of inks.
+
+| Call | Gives |
+|---|---|
+| `coverage_at(x, y, enabled)` | `Coverage`: each ink's tint and the TAC of the enabled inks at a pixel |
+| `pixel_at(u, v)` | The pixel under a point given as fractions of the page, for a pointer readout |
+| `tac(enabled)` | TAC per pixel, row-major |
+| `stats(enabled)` | `Stats`: per ink `InkStats { max, mean, area }`; the page's highest TAC, where, and its mean |
+| `above(limit, enabled)` | `Above`: a mask of the pixels over `limit` and their `count`; `regions()` lists connected regions with bounding boxes, largest first (at most `MAX_REGIONS`); `paint(rgb, colour)` marks them on a preview |
+
+## Composite preview
+
+`Plates::composite(enabled, &cms)` returns sRGB8 (three bytes per pixel, row-major) of the
+enabled inks:
+
+- the process plates convert through `cms` (a `CmsConversion` for the plates' printing
+  condition, `Plates::conversion` names it), relative colorimetric with black point
+  compensation, or through the bundled CMYK profile when `cms` can't convert;
+- each enabled spot plate multiplies over them by the spot's appearance at its tint: a Lab
+  alternate interpolated from paper white to the solid, or a CMYK alternate scaled by the tint.
+
+Overprint is already in the plates (the renderer decides per plate what overprints and what
+knocks out), so the preview shows it without rewriting any paint as a blend mode.
+
+```rust
+use craft_separations::{CmsConversion, InkId};
+
+let cms = CmsConversion::fogra39();
+let mut enabled = vec![true; p.inks.len()];
+enabled[InkId::process(craft_separations::Process::Black).index()] = false; // hide Black
+let mut rgb = p.composite(&enabled, &cms);
+let over = p.above(300.0, &enabled);
+over.paint(&mut rgb, [255, 0, 255]); // TAC warning
+let worst = over.regions().first().copied();
+```
+
+## Ink manager
+
+`InkSet` carries the job's ink settings next to its inks:
+
+| Call | Effect |
+|---|---|
+| `alias(from, to)` | Spot `from` prints on `to`'s plate (a process ink or another spot, chains followed); `alias(from, from)` removes it. Loops and process `from` are refused. |
+| `set_to_process(ink, on)` | Spot `ink` prints as process colour, from its alternate (`spot_cmyk`). |
+| `set_all_to_process(on)` | All Spots to Process; aliases still apply first. |
+| `plate_of(ink)` | The plate a tint of `ink` lands on, `None` when it prints as process. |
+| `resolve(&color, &cms)` | `color` with both applied. Tints landing on one plate combine as `1 − (1 − a)(1 − b)`; a converted colour lists the four process inks first, and `InkColor::as_cmyk` gives the CMYK when no spot is left. |
+
+`resolve` takes a `CmykConversion` (such as `CmsConversion`) because a spot with a Lab
+alternate needs the printing condition to become CMYK.
+
+Apply it in two places:
+
+- **Export.** The writer calls `resolve` on every colour it emits, so the PDF carries the
+  result: DeviceCMYK when `as_cmyk` is `Some`, else a `Separation` or `DeviceN` of the
+  resolved inks (the aliased spot's name, not the original). An overprinting colour that
+  became CMYK is written with `OPM 1`, so its zero components leave the plates under it as
+  they are.
+- **Preview.** The preview separates that exported PDF with `plates` and shows
+  `composite` and the coverage readings. Plates are the truth: an ink manager change shows
+  after the next export, and the preview never recomputes overprint from the document.
+
+## In DesignCraft and VectorCraft
+
+- **Separations Preview**: export the spread to PDF
+  in memory, `plates(pdf, 0, dpi, &Options::default())` at the zoom's resolution, then
+  `composite(enabled, &cms)` for the canvas. The panel lists `p.inks` with a toggle per row
+  feeding `enabled`, each row's percentage from `coverage_at` under the pointer
+  (`pixel_at`), and the TAC mode from `above(limit, enabled)` with `paint`. Single-plate view
+  shows `p.plane(id)` as gray film. It would replace VectorCraft's `proof.rs`, which
+  recolours the document and draws overprint as Darken.
+- **Ink Manager** (DesignCraft's `InkManager` aliases and convert-to-process, VectorCraft's
+  `inks.rs` plates): keep one `InkSet` per document, add each spot swatch with its Lab or
+  CMYK alternate, and map the dialog's rows onto `alias`, `set_to_process` and
+  `set_all_to_process`. The PDF writer resolves swatch colours through it; the Separations
+  Preview then lists the plates the export produced.
+- **Preflight**: `stats(&[])` gives per-ink max and mean coverage and the page's highest TAC
+  and its position for a report line such as "TAC 340% at …, limit 300%".
+
 ## Credits
 
-- Plate mode, ink discovery and the output-intent handling come from
+- Plate mode, ink discovery, the output-intent handling and the coverage readings and
+  composite (`Separations::above`, `stats`, `composite`) come from
   [storytold/pdfcraft#2770](https://github.com/storytold/pdfcraft/pull/2770) by Guillem Hermida
   (guillehr2), with craft-cms in place of moxcms.
 - Knockout groups in the renderer come from
