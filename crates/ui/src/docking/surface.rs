@@ -9,6 +9,7 @@ pub(super) const TAB_PADDING: f32 = 24.0;
 
 /// Application-supplied chrome. Body renderers retain their own UI style and contents.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct DockStyle {
     pub tab_height: f32,
     pub gap: f32,
@@ -105,15 +106,27 @@ pub struct DockStyle {
 
 /// Which arrangement a [`DockStyle`] renders and labels.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Profile {
     #[default]
     Dock,
     Frame,
 }
 
+impl Default for DockStyle {
+    /// [`Self::from_visuals`] with egui's default visuals.
+    fn default() -> Self {
+        Self::from_visuals(&egui::Visuals::default())
+    }
+}
+
 impl DockStyle {
+    /// Colors from the `ui`'s visuals; adjust fields afterwards.
     pub fn from_ui(ui: &Ui) -> Self {
-        let visuals = ui.visuals();
+        Self::from_visuals(ui.visuals())
+    }
+
+    pub fn from_visuals(visuals: &egui::Visuals) -> Self {
         Self {
             tab_height: 26.0,
             gap: 4.0,

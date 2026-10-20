@@ -10,6 +10,8 @@ Office apps that draw their own document with a few task panes beside it use
 ## Profiles
 
 `DockStyle::profile` picks one of two arrangements. Both use the same model and actions.
+An app builds its style with `DockStyle::from_ui`, `from_visuals` or `default` and then sets
+fields; new fields can be added, so the struct has no literal form outside the crate.
 
 | Profile | Arrangement | Apps |
 |---|---|---|

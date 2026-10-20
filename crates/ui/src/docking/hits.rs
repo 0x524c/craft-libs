@@ -43,6 +43,7 @@ pub enum Hit<P> {
 /// The edge or corner a floating window's resize handle moves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum ResizeEdge {
     Left,
     Right,

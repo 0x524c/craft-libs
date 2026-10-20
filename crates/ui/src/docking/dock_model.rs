@@ -19,6 +19,7 @@ const DEFAULT_FLOAT: [f32; 4] = [48.0, 48.0, 260.0, 320.0];
 /// layout); the renderer maps it to a physical edge from the layout direction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum Side {
     Start,
     End,
@@ -74,6 +75,7 @@ impl<P> Column<P> {
 /// Where a group, column or floating window goes.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum Target<P> {
     /// Relative to the panel `anchor`, which must not be part of what moves.
     At { anchor: P, placement: Placement<P> },
