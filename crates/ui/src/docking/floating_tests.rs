@@ -586,7 +586,10 @@ fn hidden_panels_leave_their_split_and_resizing_names_the_layout_path() {
     d.step(vec![]);
     d.step(vec![]);
     assert_eq!(d.tab(1).map(|r| r.left()), Some(0.0), "the hidden frame's space goes to the others");
-    let divider = d.response(Id::new(AREA).with(("split", &Vec::<bool>::new()))).unwrap().center();
+    // Hits and widget ids name the split by its layout path, as `ResizeSplit` does.
+    let hit = Hit::Divider(Divider::Split(vec![true]));
+    assert!(DockArea::<u32>::hit_rects(&d.ctx, Id::new(AREA)).iter().any(|(h, _)| *h == hit), "the hits name the layout path");
+    let divider = d.response(DockArea::<u32>::hit_id(Id::new(AREA), &hit)).unwrap().center();
     let out = d.hold(divider, divider + vec2(0.0, 60.0));
     assert!(out.actions.iter().any(|a| matches!(a, Action::ResizeSplit { path, .. } if path == &vec![true])), "{:?}", out.actions);
     let Some(Node::Split { size: SplitSize::FixedFirst(200.0), second, .. }) = &d.layout.root else { panic!("{:?}", d.layout) };

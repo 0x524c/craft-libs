@@ -95,8 +95,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 path.pop();
                 // The divider's inner-edge hit margin must win over child scrollbars, just
                 // as accordion dividers win over the adjacent panel's content.
+                // Named by its layout path, which `ResizeSplit` takes and hits report.
+                let layout_path = self.original_path(path);
                 let response = ResizeHandle::new(
-                    self.id.with(("split", &*path)),
+                    self.id.with(("split", &layout_path)),
                     *axis,
                     split.divider,
                     &self.style.resize_label,
@@ -108,7 +110,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 if response.delta != 0.0
                     && let Some(size) = split.resized(*size, (split.first_size() + response.delta).clamp(lo, hi) - split.first_size(), 0.0)
                 {
-                    self.output.actions.push(Action::ResizeSplit { path: self.original_path(path), size });
+                    self.output.actions.push(Action::ResizeSplit { path: layout_path, size });
                 }
             }
             Node::Tabs { panels, active } => self.group(ui, panels, *active, false, rect, GroupKind::Frame),

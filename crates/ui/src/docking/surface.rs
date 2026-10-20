@@ -863,7 +863,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
         renderer.finish_group_drag(ui);
         renderer.finish_drag(ui.ctx());
         renderer.report_flyout(ui.ctx());
-        super::hits::record(ui.ctx(), self.id, &view, &renderer.owned_interactions);
+        super::hits::record(ui.ctx(), self.id, layout, &renderer.owned_interactions);
         record_tab_focus(ui.ctx(), self.id, layout, !renderer.output.actions.is_empty());
         ui.ctx().data_mut(|d| d.insert_temp(float_space_key(self.id), renderer.float_space));
         ui.ctx().data_mut(|d| d.insert_temp(self.id.with("owned-interactions"), renderer.owned_interactions));
