@@ -26,8 +26,9 @@ fn to_srgb(cms: &dyn CmykConversion, cmyk: &[u8], rgb: &mut [u8]) {
 
 /// Spot ink `alternate` alone at each tint byte, in sRGB: a Lab alternate runs in a straight
 /// line from paper white (L\* 100) to the solid, a CMYK one scales its components, as a
-/// `Separation` color space's usual tint transform does.
-fn appearance(alternate: Alternate, cms: &dyn CmykConversion) -> Option<Vec<[u8; 3]>> {
+/// `Separation` color space's usual tint transform does. Index the result by tint byte;
+/// `None` when a Lab alternate can't be converted.
+pub fn appearance(alternate: Alternate, cms: &dyn CmykConversion) -> Option<Vec<[u8; 3]>> {
     let mut rgb = vec![0_u8; 256 * 3];
     match alternate {
         Alternate::Lab([l, a, b]) => {
@@ -104,6 +105,14 @@ mod tests {
 
     fn near(got: &[u8], expected: [u8; 3], tolerance: u8) -> bool {
         got.iter().zip(expected).all(|(g, e)| g.abs_diff(e) <= tolerance)
+    }
+
+    #[test]
+    fn a_spot_appearance_runs_from_paper_to_its_solid() {
+        const GOLD: [u8; 3] = [212, 175, 55];
+        let ramp = super::appearance(crate::Alternate::Lab(srgb8_to_lab(GOLD).unwrap()), &CmsConversion::fogra39()).unwrap();
+        assert_eq!(ramp.len(), 256);
+        assert!(near(&ramp[0], [255, 255, 255], 1) && near(&ramp[255], GOLD, 2), "{:?} {:?}", ramp[0], ramp[255]);
     }
 
     #[test]

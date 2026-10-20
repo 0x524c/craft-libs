@@ -265,12 +265,19 @@ impl InkSet {
         std::iter::successors(Some(id), |id| self.alias_of(*id)).take(self.inks.len())
     }
 
+    /// The end of `id`'s alias chain: `id` itself when it has no alias. It prints on its own
+    /// plate unless [`is_to_process`](Self::is_to_process) says it converts. `None` when `id`
+    /// is not in the set.
+    pub fn alias_end(&self, id: InkId) -> Option<InkId> {
+        self.get(id)?;
+        self.plate_chain(id).last()
+    }
+
     /// The ink whose plate a tint of `id` prints on after aliases: `id` itself, the end of its
     /// alias chain, or `None` when that ink prints as process color (or `id` is not in the
     /// set).
     pub fn plate_of(&self, id: InkId) -> Option<InkId> {
-        self.get(id)?;
-        let end = self.plate_chain(id).last()?;
+        let end = self.alias_end(id)?;
         (!self.is_to_process(end)).then_some(end)
     }
 
@@ -538,6 +545,9 @@ mod tests {
         assert!(set.set_to_process(gold, true));
         assert!(!set.set_to_process(k, true));
         assert_eq!(set.plate_of(varnish), None, "aliased to a spot printed as process");
+        assert_eq!(set.alias_end(varnish), Some(gold), "the converted ink is still named");
+        assert!(set.is_to_process(gold));
+        assert_eq!(set.alias_end(InkId(99)), None);
         assert!(close(set.resolve(&tints(&[(varnish, 0.5)]), &cms).as_cmyk(), [0.0, 0.15, 0.5, 0.0]));
         let rich = set.resolve(&tints(&[(k, 0.5), (gold, 1.0)]), &cms);
         assert!(close(rich.as_cmyk(), [0.0, 0.3, 1.0, 0.5]), "{rich:?}");
