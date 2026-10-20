@@ -393,3 +393,15 @@ fn minimize_without_a_value_toggles_an_accordion_entry_both_ways() {
     toggle.apply(&mut workspace, false, &space(), permissions).unwrap();
     assert_eq!(workspace.layout.panel_state(&s("layers")), PanelState::Front);
 }
+
+#[test]
+fn dock_with_a_side_zone_and_no_anchor_makes_an_outer_edge_frame() {
+    let edge = |panel: &str, zone| Action::Move { panel: s(panel), anchor: s("layers"), placement: Placement::Edge(zone) };
+    assert_eq!(actions(json!({"command": "window.panel.dock", "panel": "color", "zone": "left"})), vec![edge("color", Zone::Left)]);
+    assert_eq!(actions(json!({"command": "window.panel.dock", "panel": "history", "zone": "bottom"})), vec![edge("history", Zone::Bottom)]);
+    let (moved, _) = applied(json!({"command": "window.panel.dock", "panel": "color", "zone": "right"}));
+    assert!(matches!(moved.layout.place(&s("color")), Some(crate::docking::dock_model::Place::Node(_))), "{:?}", moved.layout);
+    let (shown, _) = applied(json!({"command": "window.panel.dock", "panel": "swatches", "zone": "top"}));
+    assert!(matches!(shown.layout.place(&s("swatches")), Some(crate::docking::dock_model::Place::Node(_))) && shown.hidden.is_empty(), "{:?}", shown.layout);
+    rejected(json!({"command": "window.panel.dock", "panel": "color", "zone": "left", "before": null}), DockError::InvalidPlacement);
+}

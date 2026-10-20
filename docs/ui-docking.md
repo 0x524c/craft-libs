@@ -223,6 +223,8 @@ let closed = command.apply(&mut app.workspace, style.right_to_left, &space, |pan
   `to_actions` take the layout's `right_to_left` for that.
 - `group` moves the panel's whole group; `column` moves its dock column, or its whole window when
   it floats. `side` is `Start` or `End`.
+- `window.panel.dock` with `left`, `right`, `top` or `bottom` and no `anchor` or `side` makes a
+  new frame on that outer edge (`Placement::Edge`). A hidden panel is shown first.
 - `window.panel.float` without a rect floats what it moves at the size a drag floats it at (see
   Floating size). It goes
   inside the dock area, 24 points from its top-left corner, so it stays clear of the menu bar.

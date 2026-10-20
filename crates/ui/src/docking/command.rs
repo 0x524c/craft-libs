@@ -81,8 +81,10 @@ pub enum DockCommand<P> {
         column: bool,
     },
     /// To `anchor`; else to a new column of the dock on `side` (a new dock when it has none);
-    /// else a floating panel joins the first dock group (or frame) as a tab, and a docked one
-    /// stays. A hidden panel without `anchor` and `side` is shown at its last location.
+    /// else with a `left`, `right`, `top` or `bottom` zone to a new frame on that outer edge
+    /// ([`Placement::Edge`]); else a floating panel joins the first dock group (or frame) as a
+    /// tab, and a docked one stays. A hidden panel without `anchor` and `side` is shown at its
+    /// last location, then moved to the edge a zone names.
     #[serde(rename = "window.panel.dock")]
     Dock {
         panel: P,
@@ -406,10 +408,22 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
                     };
                     return one(unit.to(layout, panel, to)?);
                 }
+                let members = members(layout, panel, unit);
+                if let Some(zone) = self.edge() {
+                    if before.is_some() {
+                        return Err(DockError::InvalidPlacement);
+                    }
+                    let anchor = layout
+                        .panels()
+                        .into_iter()
+                        .find(|p| !members.contains(p) && matches!(layout.place(p), Some(Place::Dock { .. } | Place::Node(_))))
+                        .cloned()
+                        .ok_or(DockError::MissingTarget)?;
+                    return one(unit.to(layout, panel, Target::At { anchor, placement: Placement::Edge(zone) })?);
+                }
                 if !matches!(layout.place(panel), Some(Place::Floating { .. })) {
                     return Ok(Vec::new());
                 }
-                let members = members(layout, panel, unit);
                 let panels = layout.panels();
                 let free = || panels.iter().copied().filter(|p| !members.contains(p));
                 let docked = free().find(|p| matches!(layout.place(p), Some(Place::Dock { .. })));
@@ -498,8 +512,16 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
             _ => None,
         };
         if let Some(panel) = show.filter(|p| !workspace.layout.contains(p)) {
-            workspace.set_visible(panel.clone(), true, None)?;
-            return Ok(Vec::new());
+            if self.edge().is_none() {
+                workspace.set_visible(panel.clone(), true, None)?;
+                return Ok(Vec::new());
+            }
+            // Shown, then moved to the edge, all or nothing.
+            let mut shown = workspace.clone();
+            shown.set_visible(panel.clone(), true, None)?;
+            let closed = shown.apply_all(self.to_actions(&shown, right_to_left, space)?, permissions)?;
+            *workspace = shown;
+            return Ok(closed);
         }
         if let Self::Lock { locked } = self {
             workspace.locked = locked.unwrap_or(!workspace.locked);
@@ -507,6 +529,22 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
         }
         let actions = self.to_actions(workspace, right_to_left, space)?;
         workspace.apply_all(actions, permissions)
+    }
+}
+
+impl<P> DockCommand<P> {
+    /// The outer edge `window.panel.dock` goes to: a side zone without an anchor or side.
+    fn edge(&self) -> Option<Zone> {
+        match self {
+            Self::Dock { anchor: None, side: None, zone: Some(zone), .. } => match zone {
+                ZoneName::Left => Some(Zone::Left),
+                ZoneName::Right => Some(Zone::Right),
+                ZoneName::Top => Some(Zone::Top),
+                ZoneName::Bottom => Some(Zone::Bottom),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 }
 
