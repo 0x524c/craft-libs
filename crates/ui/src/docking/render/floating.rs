@@ -196,7 +196,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let pair_size = a.height() + b.height();
             let (lo, hi) = if pair_size >= 2.0 * least { (least, pair_size - least) } else { (a.height(), a.height()) };
             let response = ResizeHandle::new(
-                self.id.with(("floating-divider", upper.panels.first())),
+                self.id.with(("group-resize", upper.panels.first())),
                 SplitAxis::Vertical,
                 divider,
                 &self.style.resize_label,

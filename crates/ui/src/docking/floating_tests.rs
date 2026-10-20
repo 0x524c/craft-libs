@@ -286,7 +286,7 @@ fn floating_stack_seams_and_bands_insert_groups() {
 
     // The divider between two open groups resizes both.
     let mut d = Driver::new(workspace(), Profile::Dock);
-    let divider = d.response(Id::new(AREA).with(("floating-divider", Some(&5u32)))).unwrap().center();
+    let divider = d.response(DockArea::hit_id(Id::new(AREA), &Hit::Divider(Divider::Group(5u32)))).unwrap().center();
     d.drag(divider, divider + vec2(0.0, 40.0));
     let heights: Vec<_> = window_of(&d.layout, 5).unwrap().groups.iter().map(|g| g.height.unwrap()).collect();
     assert!((heights[0] - 181.5).abs() < 2.0 && (heights[1] - 101.5).abs() < 2.0, "{heights:?}");

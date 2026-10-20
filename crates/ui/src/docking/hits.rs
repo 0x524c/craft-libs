@@ -2,9 +2,9 @@
 
 use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
-use egui::{Context, Id, Rect};
+use egui::{Context, Id, LayerId, Order, Rect};
 
-use super::{DockArea, Layout, Node, render::RESIZE_HANDLES};
+use super::{DockArea, Floating, Layout, Node, render::RESIZE_HANDLES};
 
 /// A rendered docking control that starts a gesture. Groups, columns and windows are named by
 /// their first panel.
@@ -76,40 +76,81 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'_, P> {
     pub fn hit_rects(ctx: &Context, id: Id) -> Vec<(Hit<P>, Rect)> {
         ctx.data(|d| d.get_temp::<Vec<(Hit<P>, Rect)>>(key(id))).unwrap_or_default()
     }
+
+    /// The egui widget id of the control `hit` names in the area `id`, for tests and
+    /// automation that focus a control or read its response.
+    pub fn hit_id(id: Id, hit: &Hit<P>) -> Id {
+        match hit {
+            Hit::Tab(p) => id.with(("tab", p)),
+            Hit::Icon(p) => id.with(("icon", p)),
+            Hit::Overflow(p) => id.with(("overflow", p)),
+            Hit::StackToggle(p) => id.with(("collapse", p)),
+            Hit::Divider(Divider::Stack(p)) => id.with(("stack-resize", p)),
+            Hit::DragBar(p) => id.with(("drag-bar", Some(p))),
+            Hit::Border(p) => id.with(("drag-border", Some(p))),
+            Hit::IconGrip(p) => id.with(("icon-grip", Some(p))),
+            Hit::ColumnBar(p) => id.with(("column-bar", Some(p))),
+            Hit::Collapse(p) => id.with(("column-collapse", Some(p))),
+            Hit::Divider(Divider::Column(p)) => id.with(("column-resize", Some(p))),
+            Hit::Divider(Divider::Group(p)) => id.with(("group-resize", Some(p))),
+            Hit::Divider(Divider::Split(path)) => id.with(("split", path)),
+            Hit::Title(p) => id.with(("move-group", Some(p))),
+            Hit::Close(p) => id.with(("move-group", Some(p))).with("close"),
+            Hit::Resize(p, edge) => {
+                let name = match edge {
+                    ResizeEdge::BottomRight => RESIZE_HANDLES[0],
+                    ResizeEdge::Left => RESIZE_HANDLES[1],
+                    ResizeEdge::Right => RESIZE_HANDLES[2],
+                    ResizeEdge::Bottom => RESIZE_HANDLES[3],
+                    ResizeEdge::BottomLeft => RESIZE_HANDLES[4],
+                };
+                id.with(("floating", p)).with(name)
+            }
+        }
+    }
+
+    /// The egui layer of a floating window in the area `id`; `None` for an empty window. Of two
+    /// layers, the later in `ctx.memory(|m| m.layer_ids())` is drawn on top, and
+    /// `ctx.memory(|m| m.area_rect(layer.id))` is the window's rect.
+    pub fn floating_layer(id: Id, window: &Floating<P>) -> Option<LayerId> {
+        window.panels().next().map(|first| LayerId::new(Order::Middle, id.with(("floating", first))))
+    }
 }
 
 /// Name the controls the renderer registered this frame and store their rects.
 pub(super) fn record<P: Clone + Eq + Hash + Debug + Send + Sync + 'static>(ctx: &Context, area: Id, layout: &Layout<P>, owned: &[Id]) {
     let mut names: HashMap<Id, Hit<P>> = HashMap::new();
+    let mut name = |hit: Hit<P>| {
+        names.insert(DockArea::<P>::hit_id(area, &hit), hit);
+    };
     for panel in layout.panels() {
         let p = || panel.clone();
-        let some = Some(panel);
-        names.insert(area.with(("tab", panel)), Hit::Tab(p()));
-        names.insert(area.with(("icon", panel)), Hit::Icon(p()));
-        names.insert(area.with(("overflow", panel)), Hit::Overflow(p()));
-        names.insert(area.with(("collapse", panel)), Hit::StackToggle(p()));
-        names.insert(area.with(("stack-resize", panel)), Hit::Divider(Divider::Stack(p())));
-        names.insert(area.with(("drag-bar", some)), Hit::DragBar(p()));
-        names.insert(area.with(("drag-border", some)), Hit::Border(p()));
-        names.insert(area.with(("icon-grip", some)), Hit::IconGrip(p()));
-        names.insert(area.with(("column-bar", some)), Hit::ColumnBar(p()));
-        names.insert(area.with(("column-collapse", some)), Hit::Collapse(p()));
-        names.insert(area.with(("column-resize", some)), Hit::Divider(Divider::Column(p())));
-        names.insert(area.with(("group-resize", some)), Hit::Divider(Divider::Group(p())));
-        names.insert(area.with(("floating-divider", some)), Hit::Divider(Divider::Group(p())));
-        let title = area.with(("move-group", some));
-        names.insert(title, Hit::Title(p()));
-        names.insert(title.with("close"), Hit::Close(p()));
-        let window = area.with(("floating", panel));
-        let edges = [ResizeEdge::BottomRight, ResizeEdge::Left, ResizeEdge::Right, ResizeEdge::Bottom, ResizeEdge::BottomLeft];
-        for (name, edge) in RESIZE_HANDLES.iter().zip(edges) {
-            names.insert(window.with(*name), Hit::Resize(p(), edge));
+        for hit in [
+            Hit::Tab(p()),
+            Hit::Icon(p()),
+            Hit::Overflow(p()),
+            Hit::StackToggle(p()),
+            Hit::Divider(Divider::Stack(p())),
+            Hit::DragBar(p()),
+            Hit::Border(p()),
+            Hit::IconGrip(p()),
+            Hit::ColumnBar(p()),
+            Hit::Collapse(p()),
+            Hit::Divider(Divider::Column(p())),
+            Hit::Divider(Divider::Group(p())),
+            Hit::Title(p()),
+            Hit::Close(p()),
+        ] {
+            name(hit);
+        }
+        for edge in [ResizeEdge::BottomRight, ResizeEdge::Left, ResizeEdge::Right, ResizeEdge::Bottom, ResizeEdge::BottomLeft] {
+            name(Hit::Resize(p(), edge));
         }
     }
     let mut nodes = layout.root.as_ref().map(|root| vec![(root, Vec::<bool>::new())]).unwrap_or_default();
     while let Some((node, path)) = nodes.pop() {
         if let Node::Split { first, second, .. } = node {
-            names.insert(area.with(("split", &path)), Hit::Divider(Divider::Split(path.clone())));
+            name(Hit::Divider(Divider::Split(path.clone())));
             let mut second_path = path.clone();
             second_path.push(true);
             let mut first_path = path;

@@ -712,7 +712,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
                     RESIZE_HANDLES.iter().any(|name| matches(self.id.with(("floating", first)).with(*name)))
                         || matches(self.id.with(("move-group", Some(first))).with("close"))
                 })
-                || floating.groups.iter().any(|g| matches(self.id.with(("floating-divider", g.panels.first()))))
+                || floating.groups.iter().any(|g| matches(self.id.with(("group-resize", g.panels.first()))))
             {
                 return true;
             }

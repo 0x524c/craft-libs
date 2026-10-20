@@ -265,6 +265,11 @@ rect: tabs, drag bars, borders, column bars, »/« buttons, title bars, close bu
 grips, resize edges and dividers. It is always compiled, so an app can return it from a
 `ui.docking` control method next to the layout and the focused panel.
 
+`DockArea::hit_id(id, &hit)` is the egui widget id of a control, for tests and automation that
+focus it or read its response. `DockArea::floating_layer(id, &window)` is a floating window's
+egui layer: compare its place in `memory.layer_ids()` with another layer to tell whether the
+window covers it, and read its rect with `memory.area_rect(layer.id)`.
+
 The `testing` feature adds `docking::testing::DockDriver`. It runs a `DockArea` in a headless
 egui context with real pointer and key events, and applies the actions each frame emits.
 

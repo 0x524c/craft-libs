@@ -537,7 +537,10 @@ fn focused_floating_resize_grip_accepts_both_arrow_axes_and_releases_tab() {
     for _ in 0..3 {
         step(&ctx, &mut layout, Vec::new());
     }
-    let id = Id::new("test-area").with(("floating", &5u32)).with("resize");
+    let id = DockArea::hit_id(Id::new("test-area"), &Hit::Resize(5u32, ResizeEdge::BottomRight));
+    let layer = DockArea::floating_layer(Id::new("test-area"), &layout.floating[0]).unwrap();
+    let [x, y, width, height] = layout.floating[0].rect;
+    assert_eq!(ctx.memory(|m| m.area_rect(layer.id)), Some(Rect::from_min_size(pos2(x, y), vec2(width, height))));
     ctx.memory_mut(|memory| memory.request_focus(id));
     let key = |key| Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
     step(&ctx, &mut layout, vec![key(egui::Key::ArrowRight), key(egui::Key::ArrowDown)]);
