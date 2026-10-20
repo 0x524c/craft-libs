@@ -1,4 +1,4 @@
-//! A colour preview composed from plates, as a Separations Preview shows the page.
+//! A color preview composed from plates, as a Separations Preview shows the page.
 //!
 //! The preview is built from the plates alone, after the renderer has decided per plate what
 //! overprints and what knocks out, so it shows overprint as printed without changing any
@@ -26,7 +26,7 @@ fn to_srgb(cms: &dyn CmykConversion, cmyk: &[u8], rgb: &mut [u8]) {
 
 /// Spot ink `alternate` alone at each tint byte, in sRGB: a Lab alternate runs in a straight
 /// line from paper white (L\* 100) to the solid, a CMYK one scales its components, as a
-/// `Separation` colour space's usual tint transform does.
+/// `Separation` color space's usual tint transform does.
 fn appearance(alternate: Alternate, cms: &dyn CmykConversion) -> Option<Vec<[u8; 3]>> {
     let mut rgb = vec![0_u8; 256 * 3];
     match alternate {

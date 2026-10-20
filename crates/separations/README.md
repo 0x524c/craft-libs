@@ -4,7 +4,7 @@ Print separations for the Craft apps:
 
 - `ink`: the ink model the writers and previews share. `InkSet` holds the four process inks
   (always first, in plate order) and the spot inks of a job, and is the job's ink manager
-  (aliases, spots to process); `InkColor` is a colour as ink tints (`Separation`, `DeviceN`,
+  (aliases, spots to process); `InkColor` is a color as ink tints (`Separation`, `DeviceN`,
   registration or none); `Overprint` holds `op`, `OP` and `OPM`. Spot names are compared as
   PDF names: `/Gold#20Foil` and `Gold Foil` are one ink.
 - `plates`: one 8-bit plane per ink (255 = 100% ink) rendered from a PDF page.
@@ -84,7 +84,7 @@ toggles: inks past its end count, so `&[]` counts every ink. Values are percent 
 | `pixel_at(u, v)` | The pixel under a point given as fractions of the page, for a pointer readout |
 | `tac(enabled)` | TAC per pixel, row-major |
 | `stats(enabled)` | `Stats`: per ink `InkStats { max, mean, area }`; the page's highest TAC, where, and its mean |
-| `above(limit, enabled)` | `Above`: a mask of the pixels over `limit` and their `count`; `regions()` lists connected regions with bounding boxes, largest first (at most `MAX_REGIONS`); `paint(rgb, colour)` marks them on a preview |
+| `above(limit, enabled)` | `Above`: a mask of the pixels over `limit` and their `count`; `regions()` lists connected regions with bounding boxes, largest first (at most `MAX_REGIONS`); `paint(rgb, color)` marks them on a preview |
 
 ## Composite preview
 
@@ -119,19 +119,19 @@ let worst = over.regions().first().copied();
 | Call | Effect |
 |---|---|
 | `alias(from, to)` | Spot `from` prints on `to`'s plate (a process ink or another spot, chains followed); `alias(from, from)` removes it. Loops and process `from` are refused. |
-| `set_to_process(ink, on)` | Spot `ink` prints as process colour, from its alternate (`spot_cmyk`). |
+| `set_to_process(ink, on)` | Spot `ink` prints as process color, from its alternate (`spot_cmyk`). |
 | `set_all_to_process(on)` | All Spots to Process; aliases still apply first. |
 | `plate_of(ink)` | The plate a tint of `ink` lands on, `None` when it prints as process. |
-| `resolve(&color, &cms)` | `color` with both applied. Tints landing on one plate combine as `1 − (1 − a)(1 − b)`; a converted colour lists the four process inks first, and `InkColor::as_cmyk` gives the CMYK when no spot is left. |
+| `resolve(&color, &cms)` | `color` with both applied. Tints landing on one plate combine as `1 − (1 − a)(1 − b)`; a converted color lists the four process inks first, and `InkColor::as_cmyk` gives the CMYK when no spot is left. |
 
 `resolve` takes a `CmykConversion` (such as `CmsConversion`) because a spot with a Lab
 alternate needs the printing condition to become CMYK.
 
 Apply it in two places:
 
-- **Export.** The writer calls `resolve` on every colour it emits, so the PDF carries the
+- **Export.** The writer calls `resolve` on every color it emits, so the PDF carries the
   result: DeviceCMYK when `as_cmyk` is `Some`, else a `Separation` or `DeviceN` of the
-  resolved inks (the aliased spot's name, not the original). An overprinting colour that
+  resolved inks (the aliased spot's name, not the original). An overprinting color that
   became CMYK is written with `OPM 1`, so its zero components leave the plates under it as
   they are.
 - **Preview.** The preview separates that exported PDF with `plates` and shows
@@ -146,11 +146,11 @@ Apply it in two places:
   feeding `enabled`, each row's percentage from `coverage_at` under the pointer
   (`pixel_at`), and the TAC mode from `above(limit, enabled)` with `paint`. Single-plate view
   shows `p.plane(id)` as gray film. It would replace VectorCraft's `proof.rs`, which
-  recolours the document and draws overprint as Darken.
+  recolors the document and draws overprint as Darken.
 - **Ink Manager** (DesignCraft's `InkManager` aliases and convert-to-process, VectorCraft's
   `inks.rs` plates): keep one `InkSet` per document, add each spot swatch with its Lab or
   CMYK alternate, and map the dialog's rows onto `alias`, `set_to_process` and
-  `set_all_to_process`. The PDF writer resolves swatch colours through it; the Separations
+  `set_all_to_process`. The PDF writer resolves swatch colors through it; the Separations
   Preview then lists the plates the export produced.
 - **Preflight**: `stats(&[])` gives per-ink max and mean coverage and the page's highest TAC
   and its position for a report line such as "TAC 340% at …, limit 300%".

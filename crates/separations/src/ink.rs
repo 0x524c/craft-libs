@@ -105,9 +105,9 @@ impl InkId {
 /// then spot inks in the order added. Ids stay valid as inks are added.
 ///
 /// The set is also the job's ink manager, as InDesign's Ink Manager states it: a spot ink can
-/// print on another ink's plate ([`alias`](Self::alias)) or as process colour
+/// print on another ink's plate ([`alias`](Self::alias)) or as process color
 /// ([`set_to_process`](Self::set_to_process), [`set_all_to_process`](Self::set_all_to_process)).
-/// [`resolve`](Self::resolve) applies both to a colour.
+/// [`resolve`](Self::resolve) applies both to a color.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InkSet {
     inks: Vec<Ink>,
@@ -202,7 +202,7 @@ impl InkSet {
     }
 
     /// Prints spot ink `from` on ink `to`'s plate. `to` may be a process ink or another spot,
-    /// which may itself be aliased or printed as process colour; `resolve` follows the chain.
+    /// which may itself be aliased or printed as process color; `resolve` follows the chain.
     /// `to == from` removes the alias. Returns `false`, changing nothing, when `from` is not a
     /// spot ink of the set, `to` is not in the set, or the alias would make a loop.
     pub fn alias(&mut self, from: InkId, to: InkId) -> bool {
@@ -225,7 +225,7 @@ impl InkSet {
         self.aliases.get(&from).copied()
     }
 
-    /// Prints spot ink `ink` as process colour (`on`), converted from its alternate, or on its
+    /// Prints spot ink `ink` as process color (`on`), converted from its alternate, or on its
     /// own plate. Returns `false`, changing nothing, when `ink` is not a spot ink of the set.
     pub fn set_to_process(&mut self, ink: InkId, on: bool) -> bool {
         if self.spot(ink).is_none() {
@@ -239,7 +239,7 @@ impl InkSet {
         true
     }
 
-    /// Prints every spot ink as process colour ("All Spots to Process"), whatever
+    /// Prints every spot ink as process color ("All Spots to Process"), whatever
     /// [`set_to_process`](Self::set_to_process) says for each. Aliases still apply first: a
     /// spot aliased to a process ink prints on that ink's plate.
     pub fn set_all_to_process(&mut self, on: bool) {
@@ -250,7 +250,7 @@ impl InkSet {
         self.all_to_process
     }
 
-    /// Whether spot ink `ink` prints as process colour when a colour names it directly (an
+    /// Whether spot ink `ink` prints as process color when a color names it directly (an
     /// alias of it is followed first, see [`plate_of`](Self::plate_of)).
     pub fn is_to_process(&self, ink: InkId) -> bool {
         self.spot(ink).is_some() && (self.all_to_process || self.to_process.contains(&ink))
@@ -263,7 +263,7 @@ impl InkSet {
     }
 
     /// The ink whose plate a tint of `id` prints on after aliases: `id` itself, the end of its
-    /// alias chain, or `None` when that ink prints as process colour (or `id` is not in the
+    /// alias chain, or `None` when that ink prints as process color (or `id` is not in the
     /// set).
     pub fn plate_of(&self, id: InkId) -> Option<InkId> {
         self.get(id)?;
@@ -271,10 +271,10 @@ impl InkSet {
         (!self.is_to_process(end)).then_some(end)
     }
 
-    /// Spot ink `id` at 100% as process colour, `0.0..=1.0` per component: its CMYK alternate
+    /// Spot ink `id` at 100% as process color, `0.0..=1.0` per component: its CMYK alternate
     /// as it is, a Lab alternate through `cms`, or, when `cms` can't convert, through sRGB and
-    /// the ISO 32000-2 §10.4.2.4 formulas (full black generation and undercolour removal).
-    /// `None` for process inks, inks not in the set, and Lab colours craft-cms can't convert.
+    /// the ISO 32000-2 §10.4.2.4 formulas (full black generation and undercolor removal).
+    /// `None` for process inks, inks not in the set, and Lab colors craft-cms can't convert.
     pub fn spot_cmyk(&self, id: InkId, cms: &dyn CmykConversion) -> Option<[f32; 4]> {
         let lab = match self.spot(id)?.alternate {
             Alternate::Cmyk(cmyk) => return Some(cmyk.map(|v| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 })),
@@ -293,9 +293,9 @@ impl InkSet {
 
     /// `color` as it prints with this set's aliases and to-process settings: each tint moves
     /// to the plate [`plate_of`](Self::plate_of) names, and a tint of an ink printed as process
-    /// colour becomes that tint of its [`spot_cmyk`](Self::spot_cmyk). Tints that land on one
+    /// color becomes that tint of its [`spot_cmyk`](Self::spot_cmyk). Tints that land on one
     /// plate combine as overlapping halftones, `1 − (1 − a)(1 − b)`. When any tint became
-    /// process colour the result lists all four process inks first (a CMYK colour if no spot
+    /// process color the result lists all four process inks first (a CMYK color if no spot
     /// is left); otherwise inks keep their order. Inks not in the set, and spots whose Lab
     /// alternate can't be converted, stay as they are. `All` and `None` are unchanged.
     pub fn resolve(&self, color: &InkColor, cms: &dyn CmykConversion) -> InkColor {
@@ -352,8 +352,8 @@ pub enum InkColor {
 }
 
 impl InkColor {
-    /// The colour as DeviceCMYK components when every tint is of a process ink, as
-    /// [`InkSet::resolve`] leaves a spot printed as process colour; process inks not listed
+    /// The color as DeviceCMYK components when every tint is of a process ink, as
+    /// [`InkSet::resolve`] leaves a spot printed as process color; process inks not listed
     /// are 0. `None` when a spot ink is listed, and for `All` and `None`.
     pub fn as_cmyk(&self) -> Option<[f32; 4]> {
         let Self::Tints(tints) = self else { return None };
@@ -433,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn aliases_and_spots_to_process_resolve_colours() {
+    fn aliases_and_spots_to_process_resolve_colors() {
         let mut set = InkSet::new();
         let gold = set.add(Ink::Spot(Spot { name: "Gold".into(), alternate: Alternate::Cmyk([0.0, 0.3, 1.0, 0.0]), solidity: None })).unwrap();
         let yellow = set.add(spot("Lab Yellow")).unwrap();

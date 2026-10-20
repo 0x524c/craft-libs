@@ -210,10 +210,10 @@ impl Above {
     }
 
     /// Paints the marked pixels of an sRGB8 image of the same size (three bytes per pixel,
-    /// such as [`Plates::composite`]'s) in `colour`, as a TAC warning.
-    pub fn paint(&self, rgb: &mut [u8], colour: [u8; 3]) {
+    /// such as [`Plates::composite`]'s) in `color`, as a TAC warning.
+    pub fn paint(&self, rgb: &mut [u8], color: [u8; 3]) {
         for (px, _) in rgb.as_chunks_mut::<3>().0.iter_mut().zip(&self.mask).filter(|(_, m)| **m) {
-            *px = colour;
+            *px = color;
         }
     }
 }
@@ -278,7 +278,7 @@ pub(crate) mod tests {
 
     #[test]
     fn regions_join_four_connected_pixels_and_keep_the_largest() {
-        // A ring around an unmarked centre is one region; the diagonal neighbour is another.
+        // A ring around an unmarked center is one region; the diagonal neighbor is another.
         #[rustfmt::skip]
         let mask = vec![
             true,  true,  true,  false,

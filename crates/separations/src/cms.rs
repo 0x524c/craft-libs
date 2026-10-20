@@ -142,7 +142,7 @@ pub(crate) fn srgb8_to_lab(rgb: [u8; 3]) -> Option<[f32; 3]> {
     Some([lab[0] * 100.0, lab[1] * 255.0 - 128.0, lab[2] * 255.0 - 128.0])
 }
 
-/// sRGB of CIE L\*a\*b\* (D50) colours, relative colorimetric, three values per colour in
+/// sRGB of CIE L\*a\*b\* (D50) colors, relative colorimetric, three values per color in
 /// both; `None` if craft-cms can't convert or the lengths disagree.
 pub(crate) fn lab_to_srgb8(lab: &[f32], rgb: &mut [u8]) -> Option<()> {
     static T: OnceLock<Option<Arc<Transform>>> = OnceLock::new();
