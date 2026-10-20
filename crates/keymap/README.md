@@ -226,6 +226,7 @@ let set = ForeignSet {
         ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(12),
         ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(13),
     ],
+    truncated: 0,
 };
 let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() };
 let planned = plan(&set, &keymap, &options);
@@ -272,6 +273,8 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
   they are reported, never applied. Only the first 200 unmatched entries with keys get them, and
   only the first 200 characters of a name are compared. Keys in `ContextRule::Skip` contexts do
   not count: an unmatched entry with only such keys counts in `unmatched_without_shortcut`.
+- `truncated` counts what was cut at the caps (`MAX_IMPORT_ENTRIES` and the others), plus the
+  entries the app's reader dropped at its own limits, which it passes as `ForeignSet.truncated`.
 
 ## Editor
 
@@ -364,7 +367,9 @@ Outcomes:
 | `Summary { name, html, text }` | Shows, saves or prints the summary. |
 | `Remembered(answers)` | Keeps the user's import answers for the next import (`ImportOptions::remembered`). |
 
-The crate never opens a file dialog or touches the file system.
+The crate never opens a file dialog or touches the file system. When the app's own step fails
+while the dialog is open (a file it cannot read), `state.show_error(text)` shows the translated
+message under the table until the user dismisses it or the next action replaces it.
 
 Key dispatch while the dialog is open:
 

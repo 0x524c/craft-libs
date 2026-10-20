@@ -124,6 +124,7 @@
 //!         ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(12),
 //!         ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(13),
 //!     ],
+//!     truncated: 0,
 //! };
 //! let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() };
 //! let planned = plan(&set, &keymap, &options);

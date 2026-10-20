@@ -289,6 +289,13 @@ impl DialogState {
         self.field = None;
     }
 
+    /// Shows `text`, already translated, as a warning under the table until the user dismisses it
+    /// or the next action's message replaces it: for the app's own errors while the dialog is
+    /// open, such as an import file it could not read.
+    pub fn show_error(&mut self, text: impl Into<String>) {
+        self.message = Some(Message { text: text.into(), refused: true, goto: None, undo: false, chord: None });
+    }
+
     // ---- Frame ----
 
     /// The first frame: snapshot for Cancel, an edit session, the Show entries.
@@ -1462,7 +1469,11 @@ mod tests {
         assert!(matches!(st.finish(), Some(Outcome::Import { .. })));
         assert!(fx.km.overrides().is_empty() && !st.can_undo());
         let read = |text: &str| ForeignKey::read(Some("Default"), text, crate::Flavor::Windows);
-        let set = ForeignSet { name: Some("Theirs".into()), entries: vec![ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S"))] };
+        let set = ForeignSet {
+            name: Some("Theirs".into()),
+            entries: vec![ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S"))],
+            truncated: 0,
+        };
         let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() };
         st.review_import(&mut fx.env(), set, options);
         st.import_reviewed(&mut fx.env());
@@ -1543,6 +1554,7 @@ mod tests {
                 ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(3),
                 ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(4),
             ],
+            truncated: 0,
         };
         let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() };
         st.review_import(&mut fx.env(), set, options);

@@ -1315,10 +1315,17 @@ impl Draw<'_, '_> {
             if m.undo && self.button(ui, self.state.can_undo() && !self.state.modal(), &self.ui("Undo"), "shortcuts.message.undo") {
                 act = 2;
             }
+            let label = self.ui("Dismiss");
+            let r = self.icon_button(ui, &label, false, paint_cross).on_hover_text(self.vis(&label));
+            self.tag(|| "shortcuts.message.dismiss".into(), r.rect, &label);
+            if r.clicked() {
+                act = 3;
+            }
         });
         match (act, &m.goto) {
             (1, Some(c)) => self.state.go_to(c),
             (2, _) => self.state.undo(self.env),
+            (3, _) => self.state.message = None,
             _ => {}
         }
     }

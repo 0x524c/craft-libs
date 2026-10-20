@@ -34,6 +34,9 @@ pub const MAX_SUGGESTIONS: usize = 200;
 pub struct ForeignSet {
     pub name: Option<String>,
     pub entries: Vec<ForeignEntry>,
+    /// Entries the reader dropped at its own limits; [`plan`] counts them in
+    /// [`ImportReport::truncated`].
+    pub truncated: usize,
 }
 
 /// One item of a foreign set.
@@ -411,8 +414,8 @@ pub struct ImportReport {
     pub unreadable: Vec<Unreadable>,
     pub approximated: Vec<Approximated>,
     pub suggestions: Vec<Suggestion>,
-    /// Entries, keys, path segments, bindings and text fields cut at the caps, and unmatched
-    /// entries past [`MAX_SUGGESTIONS`] that got no suggestion.
+    /// Entries, keys, path segments, bindings and text fields cut at the caps, unmatched entries
+    /// past [`MAX_SUGGESTIONS`] that got no suggestion, and [`ForeignSet::truncated`].
     pub truncated: usize,
 }
 
@@ -435,7 +438,7 @@ fn toggle_name(s: &str) -> String {
 pub fn plan(set: &ForeignSet, keymap: &Keymap, options: &ImportOptions) -> ImportPlan {
     let mut cut = 0usize;
     let mut report = ImportReport { set: set.name.as_deref().map(|n| cap_text(n, &mut cut)), ..ImportReport::default() };
-    cut += set.entries.len().saturating_sub(MAX_IMPORT_ENTRIES);
+    cut = cut.saturating_add(set.entries.len().saturating_sub(MAX_IMPORT_ENTRIES)).saturating_add(set.truncated);
     let index = Index::new(keymap);
     let contexts: Vec<(String, &ContextRule)> = options.contexts.iter().map(|(n, r)| (n.to_lowercase(), r)).collect();
     let mut commands: Vec<Planned> = Vec::new();

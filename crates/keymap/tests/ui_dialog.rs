@@ -733,6 +733,7 @@ fn foreign_set() -> ForeignSet {
             ForeignEntry::new(Some("Object"), ["Arrange", "Bring to Front"]).with_key(read("Num 7")).at_line(6),
             ForeignEntry::new(Some("File"), ["Sve Az"]).with_key(read("Ctrl+F9")).at_line(7),
         ],
+        truncated: 0,
     }
 }
 
@@ -987,4 +988,14 @@ fn pseudo_locale_marks_every_string_and_fits() {
         check_pseudo(&h, width, &step("review"));
         assert!(unlisted.borrow().is_empty(), "looked up but not in STRINGS or PLURALS: {:?}", unlisted.borrow());
     }
+}
+
+#[test]
+fn an_app_error_shows_until_dismissed() {
+    let mut h = mac();
+    h.state_mut().state.show_error("The file could not be read");
+    h.run();
+    assert!(has(&h, "⚠ The file could not be read"));
+    click(&mut h, "Dismiss");
+    assert!(!has(&h, "⚠ The file could not be read"));
 }

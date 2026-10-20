@@ -162,7 +162,11 @@ fn duplicate_copies_built_in_and_user_sets() {
 fn a_foreign_set_imports_as_a_new_set_and_leaves_the_keymap_alone() {
     let km = keymap();
     let read = |text: &str| ForeignKey::read(Some("Default"), text, Flavor::Mac);
-    let set = ForeignSet { name: Some("Other App".into()), entries: vec![ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Cmd+Shift+S"))] };
+    let set = ForeignSet {
+        name: Some("Other App".into()),
+        entries: vec![ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Cmd+Shift+S"))],
+        truncated: 0,
+    };
     let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], start: Start::Defaults, ..ImportOptions::default() };
     let planned = plan(&set, &km, &options);
     let builtins = [("Craft", Overrides::new())];

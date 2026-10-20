@@ -235,6 +235,7 @@ pub const STRINGS: &[&str] = &[
     "Keep Both",
     "Go to Conflict",
     "Cancel the new shortcut",
+    "Dismiss",
     // Saved shortcuts that could not be used.
     "{key}: no command has this name",
     "{key}: “{text}” is not a shortcut ({error})",

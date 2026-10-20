@@ -110,11 +110,11 @@ fn windows_set() -> ForeignSet {
         entry(None, &["Somewhere", "Zoom In"], &[(d, "Ctrl+F11")], Flavor::Windows),
         win("Scripts", &["Frobnicate"], &[(d, "Ctrl+Alt+R")]),
     ];
-    ForeignSet { name: Some("My Set".into()), entries }
+    ForeignSet { name: Some("My Set".into()), entries, truncated: 0 }
 }
 
 fn numpad_set() -> ForeignSet {
-    ForeignSet { name: None, entries: vec![win("Window", &["Layers"], &[("Default", "Num 7")]).at_line(2)] }
+    ForeignSet { name: None, entries: vec![win("Window", &["Layers"], &[("Default", "Num 7")]).at_line(2)], truncated: 0 }
 }
 
 fn windows_options() -> ImportOptions {
@@ -262,6 +262,7 @@ fn a_mac_set_reads_its_modifiers_and_scopes_text_keys() {
             mac("Type", &["Style", "Italic"], &[("Text", "Shift+Cmd+I")]),
             mac("Type", &["Style", "Bold"], &[("Default", "Cmd+B"), ("Tables", "Cmd+Opt+B")]),
         ],
+        truncated: 0,
     };
     let text = Scope::new("Text").unwrap();
     let options = ImportOptions {
@@ -282,7 +283,8 @@ fn a_mac_set_reads_its_modifiers_and_scopes_text_keys() {
 
 #[test]
 fn start_and_none_defined_options() {
-    let set = ForeignSet { name: None, entries: vec![win("File", &["Close"], &[("Default", "Ctrl+Q")]), win("Edit", &["Duplicate"], &[])] };
+    let set =
+        ForeignSet { name: None, entries: vec![win("File", &["Close"], &[("Default", "Ctrl+Q")]), win("Edit", &["Duplicate"], &[])], truncated: 0 };
     let user = || {
         let mut o = Overrides::new();
         o.insert("file.save", vec!["Cmd+Alt+S".into()]);
@@ -318,6 +320,7 @@ fn changes_that_find_the_overrides_full_are_reported() {
             win("File", &["Save"], &[("Default", "Ctrl+Alt+S")]),
             win("Edit", &["Duplicate"], &[]),
         ],
+        truncated: 0,
     };
     let full = || {
         let mut o = Overrides::new();
@@ -373,6 +376,7 @@ fn changes_that_find_the_overrides_full_are_reported() {
     let set = ForeignSet {
         name: None,
         entries: vec![win("File", &["Close"], &[("Default", "Ctrl+Alt+J")]), win("File", &["Save"], &[("Default", "Ctrl+Alt+J")])],
+        truncated: 0,
     };
     let mut km = keymap(Platform::Windows).with_overrides(full());
     let r = plan(&set, &km, &options(Start::Current)).apply(&mut km);
@@ -385,7 +389,11 @@ fn changes_that_find_the_overrides_full_are_reported() {
 
 #[test]
 fn keys_in_unknown_scopes_are_skipped_and_the_rest_apply() {
-    let set = ForeignSet { name: None, entries: vec![win("File", &["Close"], &[("Default", "Ctrl+Q"), ("Story", "Ctrl+K"), ("Text", "Ctrl+L")])] };
+    let set = ForeignSet {
+        name: None,
+        entries: vec![win("File", &["Close"], &[("Default", "Ctrl+Q"), ("Story", "Ctrl+K"), ("Text", "Ctrl+L")])],
+        truncated: 0,
+    };
     let options = ImportOptions {
         contexts: vec![
             ("Default".into(), ContextRule::Home),
@@ -409,7 +417,7 @@ fn keys_in_unknown_scopes_are_skipped_and_the_rest_apply() {
 #[test]
 fn suggestions_are_reported_never_applied() {
     let mut km = keymap(Platform::Windows);
-    let set = ForeignSet { name: None, entries: vec![win("Edit", &["Chek Spelling Now"], &[("Default", "Ctrl+K")])] };
+    let set = ForeignSet { name: None, entries: vec![win("Edit", &["Chek Spelling Now"], &[("Default", "Ctrl+K")])], truncated: 0 };
     let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], suggest: true, ..ImportOptions::default() };
     let p = plan(&set, &km, &options);
     assert!(p.commands.is_empty());
@@ -420,6 +428,12 @@ fn suggestions_are_reported_never_applied() {
     has(&km, "edit.checkSpelling", &[]);
     assert!(km.overrides().is_empty());
     assert_eq!(r.imported, 0);
+}
+
+#[test]
+fn entries_the_reader_dropped_count_as_truncated() {
+    let set = ForeignSet { name: None, entries: vec![win("File", &["Close"], &[("Default", "Ctrl+Q")])], truncated: 7 };
+    assert_eq!(plan(&set, &keymap(Platform::Windows), &default_context()).report.truncated, 7);
 }
 
 #[test]
@@ -439,7 +453,7 @@ fn hostile_sets_are_capped_and_counted() {
     // Entries without keys fill the set to the cap and 500 past it.
     let keyless = MAX_IMPORT_ENTRIES - entries.len();
     entries.extend(std::iter::repeat_n(ForeignEntry::new(None, Vec::<String>::new()), keyless + 500));
-    let set = ForeignSet { name: Some(long.clone()), entries };
+    let set = ForeignSet { name: Some(long.clone()), entries, truncated: 0 };
     let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], suggest: true, ..ImportOptions::default() };
     let r = plan(&set, &km, &options).apply(&mut km);
     assert_eq!(r.suggestions.len(), MAX_SUGGESTIONS);
@@ -482,7 +496,7 @@ fn hostile_sets_finish_in_time() {
     }
     entries.insert(0, big);
     entries.insert(1, win("Edit", &["Paste"], &[("Default", &long), ("Default", "Ctrl+\u{0}"), ("Default", "Win+E")]));
-    let set = ForeignSet { name: Some(long.clone()), entries };
+    let set = ForeignSet { name: Some(long.clone()), entries, truncated: 0 };
     let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], suggest: true, ..ImportOptions::default() };
     let started = std::time::Instant::now();
     let r = plan(&set, &km, &options).apply(&mut km);
@@ -515,6 +529,7 @@ fn rows_carry_source_lines_and_approximated_keys() {
             win("Edit", &["Chek Spelling Now"], &[(d, "Ctrl+K")]).at_line(8),
             win("File", &["Save"], &[(d, "Ctrl+Hyperspace")]).at_line(9),
         ],
+        truncated: 0,
     };
     let options = ImportOptions { contexts: vec![(d.into(), ContextRule::Home)], suggest: true, ..ImportOptions::default() };
     let r = plan(&set, &km, &options).apply(&mut km);
@@ -591,7 +606,7 @@ fn report_json_uses_camel_case_names() {
 
 fn import_into(catalog: Vec<Bindable>, entries: Vec<ForeignEntry>, options: &ImportOptions) -> (Keymap, ImportReport) {
     let mut km = Keymap::new(catalog, Scopes::new(), Platform::Windows);
-    let report = plan(&ForeignSet { name: None, entries }, &km, options).apply(&mut km);
+    let report = plan(&ForeignSet { name: None, entries, truncated: 0 }, &km, options).apply(&mut km);
     (km, report)
 }
 
