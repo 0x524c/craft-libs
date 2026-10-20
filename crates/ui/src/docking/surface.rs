@@ -287,16 +287,23 @@ impl<P: PartialEq> FloatSpace<P> {
 impl<P: PartialEq> FloatSpace<P> {
     /// Record the height `panel`'s content used in a body `available` tall. Content that
     /// reaches the body's bottom filled it and has no height of its own, unless the body was
-    /// sized to the height recorded before (a fitted window).
-    pub(super) fn record_content(&mut self, panel: P, used: f32, available: f32) {
+    /// sized to the height recorded before (a fitted window). `at` is the panel's entry in
+    /// `contents` if it has one; returns where the entry is.
+    pub(super) fn record_content(&mut self, at: Option<usize>, panel: P, used: f32, available: f32) -> usize {
         const TOLERANCE: f32 = 1.0;
         let used = if used.is_finite() { used.max(0.0) } else { 0.0 };
-        let recorded = self.contents.iter_mut().find(|(p, _)| *p == panel);
+        let recorded = at.and_then(|i| self.contents.get_mut(i)).filter(|(p, _)| *p == panel);
         let fitted = recorded.as_ref().and_then(|(_, height)| *height).is_some_and(|height| height >= available - TOLERANCE);
         let height = (used < available - TOLERANCE || fitted).then_some(used);
-        match recorded {
-            Some((_, recorded)) => *recorded = height,
-            None => self.contents.push((panel, height)),
+        match (recorded, at) {
+            (Some((_, recorded)), Some(at)) => {
+                *recorded = height;
+                at
+            }
+            _ => {
+                self.contents.push((panel, height));
+                self.contents.len() - 1
+            }
         }
     }
 }
@@ -314,15 +321,6 @@ impl<P: PartialEq> FloatSpace<P> {
 
     pub(super) fn column(&self, panel: &P) -> Option<Vec2> {
         Self::find(&self.columns, panel)
-    }
-
-    /// Whether `panel`'s content filled its body when it was last drawn.
-    pub(super) fn filled(&self, panel: &P) -> bool {
-        self.contents.iter().any(|(p, height)| p == panel && height.is_none())
-    }
-
-    pub(super) fn content(&self, panel: &P) -> Option<f32> {
-        self.contents.iter().find(|(p, _)| p == panel).and_then(|(_, height)| *height)
     }
 
     /// The first record wins: an iconic panel is recorded at its icon before its flyout.
@@ -789,6 +787,12 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
         }
         release_moved_tab_focus(ui.ctx(), self.id, layout);
         let (view, frame) = super::render::view(layout, self.maximized.as_ref(), self.hide, &*content);
+        let places = layout.places();
+        // A panel keeps the content height it last drew while hidden or minimized.
+        let contents: Vec<(P, Option<f32>)> = float_space::<P>(ui.ctx(), self.id)
+            .map(|space| space.contents.into_iter().filter(|(panel, _)| places.contains_key(panel)).collect())
+            .unwrap_or_default();
+        let content_index = contents.iter().enumerate().map(|(i, (panel, _))| (panel.clone(), i)).collect();
         let mut renderer = Renderer {
             id: self.id,
             style,
@@ -803,13 +807,9 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             output: DockOutput::default(),
             frame,
             iconic: super::render::Iconic::new(self.auto_collapse),
-            float_space: FloatSpace {
-                // A panel keeps the content height it last drew while hidden or minimized.
-                contents: float_space::<P>(ui.ctx(), self.id)
-                    .map(|space| space.contents.into_iter().filter(|(panel, _)| layout.contains(panel)).collect())
-                    .unwrap_or_default(),
-                ..FloatSpace::new(rect)
-            },
+            float_space: FloatSpace { contents, ..FloatSpace::new(rect) },
+            places,
+            contents: content_index,
         };
         if let Some(root) = &view.root {
             renderer.node(ui, root, rect, &mut Vec::new());

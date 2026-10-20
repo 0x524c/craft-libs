@@ -4,7 +4,7 @@
 //! A group, column or floating window is named by a panel it contains. Edits run on a proposed
 //! copy of the layout, so a helper that fails part-way leaves nothing behind.
 
-use std::hash::Hash;
+use std::{collections::HashMap, hash::Hash};
 
 use super::model::{DockError, Floating, Layout, MAX_DEPTH, MAX_NODES, Node, Placement, Zone, valid_height, valid_rect, valid_width};
 use crate::layout::{SplitAxis, SplitSize};
@@ -251,6 +251,57 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             }
         }
         None
+    }
+
+    /// [`Self::place`] of every panel, from one traversal: the renderer looks up many panels a
+    /// frame.
+    pub(super) fn places(&self) -> HashMap<P, Place> {
+        let mut places = HashMap::new();
+        for (w, window) in self.floating.iter().enumerate() {
+            for (g, group) in window.groups.iter().enumerate() {
+                for panel in &group.panels {
+                    places.entry(panel.clone()).or_insert(Place::Floating { window: w, group: g });
+                }
+            }
+        }
+        let mut visit: Vec<(&Node<P>, Vec<bool>)> = self.root.iter().map(|node| (node, Vec::new())).collect();
+        let mut visited = 0usize;
+        while let Some((node, path)) = visit.pop() {
+            visited = visited.saturating_add(1);
+            if visited > MAX_NODES {
+                break;
+            }
+            match node {
+                Node::Split { first, second, .. } => {
+                    let mut second_path = path.clone();
+                    second_path.push(true);
+                    let mut first_path = path;
+                    first_path.push(false);
+                    visit.push((second, second_path));
+                    visit.push((first, first_path));
+                }
+                Node::Tabs { panels, .. } => {
+                    for panel in panels {
+                        places.entry(panel.clone()).or_insert_with(|| Place::Node(path.clone()));
+                    }
+                }
+                Node::Stack { entries } => {
+                    for entry in entries {
+                        places.entry(entry.panel.clone()).or_insert_with(|| Place::Node(path.clone()));
+                    }
+                }
+                Node::Dock { columns, .. } => {
+                    for (c, column) in columns.iter().enumerate() {
+                        for (g, group) in column.groups.iter().enumerate() {
+                            for panel in &group.panels {
+                                places.entry(panel.clone()).or_insert_with(|| Place::Dock { path: path.clone(), column: c, group: g });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        places
     }
 
     pub(super) fn dock_path(&self, side: Side) -> Option<Vec<bool>> {

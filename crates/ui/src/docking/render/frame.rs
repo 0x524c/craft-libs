@@ -168,12 +168,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if distance > band {
             return None;
         }
-        let anchor = self
-            .layout
-            .panels()
-            .into_iter()
-            .find(|p| !members.contains(p) && !matches!(self.layout.place(p), Some(Place::Floating { .. }) | None))?
-            .clone();
+        let anchor =
+            self.layout.panels().into_iter().find(|p| !members.contains(p) && !matches!(self.place(p), Some(Place::Floating { .. }) | None))?.clone();
         let size = area.size() * 0.25;
         let preview = match zone {
             Zone::Left => Rect::from_min_size(area.min, vec2(size.x, area.height())),

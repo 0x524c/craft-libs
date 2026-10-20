@@ -1,10 +1,10 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
 use egui::{Context, Id, Rect, Sense, Ui, UiBuilder, Vec2, pos2, vec2};
 
 use crate::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis, SplitSize, split_rect};
 
-use super::{Action, DockContent, DockOutput, DockStyle, DropTarget, Layout, Node, PanelLimits, Permissions};
+use super::{Action, DockContent, DockOutput, DockStyle, DropTarget, Layout, Node, PanelLimits, Permissions, dock_model::Place};
 
 mod dock;
 mod floating;
@@ -20,9 +20,9 @@ pub(in crate::docking) use group::GroupKind;
 pub(in crate::docking) use iconic::Iconic;
 pub use iconic::{close_flyout, flyout, open_flyout};
 
-pub(in crate::docking) use floating::RESIZE_HANDLES;
 #[cfg(test)]
 pub(in crate::docking) use dock::fit_widths;
+pub(in crate::docking) use floating::RESIZE_HANDLES;
 mod group;
 mod preview;
 
@@ -45,9 +45,21 @@ pub(super) struct Renderer<'a, P> {
     pub(super) iconic: Iconic<P>,
     /// What a drag would float from each drawn panel, group and column, for commands.
     pub(super) float_space: crate::docking::FloatSpace<P>,
+    /// Each panel's place in `layout`, and its entry in `float_space.contents`.
+    pub(super) places: HashMap<P, Place>,
+    pub(super) contents: HashMap<P, usize>,
 }
 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
+    pub(super) fn place(&self, panel: &P) -> Option<&Place> {
+        self.places.get(panel)
+    }
+
+    /// The height `panel`'s content last used: `Some(None)` when it filled its body.
+    pub(super) fn content_height(&self, panel: &P) -> Option<Option<f32>> {
+        self.contents.get(panel).and_then(|i| self.float_space.contents.get(*i)).map(|(_, height)| *height)
+    }
+
     pub(super) fn label_of(&self, panel: &P) -> String {
         self.content.logical_label(panel)
     }
@@ -222,7 +234,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             ui.new_child(UiBuilder::new().id(self.id.with(("body", panel))).max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
         child.set_clip_rect(rect.intersect(ui.clip_rect()));
         self.content.body(&mut child, panel);
-        self.float_space.record_content(panel.clone(), child.min_rect().height(), rect.height());
+        let at = self.contents.get(panel).copied();
+        let at = self.float_space.record_content(at, panel.clone(), child.min_rect().height(), rect.height());
+        self.contents.insert(panel.clone(), at);
         // Any button: a canvas pans with the middle button and opens menus with the secondary.
         if child.rect_contains_pointer(rect) && child.input(|i| i.pointer.any_pressed()) {
             self.output.focused = Some(panel.clone());

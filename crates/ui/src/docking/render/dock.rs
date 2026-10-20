@@ -164,10 +164,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if usable(rect) {
             ui.painter().rect_filled(rect, 0.0, self.style.background);
         }
-        let bounds: Vec<(f32, f32)> = columns
-            .iter()
-            .map(|c| if c.iconic { (self.style.iconic_width, self.style.iconic_max_width) } else { self.column_bounds(c) })
-            .collect();
+        let bounds: Vec<(f32, f32)> =
+            columns.iter().map(|c| if c.iconic { (self.style.iconic_width, self.style.iconic_max_width) } else { self.column_bounds(c) }).collect();
         let natural: Vec<(f32, Option<f32>)> =
             columns.iter().zip(&bounds).map(|(c, (lo, _))| (column_width(c, self.style), (!c.iconic).then_some(lo.max(1.0)))).collect();
         let widths = fit_widths(&natural, rect.width());
@@ -531,9 +529,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 }
             }
             Target::At { anchor, placement } => Action::Move { panel: panel.clone(), anchor, placement },
-            to @ Target::NewDock { .. }
-                if self.layout.place(panel).and_then(|place| self.layout.group(&place)).is_some_and(|g| g.panels.len() == 1) =>
-            {
+            to @ Target::NewDock { .. } if self.place(panel).and_then(|place| self.layout.group(place)).is_some_and(|g| g.panels.len() == 1) => {
                 Action::MoveGroup { panel: panel.clone(), to }
             }
             to @ Target::NewDock { .. } => Action::MovePanel { panel: panel.clone(), to },

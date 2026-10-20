@@ -332,7 +332,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             if members.contains(anchor) {
                 continue;
             }
-            let Some(place) = self.layout.place(anchor) else { continue };
+            let Some(place) = self.place(anchor) else { continue };
             if !places.contains(&place) {
                 places.push(place);
                 anchors.push(anchor.clone());

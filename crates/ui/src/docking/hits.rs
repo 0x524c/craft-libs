@@ -79,7 +79,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'_, P> {
     /// return these from a `ui.docking` control method beside the layout and `focused`; tests
     /// drag from their centers.
     pub fn hit_rects(ctx: &Context, id: Id) -> Vec<(Hit<P>, Rect)> {
-        ctx.data(|d| d.get_temp::<Vec<(Hit<P>, Rect)>>(key(id))).unwrap_or_default()
+        let Some((layout, rects)) = ctx.data(|d| d.get_temp::<Recorded<P>>(key(id))) else { return Vec::new() };
+        let mut names = named(id, &layout);
+        rects.into_iter().filter_map(|(id, rect)| Some((names.remove(&id)?, rect))).collect()
     }
 
     /// The egui widget id of the control `hit` names in the area `id`, for tests and
@@ -181,10 +183,13 @@ pub(super) fn named<P: Clone + Eq + Hash + Debug + Send + Sync + 'static>(area: 
     names
 }
 
-/// Name the controls the renderer registered this frame and store their rects.
+/// The layout of the last frame and the rects of the controls it registered, by widget id.
+type Recorded<P> = (Layout<P>, Vec<(Id, Rect)>);
+
+/// Store the rects of the controls the renderer registered this frame. They are named only
+/// when [`DockArea::hit_rects`] asks, which tests and automation do, not every frame.
 pub(super) fn record<P: Clone + Eq + Hash + Debug + Send + Sync + 'static>(ctx: &Context, area: Id, layout: &Layout<P>, owned: &[Id]) {
-    let mut names = named(area, layout);
-    let hits: Vec<(Hit<P>, Rect)> =
-        owned.iter().filter_map(|id| Some((names.remove(id)?, ctx.read_response(*id)?.rect))).filter(|(_, rect)| rect.is_positive()).collect();
-    ctx.data_mut(|d| d.insert_temp(key(area), hits));
+    let rects: Vec<(Id, Rect)> =
+        owned.iter().filter_map(|id| Some((*id, ctx.read_response(*id)?.rect))).filter(|(_, rect)| rect.is_positive()).collect();
+    ctx.data_mut(|d| d.insert_temp::<Recorded<P>>(key(area), (layout.clone(), rects)));
 }

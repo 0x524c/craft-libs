@@ -117,7 +117,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             self.output.actions.extend(action);
             return;
         }
-        let floating = matches!(self.layout.place(&drag.panel), Some(Place::Floating { .. }));
+        let floating = matches!(self.place(&drag.panel), Some(Place::Floating { .. }));
         let proposal = if float_only { None } else { self.group_proposal(drag, pointer) };
         if let Some(proposal) = proposal.as_ref().filter(|p| !p.noop) {
             let to = Target::At { anchor: proposal.anchor.clone(), placement: proposal.placement.clone() };
@@ -288,10 +288,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             return vec2(size.x, self.fitted_height(panel, chrome, size.y).unwrap_or(size.y));
         }
         let mut size = self.iconic.float_width(panel).map_or(source, |width| vec2(width, DOCKED_FLOAT_HEIGHT));
-        if matches!(self.layout.place(panel), Some(Place::Dock { .. } | Place::Node(_))) {
+        if matches!(self.place(panel), Some(Place::Dock { .. } | Place::Node(_))) {
             size.y = match self.fitted_height(panel, chrome, DOCKED_FLOAT_HEIGHT) {
                 Some(height) => height,
-                None if self.float_space.filled(panel) => DOCKED_FLOAT_HEIGHT,
+                None if self.content_height(panel) == Some(None) => DOCKED_FLOAT_HEIGHT,
                 None => size.y.min(DOCKED_FLOAT_HEIGHT),
             };
         }
@@ -304,7 +304,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// content height the panel last drew, at least [`MIN_FITTED_HEIGHT`] and at most `max`.
     /// `None` for a panel the area has not drawn.
     pub(super) fn fitted_height(&self, panel: &P, chrome: f32, max: f32) -> Option<f32> {
-        let content = self.float_space.content(panel)?;
+        let content = self.content_height(panel).flatten()?;
         Some((chrome + content).max(MIN_FITTED_HEIGHT).min(max))
     }
 
@@ -330,7 +330,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// dock column. A group fits that height to its active panel's content. A group that already
     /// floats keeps its size.
     pub(super) fn group_float_size(&self, members: &[P], source: Vec2) -> Vec2 {
-        let Some(place) = members.first().and_then(|panel| self.layout.place(panel)) else { return source };
+        let Some(place) = members.first().and_then(|panel| self.place(panel)) else { return source };
         if matches!(place, Place::Floating { .. }) {
             return source;
         }
@@ -339,7 +339,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let docked = matches!(place, Place::Dock { .. });
         let chrome = self.style.title_height + self.style.tab_height;
         let max = host.or(docked.then_some(DOCKED_FLOAT_HEIGHT));
-        let fitted = max.and_then(|max| self.group_active(members, &place).and_then(|active| self.fitted_height(active, chrome, max)));
+        let fitted = max.and_then(|max| self.group_active(members, place).and_then(|active| self.fitted_height(active, chrome, max)));
         vec2(source.x, fitted.or(host).unwrap_or(if docked { source.y.min(DOCKED_FLOAT_HEIGHT) } else { source.y }))
     }
 
