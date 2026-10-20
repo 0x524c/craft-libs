@@ -264,8 +264,15 @@ impl DialogState {
         }
     }
 
-    /// False after OK or Cancel: drop the state.
+    /// False once the dialog has closed with OK or Cancel and reported its last outcome: drop the
+    /// state then. After a Cancel that undid edits it stays true for the frame that reports
+    /// [`Outcome::Changed`].
     pub fn is_open(&self) -> bool {
+        self.phase != Phase::Closed || self.changed
+    }
+
+    /// Whether the dialog is drawn: not yet closed with OK or Cancel.
+    pub(crate) fn is_showing(&self) -> bool {
         self.phase != Phase::Closed
     }
 
@@ -698,14 +705,20 @@ impl DialogState {
     }
 
     /// Cancel, window ×, or Escape when idle: everything back as it was when the dialog opened.
+    /// When that undoes edits, Changed follows, so the app rebuilds its menus (and saves, if it
+    /// saved the edits live).
     pub(crate) fn cancel(&mut self, env: &mut Env) {
+        let mut undone = false;
         if let Some(opened) = self.opened.take() {
+            undone = *env.keymap.overrides() != opened.overrides;
             env.keymap.set_overrides(opened.overrides);
             if let (Some((p, _)), Some(profiles)) = (env.sets.as_mut(), opened.profiles) {
+                undone |= **p != profiles;
                 **p = profiles;
             }
         }
         self.close(Outcome::Cancel);
+        self.changed = undone;
     }
 
     fn close(&mut self, outcome: Outcome) {
@@ -1167,8 +1180,9 @@ mod tests {
         assert!(matches!(st.finish(), Some(Outcome::Changed)));
         st.escape(&mut fx.env());
         assert!(matches!(st.finish(), Some(Outcome::Cancel)));
-        assert!(!st.is_open());
         assert!(fx.keys("object.front").is_empty(), "Cancel restores the opening keymap");
+        assert!(st.is_open() && matches!(st.finish(), Some(Outcome::Changed)), "Changed follows, for the app's menus");
+        assert!(!st.is_open());
     }
 
     #[test]

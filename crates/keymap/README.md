@@ -306,6 +306,7 @@ if let Some(state) = &mut self.shortcuts {
     let dialog = dialog.sets(&mut self.settings.shortcut_sets, &BUILTINS);
     match dialog.show(ctx, state) {
         Some(Outcome::Ok) => self.save_settings(),
+        // After each edit, and after a Cancel that undid edits.
         Some(Outcome::Changed) => self.rebuild_menus(),
         Some(Outcome::Import { formats }) => self.pick_import_file(formats),
         Some(Outcome::Export { name, json }) => self.save_file(&name, json),
@@ -324,8 +325,8 @@ Outcomes:
 | Outcome | The app |
 |---|---|
 | `Ok` | Saves `Profiles` (with sets) or `keymap.overrides()`. |
-| `Cancel` | Nothing to do: the keymap and the sets are as they were at open. |
-| `Changed` | Updates its menus, or saves at once if it saves live. When a frame also has another outcome, `Changed` comes on the next frame. |
+| `Cancel` | Nothing to save: the keymap and the sets are as they were at open. When Cancel undid edits, `Changed` follows. |
+| `Changed` | Updates its menus, or saves at once if it saves live. It comes after each edit and after a Cancel that undid edits. When a frame also has another outcome, `Changed` comes on the next frame; `is_open()` stays true until it has. |
 | `Import { formats }` | Opens a file of one of the formats, then calls `import_json` (craft-keymap JSON, `ui::JSON_FORMAT`) or reads it into a `ForeignSet` and calls `review_import`. |
 | `Export { name, json }`, `ExportAs { format, name, keymap }` | Writes the set where the user chooses (a download on the web). |
 | `Summary { name, html, text }` | Shows, saves or prints the summary. |

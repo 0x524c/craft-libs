@@ -34,7 +34,8 @@ use state::Env;
 pub enum Outcome {
     /// Closed with OK: save `Profiles` (with sets) or `keymap.overrides()`.
     Ok,
-    /// Closed with Cancel: the keymap and profiles are back as they were when it opened.
+    /// Closed with Cancel: the keymap and profiles are back as they were when it opened. When that
+    /// undid edits, `Changed` follows on the next frame.
     Cancel,
     /// An edit (for live menus and live saving). When a frame also has another outcome, such as
     /// `Import` after the Save changes prompt, `Changed` follows on the next frame.
@@ -203,6 +204,9 @@ impl<'a> ShortcutsDialog<'a> {
     /// screen allows, at most 1320×900). Closing it with × is Cancel.
     pub fn show(self, ctx: &egui::Context, state: &mut DialogState) -> Option<Outcome> {
         self.with_env(|env| {
+            if !state.is_showing() {
+                return state.finish();
+            }
             let title = env.text.visual(&env.text.ui(env.options.title));
             let screen = ctx.content_rect().size();
             let max = egui::vec2(1320.0, 900.0).min(screen - egui::vec2(16.0, 16.0)).max(egui::vec2(240.0, 180.0));
@@ -218,9 +222,12 @@ impl<'a> ShortcutsDialog<'a> {
                 .min_size(min)
                 .max_size(max)
                 .show(ctx, |ui| out = frame(ui, env, state));
-            if !open && state.is_open() {
+            if !open && state.is_showing() {
                 state.cancel(env);
                 out = state.finish();
+            }
+            if state.change_pending() {
+                ctx.request_repaint();
             }
             out
         })
@@ -272,7 +279,7 @@ impl<'a> ShortcutsDialog<'a> {
 fn frame(ui: &mut egui::Ui, env: &mut Env, state: &mut DialogState) -> Option<Outcome> {
     state.begin(env);
     state.input(env, ui.ctx());
-    if state.is_open() {
+    if state.is_showing() {
         view::body(ui, env, state);
     }
     let out = state.finish();

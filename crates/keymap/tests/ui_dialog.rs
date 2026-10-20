@@ -497,6 +497,9 @@ fn window_close_is_cancel() {
     click(&mut h, "Cancel");
     assert!(h.state().canceled());
     assert_eq!(h.state().bindings("file.save"), ["Cmd+S"]);
+    let after: Vec<bool> = h.state().outcomes.iter().skip_while(|o| !matches!(o, Outcome::Cancel)).map(|o| matches!(o, Outcome::Changed)).collect();
+    assert_eq!(after, [false, true], "Changed follows Cancel, which undid an edit");
+    assert!(!h.state().state.is_open());
 }
 
 #[test]
