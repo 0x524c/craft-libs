@@ -59,22 +59,29 @@ See `README.md` for the meaning of each color.
 ### 6.2.3 Output intent
 - krilla always writes the output intent for this export mode. 🟢
 - krilla does not use the `DestOutputProfileRef` attribute. 🟢
-- krilla does not write multiple output intents (since PDF/X and PDF/E are not supported). 🟢
-- krilla only uses a Display ICC profile for output intent. 🟢
-- krilla only uses RGB for output intents. 🟢
+- krilla writes one output intent, or with `SerializeSettings::output_intent` two
+  (`GTS_PDFA1` and `GTS_PDFX`) that name the same destination profile object. 🟢
+- krilla uses the sRGB display profile for the output intent, or the CMYK profile given in
+  `SerializeSettings::output_intent`. 🟢
+- krilla checks only that a profile given in `SerializeSettings::output_intent` has four
+  components; that it is an output (`prtr`) profile is up to the caller. 🟣
 
 ### 6.2.4 Colour spaces
 - krilla only uses device-independent colors in this export mode. 🟢 
 - krilla uses compatible ICC profiles. 🟢
 - krilla fails export if overprint mode 1 is combined with fill or stroke overprint, since
   all CMYK is ICCBased in this mode. 🟢
-- krilla never uses CMYK profiles as the destination profile. 🟢
+- krilla uses a CMYK profile as the destination profile only when
+  `SerializeSettings::output_intent` gives one. 🟢
 - krilla does not use device color spaces in this mode. 🟢
 - krilla ensures the Alternate space in Separation color spaces obeys the restrictions
   in the applicable clauses 🟢
-- krilla does not support DeviceN color spaces. 🔵
+- krilla writes DeviceN color spaces with the CMYK ICC profile as their alternate in this
+  mode. Each spot colorant is also listed under `/Colorants` as a Separation space with the
+  same alternate, and a space mixing spot and process colorants is `/Subtype /NChannel`.
+  The tint transform is a PostScript calculator function, which PDF/A-4 allows. 🟢
 - krilla fails export if a Separation colorant is associated with multiple different
-  fallback color spaces 🟢
+  fallback color spaces, a DeviceN spot colorant's alternate included 🟢
 - krilla manages the `tintTransform` function and will always write the same function for
   the same color space 🟢
 

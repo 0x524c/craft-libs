@@ -77,12 +77,12 @@
     {
       "path": "src/configure/PDF_A1.md",
       "upstream_sha256": "e6ea127125ec0984f3fcd57f9886fc960aa90c9f751dd59cd61fe9cbc2cdb903",
-      "sha256": "e6ea127125ec0984f3fcd57f9886fc960aa90c9f751dd59cd61fe9cbc2cdb903"
+      "sha256": "422807bc786591d1b1599d7abb38874478fb34afab583f885011f200d239fa27"
     },
     {
       "path": "src/configure/PDF_A2.md",
       "upstream_sha256": "47c87d3b29aff6e87703ba6f6021a2cfa88b4faf7f2c35101719b8b9f1bb9705",
-      "sha256": "6239a0bc643c59f19c13f09def57e8c84c6bf761698b383bb6a5b4c17350c119"
+      "sha256": "cc6cc2184d21165fc36fbd635681a8c0c8d3abb76f0f7e5adbb7131fb3921f37"
     },
     {
       "path": "src/configure/PDF_A3.md",
@@ -92,7 +92,7 @@
     {
       "path": "src/configure/PDF_A4.md",
       "upstream_sha256": "27710cf95e6ef83714cfa372e09796c9ec0d5455ceb31c101a7dccfdd8ee1b5b",
-      "sha256": "2e071f227cd052cef21484923b5a52ae5ce4c0a0709a22fde117de5ab9100141"
+      "sha256": "f3a6ed247033124a8ad583e665e532e736841f2997974425688ced2c156fc6c6"
     },
     {
       "path": "src/configure/PDF_UA1.md",

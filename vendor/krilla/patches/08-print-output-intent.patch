@@ -31,6 +31,90 @@ index 0530dd2..593302b 100644
  
          xmp.num_pages(sc.page_infos().len() as u32);
          xmp.format("application/pdf");
+diff --git a/src/configure/PDF_A1.md b/src/configure/PDF_A1.md
+index c525953..2df1775 100644
+--- a/src/configure/PDF_A1.md
++++ b/src/configure/PDF_A1.md
+@@ -64,7 +64,10 @@ with an even number of characters and without whitespaces. 🟢
+ 
+ 6.2.2:
+ - krilla always writes a valid output intent. 🟢
+-- krilla always only writes one output intent. 🟢
++- krilla writes one output intent, or with `SerializeSettings::output_intent` two
++  (`GTS_PDFA1` and `GTS_PDFX`) that name the same destination profile object. 🟢
++- krilla checks only that a profile given in `SerializeSettings::output_intent` has four
++  components; that it is an output (`prtr`) profile is up to the caller. 🟣
+ 
+ 6.2.3.1: krilla overrides the `no_device_cs` property if PDF/A is selected, and
+ in case CMYK is used but no profile was provided, export fails. 🟢
+@@ -73,7 +76,8 @@ in case CMYK is used but no profile was provided, export fails. 🟢
+ - sRGB/sGrey ICC profiles conform to ICC v2 specification. 🟢
+ 
+ 6.2.4.3: 
+-- krilla always uses sRGB for RGB, and in addition also embeds an sRGB output intent. 🟢
++- krilla always uses sRGB for RGB, with an sRGB output intent unless
++  `SerializeSettings::output_intent` gives a CMYK one. 🟢
+ - krilla always uses sGrey (except for encoding the alpha channel in images, where DeviceGray
+   is required), and in addition always embeds an output intent. 🟢
+ - krilla always uses an CMYK ICC profile, and always sets CMYK as the output intent. 🟢
+diff --git a/src/configure/PDF_A2.md b/src/configure/PDF_A2.md
+index 9ff3593..5e208d7 100644
+--- a/src/configure/PDF_A2.md
++++ b/src/configure/PDF_A2.md
+@@ -60,7 +60,13 @@ user enables `ascii_compatible`, we still write a binary header marker. 🟢
+ - krilla doesn't use the `ri` or `i` operator. 🟢
+ - krilla ensure that content stream has their own associated resource dictionary. 🟢
+ 
+-6.2.3: krilla always write an `sRGB` output intent for PDF/A. 🟢
++6.2.3:
++- krilla writes an `sRGB` output intent for PDF/A, or the CMYK profile given in
++  `SerializeSettings::output_intent`. 🟢
++- krilla writes one output intent, or with `SerializeSettings::output_intent` two
++  (`GTS_PDFA1` and `GTS_PDFX`) that name the same destination profile object. 🟢
++- krilla checks only that a profile given in `SerializeSettings::output_intent` has four
++  components; that it is an output (`prtr`) profile is up to the caller. 🟣
+ 
+ 6.2.4.1: krilla overrides the `no_device_cs` property if PDF/A is selected, and
+ in case CMYK is used but no profile was provided, export fails.
+@@ -71,7 +77,8 @@ in case CMYK is used but no profile was provided, export fails.
+   all CMYK is ICCBased in this mode. 🟢
+ 
+ 6.2.4.3: 
+-- krilla always uses sRGB for RGB, and in addition also embeds an sRGB output intent. 🟢
++- krilla always uses sRGB for RGB, with an sRGB output intent unless
++  `SerializeSettings::output_intent` gives a CMYK one. 🟢
+ - krilla always uses sGrey (except for encoding the alpha channel in images, where DeviceGray
+   is required), and in addition always embeds an output intent. 🟢
+ - krilla always uses an CMYK ICC profile, and always sets CMYK as the output intent. 🟢
+diff --git a/src/configure/PDF_A4.md b/src/configure/PDF_A4.md
+index 7cd5df3..aac8008 100644
+--- a/src/configure/PDF_A4.md
++++ b/src/configure/PDF_A4.md
+@@ -59,16 +59,20 @@ See `README.md` for the meaning of each color.
+ ### 6.2.3 Output intent
+ - krilla always writes the output intent for this export mode. 🟢
+ - krilla does not use the `DestOutputProfileRef` attribute. 🟢
+-- krilla does not write multiple output intents (since PDF/X and PDF/E are not supported). 🟢
+-- krilla only uses a Display ICC profile for output intent. 🟢
+-- krilla only uses RGB for output intents. 🟢
++- krilla writes one output intent, or with `SerializeSettings::output_intent` two
++  (`GTS_PDFA1` and `GTS_PDFX`) that name the same destination profile object. 🟢
++- krilla uses the sRGB display profile for the output intent, or the CMYK profile given in
++  `SerializeSettings::output_intent`. 🟢
++- krilla checks only that a profile given in `SerializeSettings::output_intent` has four
++  components; that it is an output (`prtr`) profile is up to the caller. 🟣
+ 
+ ### 6.2.4 Colour spaces
+ - krilla only uses device-independent colors in this export mode. 🟢 
+ - krilla uses compatible ICC profiles. 🟢
+ - krilla fails export if overprint mode 1 is combined with fill or stroke overprint, since
+   all CMYK is ICCBased in this mode. 🟢
+-- krilla never uses CMYK profiles as the destination profile. 🟢
++- krilla uses a CMYK profile as the destination profile only when
++  `SerializeSettings::output_intent` gives one. 🟢
+ - krilla does not use device color spaces in this mode. 🟢
+ - krilla ensures the Alternate space in Separation color spaces obeys the restrictions
+   in the applicable clauses 🟢
 diff --git a/src/interchange/metadata.rs b/src/interchange/metadata.rs
 index 18dde72..4cfc8e5 100644
 --- a/src/interchange/metadata.rs

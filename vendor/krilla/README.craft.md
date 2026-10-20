@@ -15,9 +15,9 @@ itself omits those texts. Its examples and four CC0 ICC profiles are retained wi
 | `patches/03-overprint.patch` | Overprint | `configure/{PDF_A2.md,PDF_A4.md,validate.rs}`, `content.rs`, `graphics/{blend,graphics_state}.rs`, `surface.rs` |
 | `patches/04-knockout.patch` | Knockout groups | `content.rs`, `graphics/{blend,xobject}.rs`, `surface.rs` |
 | `patches/05-soft-mask-backdrop.patch` | Soft-mask backdrop and transfer function | `configure/{PDF_A2,PDF_A4}.md`, `graphics/mask.rs` |
-| `patches/06-device-n.patch` | DeviceN colors | `configure/validate.rs`, `graphics/{color,device_n,mod,paint}.rs`, `serialize.rs` |
+| `patches/06-device-n.patch` | DeviceN colors | `configure/{PDF_A1.md,PDF_A2.md,PDF_A4.md,validate.rs}`, `graphics/{color,device_n,mod,paint}.rs`, `serialize.rs` |
 | `patches/07-device-n-images-shadings.patch` | DeviceN images and shadings | `graphics/{image,paint,shading_function}.rs` |
-| `patches/08-print-output-intent.patch` | Print output intent and PDF/X markers | `chunk_container.rs`, `interchange/metadata.rs`, `lib.rs`, `serialize.rs` |
+| `patches/08-print-output-intent.patch` | Print output intent and PDF/X markers | `chunk_container.rs`, `configure/{PDF_A1,PDF_A2,PDF_A4}.md`, `interchange/metadata.rs`, `lib.rs`, `serialize.rs` |
 | `patches/09-rendition-class.patch` | Master rendition in XMP | `chunk_container.rs` |
 | `patches/10-mesh-gradients.patch` | Mesh gradients | `content.rs`, `error.rs`, `graphics/{mask,paint,shading_function}.rs`, `serialize.rs`, `surface.rs` |
 
@@ -176,7 +176,8 @@ written as CMYK, which knocks out or replaces the other plates.
 - Validation: a spot's CMYK alternate counts as its Separation fallback, so one colorant
   name keeps one alternate across Separation and DeviceN spaces
   (`ValidationError::InconsistentSeparationFallback`). `/All` and `/None` are Separation-only
-  and checked as before.
+  and checked as before. The PDF/A ledgers state that DeviceN fails export under PDF/A-1, -2
+  and -3 and is written under PDF/A-4.
 - `Color::to_regular` (annotations, tags) gives the alternate CMYK; `Paint::as_rgb` gives
   `None`, as for CMYK.
 
@@ -233,6 +234,8 @@ version. DesignCraft and VectorCraft added these by rewriting the serialized byt
 - The dictionary entries follow the dictionary's PDF 2.0 deprecation: from PDF 2.0 only XMP
   carries them. The dictionary is written without `Metadata` when it has print markers.
 - All three default to `None`, which keeps upstream's output.
+- The PDF/A ledgers state the two output intents and the CMYK destination profile; krilla
+  checks only that the profile has four components.
 
 krilla does not check PDF/X conformance; callers do. `CRAFT_PRINT_COLOR` marks the fork's
 print color patches (02 to 08) so craft-pdf fails to build against an unpatched Krilla.

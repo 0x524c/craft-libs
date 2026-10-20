@@ -1,3 +1,60 @@
+diff --git a/src/configure/PDF_A1.md b/src/configure/PDF_A1.md
+index 2ade327..c525953 100644
+--- a/src/configure/PDF_A1.md
++++ b/src/configure/PDF_A1.md
+@@ -54,7 +54,8 @@ with an even number of characters and without whitespaces. 🟢
+ - krilla does check the maximum entries of a dictionary. 🟢
+ - krilla fails export if more than 8388607 indirect objects exist. 🟢
+ - krilla fails export if a higher nesting-level than 28 exists. 🔵
+-- krilla does not use the DeviceN color space. 🟢
++- krilla fails export if a DeviceN color space is used (see 6.2.3.4), so the limit of 8
++  DeviceN colorants is never reached. 🟢
+ - krilla only uses u16 for CIDs. 🟢
+ 
+ 6.1.13: krilla does not support optional content. 🔵
+@@ -81,7 +82,8 @@ in case CMYK is used but no profile was provided, export fails. 🟢
+ 6.2.3.4:
+ - krilla ensures the Alternate space in Separation color spaces obeys the restrictions
+   in the applicable clauses 🟢
+-- krilla does not support DeviceN color spaces. 🔵
++- krilla fails export if a DeviceN color space is used: its tint transform is a PostScript
++  calculator function (`ValidationError::ContainsPostScript`). 🟢
+ 
+ 6.2.4: 
+ - krilla does not use the `Alternates`/`Intent` keys for images. 🔵
+diff --git a/src/configure/PDF_A2.md b/src/configure/PDF_A2.md
+index 6157896..9ff3593 100644
+--- a/src/configure/PDF_A2.md
++++ b/src/configure/PDF_A2.md
+@@ -80,7 +80,8 @@ in case CMYK is used but no profile was provided, export fails.
+ 6.2.4.4:
+ - krilla ensures the Alternate space in Separation color spaces obeys the restrictions
+   in the applicable clauses 🟢
+-- krilla does not support DeviceN color spaces. 🔵
++- krilla fails export if a DeviceN color space is used: its tint transform is a PostScript
++  calculator function (`ValidationError::ContainsPostScript`). 🟢
+ - krilla fails export if a Separation colorant is associated with multiple different
+   fallback color spaces 🟢
+ - krilla manages the `tintTransform` function and will always write the same function for
+diff --git a/src/configure/PDF_A4.md b/src/configure/PDF_A4.md
+index 91727cb..7cd5df3 100644
+--- a/src/configure/PDF_A4.md
++++ b/src/configure/PDF_A4.md
+@@ -72,9 +72,12 @@ See `README.md` for the meaning of each color.
+ - krilla does not use device color spaces in this mode. 🟢
+ - krilla ensures the Alternate space in Separation color spaces obeys the restrictions
+   in the applicable clauses 🟢
+-- krilla does not support DeviceN color spaces. 🔵
++- krilla writes DeviceN color spaces with the CMYK ICC profile as their alternate in this
++  mode. Each spot colorant is also listed under `/Colorants` as a Separation space with the
++  same alternate, and a space mixing spot and process colorants is `/Subtype /NChannel`.
++  The tint transform is a PostScript calculator function, which PDF/A-4 allows. 🟢
+ - krilla fails export if a Separation colorant is associated with multiple different
+-  fallback color spaces 🟢
++  fallback color spaces, a DeviceN spot colorant's alternate included 🟢
+ - krilla manages the `tintTransform` function and will always write the same function for
+   the same color space 🟢
+ 
 diff --git a/src/configure/validate.rs b/src/configure/validate.rs
 index 175a011..a0b1136 100644
 --- a/src/configure/validate.rs
