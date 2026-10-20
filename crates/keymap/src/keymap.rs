@@ -1,4 +1,4 @@
-//! A command catalogue with default bindings, the user's overrides, dispatch and conflicts.
+//! A command catalog with default bindings, the user's overrides, dispatch and conflicts.
 
 pub(crate) mod overrides;
 
@@ -14,7 +14,7 @@ use crate::scope::{Active, Scope, ScopeKind, Scopes};
 pub use overrides::Overrides;
 pub use overrides::list as overrides_list;
 
-/// Most commands a catalogue or an [`Overrides`] holds.
+/// Most commands a catalog or an [`Overrides`] holds.
 pub const MAX_COMMANDS: usize = 4096;
 /// Most bindings per command.
 pub const MAX_BINDINGS: usize = 16;
@@ -226,7 +226,7 @@ impl TypingRule {
 pub enum Lookup {
     None,
     Run(CommandRef),
-    /// Tools of one group share the chord: the app picks the next one (catalogue order).
+    /// Tools of one group share the chord: the app picks the next one (catalog order).
     Cycle(Vec<CommandRef>),
 }
 
@@ -272,7 +272,7 @@ pub enum AssignError {
     TooMany,
     /// Other commands hold the chord ([`Policy::Refuse`]).
     Taken(Vec<Holder>),
-    /// A scope that is neither registered in [`Scopes`] nor used by the catalogue.
+    /// A scope that is neither registered in [`Scopes`] nor used by the catalog.
     UnknownScope(Scope),
     /// The change needs a new [`Overrides`] entry and it already holds [`MAX_COMMANDS`].
     Full,
@@ -311,13 +311,13 @@ pub enum DropReason {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Problem {
-    /// No command in the catalogue has this key; the entry is kept.
+    /// No command in the catalog has this key; the entry is kept.
     UnknownCommand { key: String },
     /// A text that does not parse; the entry keeps it.
     BadBinding { key: String, text: String, error: BindingError },
     /// A reserved chord; not bound.
     Reserved { key: String, text: String },
-    /// A scope that is neither registered in [`Scopes`] nor used by the catalogue; not bound.
+    /// A scope that is neither registered in [`Scopes`] nor used by the catalog; not bound.
     UnknownScope { key: String, text: String },
     /// Another entry names the same command; this one is ignored.
     DuplicateKey { key: String },
@@ -366,10 +366,10 @@ struct Group<'a> {
 /// one's command and binding.
 type Pair<'a> = (usize, usize, bool, (usize, &'a Bound), (usize, &'a Bound));
 
-/// The catalogue, the scope registry, the platform and the user's overrides.
+/// The catalog, the scope registry, the platform and the user's overrides.
 #[derive(Clone, Debug)]
 pub struct Keymap {
-    catalogue: Vec<Bindable>,
+    catalog: Vec<Bindable>,
     keys: Vec<String>,
     index: HashMap<String, usize>,
     defaults: Vec<Vec<Bound>>,
@@ -381,8 +381,8 @@ pub struct Keymap {
     /// Whether the overrides hold a hand-written variant of a command's key
     /// (`window.panel { "panel": "layers" }`); only loading adds them.
     variants: bool,
-    /// Home and default scopes of the catalogue.
-    catalogue_scopes: HashSet<Scope>,
+    /// Home and default scopes of the catalog.
+    catalog_scopes: HashSet<Scope>,
     scopes: Scopes,
     platform: Platform,
     typing: TypingRule,
@@ -393,9 +393,9 @@ pub struct Keymap {
 impl Keymap {
     /// A keymap with default bindings. Entries past [`MAX_COMMANDS`], with a key over
     /// [`MAX_KEY`] bytes, or repeating an earlier key are left out.
-    pub fn new(catalogue: Vec<Bindable>, scopes: Scopes, platform: Platform) -> Keymap {
+    pub fn new(catalog: Vec<Bindable>, scopes: Scopes, platform: Platform) -> Keymap {
         let mut km = Keymap {
-            catalogue: Vec::new(),
+            catalog: Vec::new(),
             keys: Vec::new(),
             index: HashMap::new(),
             defaults: Vec::new(),
@@ -403,27 +403,27 @@ impl Keymap {
             by_trigger: HashMap::new(),
             stored: Vec::new(),
             variants: false,
-            catalogue_scopes: HashSet::new(),
+            catalog_scopes: HashSet::new(),
             scopes,
             platform,
             typing: TypingRule::default(),
             reserved: Vec::new(),
             overrides: Overrides::new(),
         };
-        for b in catalogue {
+        for b in catalog {
             let key = b.command.key();
-            if km.catalogue.len() >= MAX_COMMANDS || key.len() > MAX_KEY || km.index.contains_key(&key) {
+            if km.catalog.len() >= MAX_COMMANDS || key.len() > MAX_KEY || km.index.contains_key(&key) {
                 continue;
             }
             let defaults = km.normalize(b.defaults.iter().cloned(), &b.scope);
-            km.catalogue_scopes.insert(b.scope.clone());
-            km.catalogue_scopes.extend(defaults.iter().map(|(_, s)| s.clone()));
-            km.index.insert(key.clone(), km.catalogue.len());
+            km.catalog_scopes.insert(b.scope.clone());
+            km.catalog_scopes.extend(defaults.iter().map(|(_, s)| s.clone()));
+            km.index.insert(key.clone(), km.catalog.len());
             km.keys.push(key);
             km.current.push(defaults.clone());
             km.defaults.push(defaults);
             km.stored.push(None);
-            km.catalogue.push(b);
+            km.catalog.push(b);
         }
         km.rebuild_index();
         km
@@ -468,12 +468,12 @@ impl Keymap {
         self.typing
     }
 
-    pub fn catalogue(&self) -> &[Bindable] {
-        &self.catalogue
+    pub fn catalog(&self) -> &[Bindable] {
+        &self.catalog
     }
 
     pub fn bindable(&self, command: &CommandRef) -> Option<&Bindable> {
-        self.find(command).map(|i| &self.catalogue[i])
+        self.find(command).map(|i| &self.catalog[i])
     }
 
     /// The effective bindings of a command; empty for an unknown one.
@@ -492,9 +492,9 @@ impl Keymap {
     }
 
     /// Whether bindings may use `scope`: the application, a scope registered in [`Scopes`], or a
-    /// home or default scope of the catalogue.
+    /// home or default scope of the catalog.
     pub fn knows_scope(&self, scope: &Scope) -> bool {
-        scope.is_app() || self.scopes.knows(scope) || self.catalogue_scopes.contains(scope)
+        scope.is_app() || self.scopes.knows(scope) || self.catalog_scopes.contains(scope)
     }
 
     /// The command `chord` (pressed twice when `double`) runs with `active` focus.
@@ -502,7 +502,7 @@ impl Keymap {
         let want = Trigger { chord: chord.effective(self.platform), double };
         let held = active.typing && !self.typing.fires(&want.chord);
         let Some(holders) = self.by_trigger.get(&want) else { return Lookup::None };
-        // Each command's nearest rank; `holders` is in catalogue order.
+        // Each command's nearest rank; `holders` is in catalog order.
         let mut ranks: Vec<(usize, u8)> = Vec::new();
         for &(i, k) in holders {
             let Some(r) = self.at(i, k).and_then(|(_, s)| self.scopes.rank(s, active)) else { continue };
@@ -519,12 +519,12 @@ impl Keymap {
         let winners: Vec<usize> = ranks.iter().filter(|(_, r)| *r == best).map(|(i, _)| *i).collect();
         match winners.as_slice() {
             [] => Lookup::None,
-            [i] => Lookup::Run(self.catalogue[*i].command.clone()),
+            [i] => Lookup::Run(self.catalog[*i].command.clone()),
             [first, rest @ ..] => {
                 if rest.iter().all(|j| self.same_group(*first, *j)) {
-                    Lookup::Cycle(winners.iter().map(|i| self.catalogue[*i].command.clone()).collect())
+                    Lookup::Cycle(winners.iter().map(|i| self.catalog[*i].command.clone()).collect())
                 } else {
-                    Lookup::Run(self.catalogue[*first].command.clone())
+                    Lookup::Run(self.catalog[*first].command.clone())
                 }
             }
         }
@@ -548,7 +548,7 @@ impl Keymap {
         if bindings.len() > MAX_BINDINGS {
             return Err(AssignError::TooMany);
         }
-        let home = self.catalogue[i].scope.clone();
+        let home = self.catalog[i].scope.clone();
         let list = self.normalize(bindings, &home);
         let new: Vec<Bound> = list.iter().filter(|b| !self.current[i].iter().any(|c| self.same(c, b))).cloned().collect();
         self.apply(i, list, &new, policy)
@@ -588,14 +588,14 @@ impl Keymap {
     }
 
     /// Pairs of commands on one chord, at most [`MAX_CONFLICTS`], in chord order, then in
-    /// catalogue order. Tools of one group and bindings of panels that are never active together
+    /// catalog order. Tools of one group and bindings of panels that are never active together
     /// are left out; with panel fallthrough two unrelated panels on one chord tie in a third panel,
     /// which is reported as a [`ConflictKind::Shadow`].
     ///
     /// When the cap cuts a chord's pairs, the pairs kept are the first found comparing the
     /// chord's holders grouped by scope and tool group, group by group in the order each group
-    /// first appears in the catalogue; the kept pairs are still returned in chord order, then
-    /// catalogue order.
+    /// first appears in the catalog; the kept pairs are still returned in chord order, then
+    /// catalog order.
     pub fn conflicts(&self) -> Vec<Conflict> {
         let mut chords: Vec<(&Trigger, &BTreeSet<(usize, usize)>)> = self.by_trigger.iter().filter(|(_, h)| h.len() > 1).collect();
         chords.sort_by_key(|(t, _)| **t);
@@ -609,7 +609,7 @@ impl Keymap {
     }
 
     /// The conflicts [`Keymap::conflicts`] reports for one command's bindings, with that command
-    /// as `a`, in the order of its bindings, then catalogue order. Empty for an unknown command.
+    /// as `a`, in the order of its bindings, then catalog order. Empty for an unknown command.
     pub fn conflicts_with(&self, command: &CommandRef) -> Vec<Conflict> {
         let Some(i) = self.find(command) else { return Vec::new() };
         let mut out = Vec::new();
@@ -624,8 +624,8 @@ impl Keymap {
                 let Some(clash) = self.conflict_relation(&a.1, &b.1) else { continue };
                 out.push(Conflict {
                     chord,
-                    a: (self.catalogue[i].command.clone(), self.public(i, a)),
-                    b: (self.catalogue[j].command.clone(), self.public(j, b)),
+                    a: (self.catalog[i].command.clone(), self.public(i, a)),
+                    b: (self.catalog[j].command.clone(), self.public(j, b)),
                     kind: if clash { ConflictKind::Clash } else { ConflictKind::Shadow },
                     in_defaults: self.defaults[i].contains(a) && self.defaults[j].contains(b),
                 });
@@ -647,7 +647,7 @@ impl Keymap {
                 out.push(Problem::DuplicateKey { key: key.to_string() });
                 continue;
             }
-            let home = &self.catalogue[i].scope;
+            let home = &self.catalog[i].scope;
             for text in texts {
                 let (key, text) = (key.to_string(), text.clone());
                 match Binding::parse(&text) {
@@ -666,7 +666,7 @@ impl Keymap {
     pub(crate) fn clashing(&self, command: &CommandRef, bindings: &[Binding]) -> Vec<Holder> {
         let Some(i) = self.find(command) else { return Vec::new() };
         let new: Vec<Bound> = bindings.iter().map(|b| self.bound(i, b)).collect();
-        self.clashes(i, &new).into_iter().map(|(j, b)| Holder { command: self.catalogue[j].command.clone(), binding: self.public(j, &b) }).collect()
+        self.clashes(i, &new).into_iter().map(|(j, b)| Holder { command: self.catalog[j].command.clone(), binding: self.public(j, &b) }).collect()
     }
 
     /// Whether binding `x` of command `a` and binding `y` of another command `b` clash, by the
@@ -694,11 +694,11 @@ impl Keymap {
     }
 
     fn bound(&self, i: usize, binding: &Binding) -> Bound {
-        (binding.trigger, binding.scope_or(&self.catalogue[i].scope).clone())
+        (binding.trigger, binding.scope_or(&self.catalog[i].scope).clone())
     }
 
     fn public(&self, i: usize, (trigger, scope): &Bound) -> Binding {
-        let scope = (*scope != self.catalogue[i].scope).then(|| scope.clone());
+        let scope = (*scope != self.catalog[i].scope).then(|| scope.clone());
         Binding { trigger: *trigger, scope }
     }
 
@@ -724,7 +724,7 @@ impl Keymap {
     }
 
     fn same_group(&self, i: usize, j: usize) -> bool {
-        match (&self.catalogue[i].kind, &self.catalogue[j].kind) {
+        match (&self.catalog[i].kind, &self.catalog[j].kind) {
             (Kind::Tool { group: a }, Kind::Tool { group: b }) => a == b,
             _ => false,
         }
@@ -774,7 +774,7 @@ impl Keymap {
         let mut group_of: HashMap<(&Scope, Option<&Option<String>>), usize> = HashMap::new();
         for (pos, &(i, k)) in holders.iter().enumerate() {
             let Some(b) = self.at(i, k) else { continue };
-            let tools = match &self.catalogue[i].kind {
+            let tools = match &self.catalog[i].kind {
                 Kind::Tool { group } => Some(group),
                 _ => None,
             };
@@ -814,8 +814,8 @@ impl Keymap {
         for (_, _, clash, (i, a), (j, b)) in found {
             out.push(Conflict {
                 chord,
-                a: (self.catalogue[i].command.clone(), self.public(i, a)),
-                b: (self.catalogue[j].command.clone(), self.public(j, b)),
+                a: (self.catalog[i].command.clone(), self.public(i, a)),
+                b: (self.catalog[j].command.clone(), self.public(j, b)),
                 kind: if clash { ConflictKind::Clash } else { ConflictKind::Shadow },
                 in_defaults: self.defaults[i].contains(a) && self.defaults[j].contains(b),
             });
@@ -830,13 +830,13 @@ impl Keymap {
         if let Some((t, _)) = new.iter().find(|(t, _)| self.is_reserved(&t.chord)) {
             return Err(AssignError::Reserved(*t));
         }
-        let home = &self.catalogue[i].scope;
+        let home = &self.catalog[i].scope;
         if let Some((_, s)) = new.iter().find(|(_, s)| !self.usable_scope(s, home)) {
             return Err(AssignError::UnknownScope(s.clone()));
         }
         let clashes = self.clashes(i, new);
         let holders: Vec<Holder> =
-            clashes.iter().map(|(j, b)| Holder { command: self.catalogue[*j].command.clone(), binding: self.public(*j, b) }).collect();
+            clashes.iter().map(|(j, b)| Holder { command: self.catalog[*j].command.clone(), binding: self.public(*j, b) }).collect();
         let mut done = Assigned::default();
         let mut writes: Vec<(usize, Vec<Bound>)> = Vec::new();
         match policy {
@@ -890,7 +890,7 @@ impl Keymap {
         kept.truncate(MAX_BINDINGS.saturating_sub(list.len()));
         self.remove_entries(i);
         if !kept.is_empty() || !self.is_default(i, &list) {
-            let home = &self.catalogue[i].scope;
+            let home = &self.catalog[i].scope;
             let mut texts: Vec<String> = list.iter().map(|b| self.public(i, b).text(home)).collect();
             texts.extend(kept);
             if self.overrides.insert(self.keys[i].clone(), texts) {
@@ -930,7 +930,7 @@ impl Keymap {
     /// version, a scope this app lacks, a chord this platform reserves.
     fn unusable_texts(&self, i: usize) -> Vec<String> {
         let Some(texts) = self.stored[i].as_deref().and_then(|key| self.overrides.get(key)) else { return Vec::new() };
-        let home = &self.catalogue[i].scope;
+        let home = &self.catalog[i].scope;
         texts.iter().filter(|t| !Binding::parse(t).is_ok_and(|b| self.usable(&b, home))).cloned().collect()
     }
 
@@ -985,7 +985,7 @@ impl Keymap {
             if !taken.insert(i) {
                 continue;
             }
-            let home = &self.catalogue[i].scope;
+            let home = &self.catalog[i].scope;
             let usable = texts.iter().filter_map(|t| Binding::parse(t).ok()).filter(|b| self.usable(b, home));
             let list = self.normalize(usable, home);
             // An entry none of whose texts is usable here (a key name from a newer version, a scope

@@ -5,7 +5,7 @@
 //! [`chord`] holds the key and modifier types, the canonical text form that settings and control
 //! protocols store, display text per platform, and a reader for other applications' key text.
 //! [`command`] names what a binding runs, [`scope`] where it works, and [`keymap`] holds an app's
-//! catalogue with default bindings, the user's [`Overrides`], dispatch ([`Keymap::lookup`]),
+//! catalog with default bindings, the user's [`Overrides`], dispatch ([`Keymap::lookup`]),
 //! editing and conflicts. [`profiles`] keeps named sets of overrides; [`reserved`] lists the
 //! chords each operating system takes, and a keymap reserves no chord unless the app opts in with
 //! [`Keymap::with_reserved`], e.g. `with_reserved(reserved::system(platform))`. [`import`] brings
@@ -23,7 +23,7 @@
 //! assert_eq!(chord.display(Platform::Windows), "Ctrl+Shift+Z");
 //! ```
 //!
-//! # A catalogue and dispatch
+//! # A catalog and dispatch
 //!
 //! The app lists every command it can bind. A command with parameters has the key
 //! `window.panel {"panel":"layers"}` in settings and reports. Tools of one group share a key and
@@ -36,7 +36,7 @@
 //! let key = |text: &str| Binding::parse(text).unwrap();
 //! let layers = CommandRef::with_params("window.panel", json!({"panel": "layers"}));
 //! let select = Kind::Tool { group: Some("select".into()) };
-//! let catalogue = vec![
+//! let catalog = vec![
 //!     Bindable::new("file.save", "Save", Scope::app()).with_path(vec!["File".into(), "Save".into()]).with_default(key("Cmd+S")),
 //!     Bindable::new(layers.clone(), "Layers", Scope::app()).with_path(vec!["Window".into(), "Layers".into()]).with_default(key("F7")),
 //!     Bindable::new("tool.marquee", "Marquee Tool", Scope::app()).with_kind(select.clone()).with_default(key("M")),
@@ -47,7 +47,7 @@
 //!     // An app command whose binding works only in the Text context.
 //!     Bindable::new("type.bold", "Bold", Scope::app()).with_default(key("Text: Cmd+B")),
 //! ];
-//! let keymap = Keymap::new(catalogue, Scopes::new().with_panel("Timeline").with_context("Text"), Platform::Mac);
+//! let keymap = Keymap::new(catalog, Scopes::new().with_panel("Timeline").with_context("Text"), Platform::Mac);
 //! assert_eq!(layers.key(), r#"window.panel {"panel":"layers"}"#);
 //!
 //! // Dispatch: the chord pressed, whether it is a double press, and what has the keyboard.
@@ -89,9 +89,9 @@
 //!     const SCHEMA_VERSION: u32 = 1;
 //! }
 //!
-//! # let catalogue = Vec::new();
+//! # let catalog = Vec::new();
 //! let (mut store, _report) = SettingsStore::<Prefs>::open(Location::Auto);
-//! let mut keymap = Keymap::new(catalogue, Scopes::new(), Platform::current()).with_overrides(store.get().shortcuts.clone());
+//! let mut keymap = Keymap::new(catalog, Scopes::new(), Platform::current()).with_overrides(store.get().shortcuts.clone());
 //! // Entries for unknown commands and texts that do not parse are kept and listed here.
 //! let _problems = keymap.problems();
 //!

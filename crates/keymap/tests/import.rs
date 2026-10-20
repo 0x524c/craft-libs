@@ -34,7 +34,7 @@ fn panel(name: &str) -> CommandRef {
     CommandRef::with_params("window.panel", json!({ "panel": name }))
 }
 
-fn catalogue() -> Vec<Bindable> {
+fn catalog() -> Vec<Bindable> {
     vec![
         command("file.new", "Document…", &["File", "New", "Document…"], &["Cmd+N"]),
         command("dialog.newDocument", "New Document Dialog", &[], &["Cmd+N"]),
@@ -65,7 +65,7 @@ fn catalogue() -> Vec<Bindable> {
 }
 
 fn keymap(platform: Platform) -> Keymap {
-    Keymap::new(catalogue(), Scopes::new().with_context("Text"), platform).with_reserved(reserved::system(platform))
+    Keymap::new(catalog(), Scopes::new().with_context("Text"), platform).with_reserved(reserved::system(platform))
 }
 
 fn key(flavor: Flavor, context: &str, text: &str) -> ForeignKey {
@@ -139,7 +139,7 @@ fn has(km: &Keymap, id: impl Into<CommandRef>, texts: &[&str]) {
 }
 
 #[test]
-fn labels_normalise_for_matching() {
+fn labels_normalize_for_matching() {
     assert_eq!(normalize_label("Check Spelling..."), "check spelling");
     assert_eq!(normalize_label("Check  Spelling…"), "check spelling");
     assert_eq!(normalize_label("Grids && Guides"), "grids guides");
@@ -152,7 +152,7 @@ fn labels_normalise_for_matching() {
 fn every_match_step_finds_its_command() {
     let (km, r) = import_windows();
     assert_eq!(r.set.as_deref(), Some("My Set"));
-    // 1: full path, with `&`, case and spacing normalised, and Show/Hide dropped for a toggle.
+    // 1: full path, with `&`, case and spacing normalized, and Show/Hide dropped for a toggle.
     has(&km, "view.guides", &["Cmd+Alt+;"]);
     // 2: joined segments `Text Frame Options` in Object.
     has(&km, "object.textFrameOptions", &["Cmd+Alt+B"]);
@@ -463,12 +463,12 @@ fn hostile_sets_are_capped_and_counted() {
 #[test]
 #[ignore = "worst-case timing; run with --ignored"]
 fn hostile_sets_finish_in_time() {
-    // A full catalogue whose labels share words with every unmatched entry below, so each
+    // A full catalog whose labels share words with every unmatched entry below, so each
     // suggestion scores every command.
-    let mut catalogue = catalogue();
-    let filler = MAX_COMMANDS - catalogue.len();
-    catalogue.extend((0..filler).map(|i| command(format!("filler.c{i}").as_str(), &format!("Filler Command {i}"), &[], &[])));
-    let mut km = Keymap::new(catalogue, Scopes::new().with_context("Text"), Platform::Windows).with_reserved(reserved::system(Platform::Windows));
+    let mut catalog = catalog();
+    let filler = MAX_COMMANDS - catalog.len();
+    catalog.extend((0..filler).map(|i| command(format!("filler.c{i}").as_str(), &format!("Filler Command {i}"), &[], &[])));
+    let mut km = Keymap::new(catalog, Scopes::new().with_context("Text"), Platform::Windows).with_reserved(reserved::system(Platform::Windows));
     let long: String = "ä€𝄞 x".repeat(MAX_IMPORT_TEXT);
     // Odd entries have keys and long labels that match nothing, so they reach the suggestions:
     // words in the whole label, or two words and symbols, which score high enough to suggest.
@@ -593,8 +593,8 @@ fn report_json_uses_camel_case_names() {
     assert_eq!(v["changed"][0]["from"], json!(["Cmd+W"]));
 }
 
-fn import_into(catalogue: Vec<Bindable>, entries: Vec<ForeignEntry>, options: &ImportOptions) -> (Keymap, ImportReport) {
-    let mut km = Keymap::new(catalogue, Scopes::new(), Platform::Windows);
+fn import_into(catalog: Vec<Bindable>, entries: Vec<ForeignEntry>, options: &ImportOptions) -> (Keymap, ImportReport) {
+    let mut km = Keymap::new(catalog, Scopes::new(), Platform::Windows);
     let report = plan(&ForeignSet { name: None, entries }, &km, options).apply(&mut km);
     (km, report)
 }
@@ -609,7 +609,7 @@ fn unmatched(r: &ImportReport) -> Vec<(&str, UnmatchedReason)> {
 
 #[test]
 fn panel_menu_entries_match_by_path_end_or_label() {
-    let catalogue = vec![
+    let catalog = vec![
         command("type.allCaps", "All Caps", &["Panels", "Character", "All Caps"], &[]),
         command("pages.overrideAll", "Override All Parent Items", &["Pages", "Override All Parent Page Items"], &[]),
         command("paragraph.justification", "Justification…", &[], &[]),
@@ -637,10 +637,10 @@ fn panel_menu_entries_match_by_path_end_or_label() {
         panel_entry(&["Character", "Small Caps"], "Ctrl+F5"),
         // No path end fits and the label alone fits two commands.
         panel_entry(&["Color", "New Swatch"], "Ctrl+F6"),
-        // Without the mark, a path with no menu matches only a whole catalogue path.
+        // Without the mark, a path with no menu matches only a whole catalog path.
         entry(None, &["Character", "All Caps"], &[(d, "Ctrl+F7")], Flavor::Windows),
     ];
-    let (km, r) = import_into(catalogue, entries, &default_context());
+    let (km, r) = import_into(catalog, entries, &default_context());
     has(&km, "type.allCaps", &["Cmd+F1"]);
     has(&km, "pages.overrideAll", &["Cmd+F2"]);
     has(&km, "paragraph.justification", &["Cmd+F3"]);
@@ -659,7 +659,7 @@ fn panel_menu_entries_match_by_path_end_or_label() {
 
 #[test]
 fn aliases_match_like_labels() {
-    let catalogue = vec![
+    let catalog = vec![
         command("app.quit", "Quit DesignCraft", &["File", "Quit DesignCraft"], &[]).with_alias("Exit"),
         command("app.preferences", "Preferences…", &["Edit", "Preferences…"], &[]).with_alias("Preferences: General…"),
         command("type.bold", "Bold", &["Type", "Style", "Bold"], &[]).with_alias("Apply bold"),
@@ -672,7 +672,7 @@ fn aliases_match_like_labels() {
         entry(None, &["Apply Bold"], &[(d, "Ctrl+Shift+B")], Flavor::Windows),
         win("Bearbeiten", &["Einfügen"], &[(d, "Ctrl+Shift+V")]),
     ];
-    let (km, r) = import_into(catalogue, entries, &default_context());
+    let (km, r) = import_into(catalog, entries, &default_context());
     has(&km, "app.quit", &["Cmd+Q"]);
     has(&km, "app.preferences", &["Cmd+K"]);
     has(&km, "type.bold", &["Cmd+Shift+B"]);
@@ -682,7 +682,7 @@ fn aliases_match_like_labels() {
 
 #[test]
 fn show_and_hide_are_read_off_only_for_toggles() {
-    let catalogue = vec![
+    let catalog = vec![
         command(panel("conveyor"), "Conveyor", &["Window", "Conveyor"], &[]),
         command("view.rulers", "Rulers", &["View", "Rulers"], &[]).toggle(),
         command("view.frameEdges", "Show Frame Edges", &["View", "Extras", "Show Frame Edges"], &[]).toggle(),
@@ -700,7 +700,7 @@ fn show_and_hide_are_read_off_only_for_toggles() {
         win("Type", &["Show Hidden Characters"], &[(d, "Ctrl+Alt+I")]),
         win("Type", &["Hide Hidden Characters"], &[(d, "Ctrl+Alt+H")]),
     ];
-    let (km, r) = import_into(catalogue, entries, &default_context());
+    let (km, r) = import_into(catalog, entries, &default_context());
     has(&km, panel("conveyor"), &[]);
     has(&km, "view.rulers", &["Cmd+R", "Cmd+Shift+R"]);
     has(&km, "view.frameEdges", &["Cmd+H"]);
@@ -713,7 +713,7 @@ fn show_and_hide_are_read_off_only_for_toggles() {
 
 #[test]
 fn only_entries_with_keys_to_bind_count_toward_suggestions() {
-    let catalogue = vec![command("edit.checkSpelling", "Check Spelling…", &["Edit", "Check Spelling…"], &[])];
+    let catalog = vec![command("edit.checkSpelling", "Check Spelling…", &["Edit", "Check Spelling…"], &[])];
     let d = "Default";
     // Twice the cap of unmatched entries without keys, or with keys only in a skipped context,
     // before one with a key.
@@ -726,7 +726,7 @@ fn only_entries_with_keys_to_bind_count_toward_suggestions() {
         suggest: true,
         ..ImportOptions::default()
     };
-    let (_, r) = import_into(catalogue, entries, &options);
+    let (_, r) = import_into(catalog, entries, &options);
     assert_eq!(r.unmatched_without_shortcut, 2 * MAX_SUGGESTIONS);
     assert_eq!(r.unmatched.len(), 1);
     assert_eq!(r.unmatched[0].keys, "Default: Ctrl+K", "keys in a skipped context are left out");
@@ -735,7 +735,7 @@ fn only_entries_with_keys_to_bind_count_toward_suggestions() {
     assert_eq!(r.truncated, 0);
 }
 
-fn pages_catalogue() -> Vec<Bindable> {
+fn pages_catalog() -> Vec<Bindable> {
     vec![
         command("app.newDocumentDialog", "New Document…", &["File", "New Document…"], &["Cmd+N"]),
         command("layout.pages.insert", "Insert Pages…", &["Layout", "Pages", "Insert Pages…"], &["Cmd+Shift+P"]),
@@ -754,7 +754,7 @@ fn panel_menu_entries_without_keys_change_nothing() {
         // The same for the last segment alone, with a panel the app has.
         none(&["Pages", "New Document"]),
     ];
-    let (km, r) = import_into(pages_catalogue(), entries, &default_context());
+    let (km, r) = import_into(pages_catalog(), entries, &default_context());
     has(&km, "app.newDocumentDialog", &["Cmd+N"]);
     has(&km, "layout.pages.insert", &["Cmd+Shift+P"]);
     assert!(r.changed.is_empty(), "{:?}", r.changed);
@@ -781,7 +781,7 @@ fn an_entry_without_keys_never_clears_keys_another_entry_gives() {
     let keyed = || win("Layout", &["Pages", "Insert Pages..."], &[(d, "Ctrl+Alt+P")]);
     let keyless = || win("Layout", &["Insert Pages..."], &[]);
     for entries in [vec![keyed(), keyless()], vec![keyless(), keyed()]] {
-        let (km, _) = import_into(pages_catalogue(), entries, &default_context());
+        let (km, _) = import_into(pages_catalog(), entries, &default_context());
         has(&km, "layout.pages.insert", &["Cmd+Alt+P"]);
     }
 
@@ -790,14 +790,14 @@ fn an_entry_without_keys_never_clears_keys_another_entry_gives() {
         ForeignEntry::new(None, ["Pages", "Insert Pages..."]).in_panel_menu(),
         win("Layout", &["Pages", "Insert Pages..."], &[(d, "Ctrl+Shift+P")]),
     ];
-    let (km, r) = import_into(pages_catalogue(), entries, &default_context());
+    let (km, r) = import_into(pages_catalog(), entries, &default_context());
     has(&km, "layout.pages.insert", &["Cmd+Shift+P"]);
     assert_eq!(r.matched_without_change.len(), 1);
 
     // The later entry still takes the chord from another command; the entry without keys does
     // not clear the command that lost it.
     let entries = vec![keyless(), keyed(), win("File", &["Close"], &[(d, "Ctrl+Alt+P")])];
-    let (km, r) = import_into(pages_catalogue(), entries, &default_context());
+    let (km, r) = import_into(pages_catalog(), entries, &default_context());
     has(&km, "file.close", &["Cmd+Alt+P"]);
     has(&km, "layout.pages.insert", &["Cmd+Shift+P"]);
     assert_eq!(r.skipped.iter().map(|s| (s.command.id.as_str(), s.reason)).collect::<Vec<_>>(), [("layout.pages.insert", SkipReason::Taken)]);

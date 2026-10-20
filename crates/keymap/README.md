@@ -3,12 +3,12 @@
 `craft-keymap` holds the data and logic for keyboard bindings in the Craft apps: chords and their
 text forms, bindings from chords to commands, scopes, conflicts, user overrides, named sets, an
 import pipeline for other applications' shortcut sets, and an editor model. Each application
-supplies its command catalogue, its file-format readers and its UI.
+supplies its command catalog, its file-format readers and its UI.
 
 ## Boundaries
 
 - Data and logic, plus a shared Keyboard Shortcuts dialog behind the `ui` feature. The apps keep
-  the command catalogue (ids, labels, menu paths, defaults), the readers for other applications'
+  the command catalog (ids, labels, menu paths, defaults), the readers for other applications'
   files, file dialogs and running the commands.
 - Never crashes: no panics, no `unsafe`. Loading settings never fails; what cannot be used is
   kept or reported (`Keymap::problems`, the import report).
@@ -20,7 +20,7 @@ supplies its command catalogue, its file-format readers and its UI.
 - Dependencies: `serde` and `serde_json`; `egui` with the `egui` feature; `craft-ui` and
   `craft-i18n` with the `ui` feature.
 
-## A catalogue and dispatch
+## A catalog and dispatch
 
 A command with parameters has the key `window.panel {"panel":"layers"}` in settings and reports.
 Tools of one group share a key and cycle. A binding can name a scope other than the command's
@@ -33,7 +33,7 @@ use serde_json::json;
 let key = |text: &str| Binding::parse(text).unwrap();
 let layers = CommandRef::with_params("window.panel", json!({"panel": "layers"}));
 let select = Kind::Tool { group: Some("select".into()) };
-let catalogue = vec![
+let catalog = vec![
     Bindable::new("file.save", "Save", Scope::app()).with_path(vec!["File".into(), "Save".into()]).with_default(key("Cmd+S")),
     Bindable::new(layers.clone(), "Layers", Scope::app()).with_path(vec!["Window".into(), "Layers".into()]).with_default(key("F7")),
     Bindable::new("tool.marquee", "Marquee Tool", Scope::app()).with_kind(select.clone()).with_default(key("M")),
@@ -44,7 +44,7 @@ let catalogue = vec![
     // An app command whose binding works only in the Text context.
     Bindable::new("type.bold", "Bold", Scope::app()).with_default(key("Text: Cmd+B")),
 ];
-let keymap = Keymap::new(catalogue, Scopes::new().with_panel("Timeline").with_context("Text"), Platform::Mac);
+let keymap = Keymap::new(catalog, Scopes::new().with_panel("Timeline").with_context("Text"), Platform::Mac);
 
 // Dispatch: the chord pressed, whether it is a double press, and what has the keyboard.
 let press = |text: &str, active: &Active| keymap.lookup(&Chord::parse(text).unwrap(), false, active);
@@ -112,9 +112,9 @@ impl Settings for Prefs {
     const SCHEMA_VERSION: u32 = 1;
 }
 
-// `catalogue` is the app's Vec<Bindable>.
+// `catalog` is the app's Vec<Bindable>.
 let (mut store, _report) = SettingsStore::<Prefs>::open(Location::Auto);
-let mut keymap = Keymap::new(catalogue, Scopes::new(), Platform::current()).with_overrides(store.get().shortcuts.clone());
+let mut keymap = Keymap::new(catalog, Scopes::new(), Platform::current()).with_overrides(store.get().shortcuts.clone());
 // Entries for unknown commands and texts that do not parse are kept and listed here.
 let _problems = keymap.problems();
 
@@ -216,9 +216,9 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
 - Panel menus: sources list panel-menu items with the panel's name in front (InDesign's Panel
   Menus area writes `Character: All Caps`; Illustrator and Photoshop sets have similar areas).
   The reader splits the name into segments and marks the entry `ForeignEntry::in_panel_menu()`.
-  Such an entry also matches a catalogue path that ends with its segments (with the command's
+  Such an entry also matches a catalog path that ends with its segments (with the command's
   label or the path's last segment last), and its last segment alone as a label. The last
-  segment alone counts only when the first segment, the panel, is a segment of some catalogue
+  segment alone counts only when the first segment, the panel, is a segment of some catalog
   path, so `History: New Document` matches nothing in an app without a History panel. An entry
   without keys that matched only these ways leaves the command's shortcuts alone and is listed
   in `matched_without_change` (reason `PanelMenu`).
@@ -255,7 +255,7 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
   nothing; the user's answer is a second call with `Policy::Steal` or `Policy::Keep`.
 - `Recorder::press(chord, time)` gives `Single`, `Double` (the same chord again within
   `DOUBLE_PRESS`, 0.6 s) or `Cancel` (Escape).
-- `editor::search(&keymap, query, platform)` filters the catalogue by label, alias, menu path,
+- `editor::search(&keymap, query, platform)` filters the catalog by label, alias, menu path,
   command id and key text, canonical or as shown on `platform`.
 
 ```rust
@@ -282,13 +282,13 @@ session.cancel(&mut keymap);
 ## Shortcuts dialog
 
 With the `ui` feature, `ui::ShortcutsDialog` draws the Keyboard Shortcuts dialog over a `Keymap`
-and, optionally, `Profiles`: a table of the catalogue grouped by menu, recording, conflicts, undo,
+and, optionally, `Profiles`: a table of the catalog grouped by menu, recording, conflicts, undo,
 named sets, import review and a summary. It edits the keymap in place, so menus show new keys at
 once, and Cancel puts everything back as it was when the dialog opened.
 
 Adopt it in three steps:
 
-1. Build the `Keymap` from the catalogue and keep the built-in sets (`Builtins`), as above.
+1. Build the `Keymap` from the catalog and keep the built-in sets (`Builtins`), as above.
 2. While the dialog is open, keep a `DialogState` and call `show` (a window) or `ui` (the body,
    for the app's own modal or preferences page) every frame.
 3. Act on the `Outcome` it returns, and drop the state when `is_open()` turns false.
@@ -345,9 +345,9 @@ Key dispatch while the dialog is open:
 Words come from `ui::Text`. Apps on craft-i18n pass `I18nText`; others implement `ui` and
 `plural` over their own lookup, and `rtl` and `visual` (the app's bidi reordering) for
 right-to-left languages, which mirror the layout. Chord text is never reordered. `ui::STRINGS`
-and `ui::PLURALS` list every string the dialog looks up, for the translation catalogue.
+and `ui::PLURALS` list every string the dialog looks up, for the translation catalog.
 `Options` sets the conflict mode, double-press recording, area tabs, the on-screen keyboard,
-read-only rows for keys outside the catalogue, the app's import and export formats, and an
+read-only rows for keys outside the catalog, the app's import and export formats, and an
 `accept` rule for which keys a command may get.
 
 ## Features

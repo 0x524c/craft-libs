@@ -39,7 +39,7 @@ craft-<name> = { git = "https://github.com/storytold/craft-libs", rev = "<commit
   language setting.
 - [`craft-keymap`](crates/keymap/README.md): keyboard bindings: chords and their text forms,
   scopes, conflicts, user overrides stored through craft-settings and import of other
-  applications' shortcut sets. Command catalogues, file readers and the shortcut editor UI stay
+  applications' shortcut sets. Command catalogs, file readers and the shortcut editor UI stay
   in each app.
 - [`craft-print`](crates/print/README.md): PDF submission to CUPS and Windows, printer discovery,
   duplex/copies/colour and driver preferences. PDF generation stays in each app.
