@@ -1,11 +1,20 @@
 #![cfg(feature = "egui")]
 
-use craft_keymap::egui::{Dispatcher, Hit, matches};
+use craft_keymap::egui::{Dispatcher, Hit, matches, platform};
 use craft_keymap::{Active, Bindable, Binding, Chord, CommandRef, Key, Keymap, Kind, Mods, Platform, Scope, Scopes, Trigger};
 use egui::{Event, InputState, Key as EguiKey, Modifiers};
 
 fn chord(text: &str) -> Chord {
     Chord::parse(text).unwrap_or_else(|e| panic!("{text}: {e}"))
+}
+
+#[test]
+fn a_browser_on_a_mac_gets_the_mac_keymap() {
+    let ctx = egui::Context::default();
+    ctx.set_os(egui::os::OperatingSystem::from_user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15"));
+    assert_eq!(platform(&ctx), Platform::Mac);
+    ctx.set_os(egui::os::OperatingSystem::from_user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)"));
+    assert_eq!(platform(&ctx), Platform::Windows);
 }
 
 #[test]
