@@ -960,7 +960,6 @@ impl Draw<'_, '_> {
             if let Some(path) = b.paths.first().filter(|p| !p.is_empty()) {
                 tip.push(self.path_text(path));
             }
-            tip.push(r.command.id.clone());
             if let Some(h) = self.env.text.hint(b) {
                 tip.push(self.vis(&h));
             }
