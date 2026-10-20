@@ -156,9 +156,11 @@ the bar itself shrinks it. A tab dropped on the "…" button goes to the end of 
 A panel or group floated by a drag, a menu or a command without a rect takes its content height:
 the title bar, the tab strip and the height the active panel's content used when it was last
 drawn (the content ui's `min_rect`), at least 120 points. The most it takes is the height of
-`DockContent::floating_size`, or 320 points for a panel or group leaving a dock. A short panel
-therefore floats as a short window. A panel's width is its `floating_size` width, else its docked
-width; a group keeps its docked width.
+`DockContent::floating_size`, or 320 points for a panel leaving a dock or frame and a group
+leaving a dock. A short panel therefore floats as a short window. Content that reaches the bottom
+of its body (a panel that allocates its whole rect) has no height of its own: it floats at the
+`floating_size` height, else at 320 points. A panel's width is its `floating_size` width, else
+its docked width; a group keeps its docked width.
 A flyout fits its content the same way, without the title bar.
 
 - A panel the area has not drawn floats at the `floating_size` height, else the docked height

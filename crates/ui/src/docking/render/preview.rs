@@ -279,16 +279,21 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     /// Size of a panel floated by a drag or the Float menu: the host's floating size, else the
-    /// source size within the panel limits. Out of a dock column, or with a floating size, the
-    /// height fits the content the panel last drew, up to that height (320 in a dock).
+    /// source size within the panel limits. Out of a dock or frame, or with a floating size, the
+    /// height fits the content the panel last drew, up to that height (else 320). Content that
+    /// filled its body floats at that height.
     pub(super) fn float_size(&self, panel: &P, source: Vec2) -> Vec2 {
         let chrome = self.style.title_height + self.style.tab_height;
         if let Some(size) = self.content.floating_size(panel).filter(|s| s.is_finite() && s.x > 0.0 && s.y > 0.0) {
             return vec2(size.x, self.fitted_height(panel, chrome, size.y).unwrap_or(size.y));
         }
         let mut size = self.iconic.float_width(panel).map_or(source, |width| vec2(width, DOCKED_FLOAT_HEIGHT));
-        if matches!(self.layout.place(panel), Some(Place::Dock { .. })) {
-            size.y = self.fitted_height(panel, chrome, DOCKED_FLOAT_HEIGHT).unwrap_or(size.y.min(DOCKED_FLOAT_HEIGHT));
+        if matches!(self.layout.place(panel), Some(Place::Dock { .. } | Place::Node(_))) {
+            size.y = match self.fitted_height(panel, chrome, DOCKED_FLOAT_HEIGHT) {
+                Some(height) => height,
+                None if self.float_space.filled(panel) => DOCKED_FLOAT_HEIGHT,
+                None => size.y.min(DOCKED_FLOAT_HEIGHT),
+            };
         }
         let limits = self.limits(panel);
         let header = vec2(0.0, self.style.tab_height);

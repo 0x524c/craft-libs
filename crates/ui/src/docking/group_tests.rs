@@ -54,10 +54,16 @@ struct TestContent {
     whole_group: bool,
     /// Height every body takes; `None` draws a one-line label.
     body_height: Option<f32>,
+    /// Every body takes its whole rect.
+    fill: bool,
 }
 
 impl DockContent<u32> for TestContent {
     fn body(&mut self, ui: &mut egui::Ui, _: &u32) {
+        if self.fill {
+            ui.allocate_rect(ui.max_rect(), egui::Sense::hover());
+            return;
+        }
         match self.body_height {
             Some(height) => _ = ui.allocate_exact_size(vec2(10.0, height), egui::Sense::hover()),
             None => _ = ui.label("Body"),
@@ -591,6 +597,27 @@ fn a_short_docked_panel_floats_at_its_content_height_up_to_its_floating_size() {
     let out = d.step(vec![button(target, false)]);
     let Some(Target::Float { rect: Some([_, _, _, height]) }) = moved_group(&out.actions) else { panic!("{:?}", out.actions) };
     assert_eq!(*height, title + strip + 150.0);
+}
+
+#[test]
+fn a_panel_that_fills_its_frame_floats_at_its_floating_size_or_320() {
+    let float = |floating_size: Option<Vec2>| {
+        let content = TestContent { fill: true, floating_size, ..Default::default() };
+        let mut d = Driver::with(frames(), content, Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 600.0)));
+        let target = pos2(400.0, 300.0);
+        d.hold(d.tab(3).center(), target);
+        d.modifiers = Modifiers::COMMAND;
+        let out = d.step(vec![button(target, false)]);
+        out.actions
+            .iter()
+            .find_map(|a| match a {
+                Action::Float { panel: 3, rect } => Some(rect[3]),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{:?}", out.actions))
+    };
+    assert_eq!(float(None), 320.0);
+    assert_eq!(float(Some(vec2(300.0, 400.0))), 400.0);
 }
 
 #[test]

@@ -255,8 +255,8 @@ pub struct FloatSpace<P> {
     pub(super) groups: Vec<(P, Vec2)>,
     pub(super) columns: Vec<(P, Vec2)>,
     /// The height each panel's content used when it was last drawn, which fits a floated group
-    /// to its content.
-    pub(super) contents: Vec<(P, f32)>,
+    /// to its content; `None` for content that filled its body.
+    pub(super) contents: Vec<(P, Option<f32>)>,
 }
 
 impl<P: PartialEq> FloatSpace<P> {
@@ -275,9 +275,16 @@ impl<P: PartialEq> FloatSpace<P> {
 }
 
 impl<P: PartialEq> FloatSpace<P> {
-    pub(super) fn record_content(&mut self, panel: P, height: f32) {
-        let height = if height.is_finite() { height.max(0.0) } else { 0.0 };
-        match self.contents.iter_mut().find(|(p, _)| *p == panel) {
+    /// Record the height `panel`'s content used in a body `available` tall. Content that
+    /// reaches the body's bottom filled it and has no height of its own, unless the body was
+    /// sized to the height recorded before (a fitted window).
+    pub(super) fn record_content(&mut self, panel: P, used: f32, available: f32) {
+        const TOLERANCE: f32 = 1.0;
+        let used = if used.is_finite() { used.max(0.0) } else { 0.0 };
+        let recorded = self.contents.iter_mut().find(|(p, _)| *p == panel);
+        let fitted = recorded.as_ref().and_then(|(_, height)| *height).is_some_and(|height| height >= available - TOLERANCE);
+        let height = (used < available - TOLERANCE || fitted).then_some(used);
+        match recorded {
             Some((_, recorded)) => *recorded = height,
             None => self.contents.push((panel, height)),
         }
@@ -299,8 +306,13 @@ impl<P: PartialEq> FloatSpace<P> {
         Self::find(&self.columns, panel)
     }
 
+    /// Whether `panel`'s content filled its body when it was last drawn.
+    pub(super) fn filled(&self, panel: &P) -> bool {
+        self.contents.iter().any(|(p, height)| p == panel && height.is_none())
+    }
+
     pub(super) fn content(&self, panel: &P) -> Option<f32> {
-        self.contents.iter().find(|(p, _)| p == panel).map(|(_, height)| *height)
+        self.contents.iter().find(|(p, _)| p == panel).and_then(|(_, height)| *height)
     }
 
     /// The first record wins: an iconic panel is recorded at its icon before its flyout.
@@ -513,8 +525,9 @@ pub trait DockContent<P> {
     /// Preferred floating size, independent of the current dock geometry: the width of a
     /// floated panel and the most height it takes. A floated panel or group, and a flyout, fit
     /// their height to the content the active panel last drew (at least 120 points), up to this
-    /// height, or up to 320 out of a dock when this is `None`. A rect a command gives and a
-    /// window the user resized keep their size.
+    /// height, or up to 320 out of a dock when this is `None`. Content that filled its body
+    /// takes this height, else 320. A rect a command gives and a window the user resized keep
+    /// their size.
     fn floating_size(&self, _panel: &P) -> Option<Vec2> {
         None
     }
