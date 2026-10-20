@@ -1004,8 +1004,7 @@ fn an_app_error_shows_until_dismissed() {
 fn one_pointer_click_on_a_chip_of_another_row_records() {
     let mut h = mac();
     click(&mut h, "Save");
-    let c = h.get_by_label("Export…: ⌘E").rect().center();
-    let at = egui::pos2(c.x as f32, c.y as f32);
+    let at = h.get_by_label("Export…: ⌘E").rect().center();
     h.event(Event::PointerMoved(at));
     h.run();
     for pressed in [true, false] {
