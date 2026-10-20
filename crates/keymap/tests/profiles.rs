@@ -1,6 +1,6 @@
 use craft_keymap::{
     Bindable, Binding, CommandRef, ContextRule, Flavor, ForeignEntry, ForeignKey, ForeignSet, ImportOptions, Keymap, MAX_SETS, Overrides, Platform,
-    Policy, ProfileError, SetProblem, Profiles, Scope, Scopes, Start, plan,
+    Policy, ProfileError, Profiles, Scope, Scopes, SetProblem, Start, plan,
 };
 use serde_json::json;
 
@@ -107,7 +107,8 @@ fn a_user_set_named_like_a_new_built_in_keeps_its_edits() {
     assert_eq!(p.get("Classic", &builtins), Some(&classic));
     assert_eq!(builtins[1].1, classic);
 
-    let mut q: Profiles = serde_json::from_value(json!({"active": "CRAFT", "sets": [{"name": "CRAFT", "overrides": {"edit.copy": "Cmd+K"}}]})).unwrap();
+    let mut q: Profiles =
+        serde_json::from_value(json!({"active": "CRAFT", "sets": [{"name": "CRAFT", "overrides": {"edit.copy": "Cmd+K"}}]})).unwrap();
     assert!(q.reconcile(&builtins));
     assert_eq!(q.active_name(&builtins), "CRAFT 2");
     assert_eq!(q.active_overrides(&builtins), &mine);
