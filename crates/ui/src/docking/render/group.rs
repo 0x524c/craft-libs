@@ -65,7 +65,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 r
             }
         };
-        let requested = self.content.group_header_width(panels, selected, floating);
+        let requested = self.content.group_header_width(panels, selected, floating, strip.width());
         let header_width = if requested.is_finite() { requested.clamp(0.0, strip.width()) } else { 0.0 };
         if header_width > 0.0 {
             let header = mirror(Rect::from_min_max(pos2(strip.right() - header_width, strip.top()), strip.max));

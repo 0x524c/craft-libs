@@ -47,6 +47,8 @@ struct TestContent {
     protected: Vec<u32>,
     header: f32,
     header_clicks: usize,
+    /// The strip width the last header was sized for.
+    strip_width: std::cell::Cell<f32>,
     floating_size: Option<Vec2>,
     host_owned: bool,
     whole_group: bool,
@@ -74,7 +76,8 @@ impl DockContent<u32> for TestContent {
         self.whole_group |= request.whole_group;
         self.host_owned.then(DropFeedback::default)
     }
-    fn group_header_width(&self, _: &[u32], _: &u32, _: bool) -> f32 {
+    fn group_header_width(&self, _: &[u32], _: &u32, _: bool, strip_width: f32) -> f32 {
+        self.strip_width.set(strip_width);
         self.header
     }
     fn group_header(&mut self, ui: &mut egui::Ui, _: &[u32], _: &u32, _: bool) {
@@ -253,6 +256,7 @@ fn drag_bar_survives_a_strip_full_of_tabs() {
     let bar = d.rect("drag-bar", 1);
     assert!(bar.width() >= 40.0, "{bar:?}");
     assert_eq!(bar.right(), 300.0 - 24.0, "the bar ends at the header");
+    assert_eq!(d.content.strip_width.get(), 300.0, "the header is sized for the whole strip");
     assert!(d.ctx.read_response(Id::new(AREA).with(("overflow", &1u32))).is_some(), "tabs overflow before the bar narrows");
     let out = d.drag(bar.center(), pos2(500.0, 300.0));
     assert!(matches!(moved_group(&out.actions), Some(Target::Float { .. })), "{:?}", out.actions);

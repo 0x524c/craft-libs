@@ -871,7 +871,7 @@ impl DockContent<u32> for CustomContent {
         self.menus += 1;
         ui.button("App menu").clicked();
     }
-    fn group_header_width(&self, _: &[u32], _: &u32, _: bool) -> f32 {
+    fn group_header_width(&self, _: &[u32], _: &u32, _: bool, _: f32) -> f32 {
         40.0
     }
     fn group_header(&mut self, ui: &mut egui::Ui, _: &[u32], _: &u32, _: bool) {

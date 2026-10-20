@@ -535,9 +535,13 @@ pub trait DockContent<P> {
         logical.into()
     }
     fn panel_menu(&mut self, _ui: &mut Ui, _panel: &P) {}
-    fn group_header_width(&self, _panels: &[P], _active: &P, _floating: bool) -> f32 {
+    /// Width of the group header at the strip's end (the host's ≡ and its own tabs).
+    /// `strip_width` is the whole tab strip; the header gets at most that, and the drag bar and
+    /// the group's tabs share what is left.
+    fn group_header_width(&self, _panels: &[P], _active: &P, _floating: bool, _strip_width: f32) -> f32 {
         0.0
     }
+    /// Draw the group header into `ui.max_rect()`, sized by [`Self::group_header_width`].
     fn group_header(&mut self, _ui: &mut Ui, _panels: &[P], _active: &P, _floating: bool) {}
 }
 
@@ -614,8 +618,8 @@ impl<P, C: DockContent<P> + ?Sized> DockContent<P> for Overrides<'_, P, C> {
     fn panel_menu(&mut self, ui: &mut Ui, panel: &P) {
         self.inner.panel_menu(ui, panel);
     }
-    fn group_header_width(&self, panels: &[P], active: &P, floating: bool) -> f32 {
-        self.inner.group_header_width(panels, active, floating)
+    fn group_header_width(&self, panels: &[P], active: &P, floating: bool, strip_width: f32) -> f32 {
+        self.inner.group_header_width(panels, active, floating, strip_width)
     }
     fn group_header(&mut self, ui: &mut Ui, panels: &[P], active: &P, floating: bool) {
         self.inner.group_header(ui, panels, active, floating);
