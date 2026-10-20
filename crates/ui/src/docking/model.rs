@@ -417,7 +417,8 @@ fn valid_active(len: usize, active: usize) -> bool {
 }
 
 impl<P: Clone + Eq + Hash> Layout<P> {
-    /// Check depth, allocation bounds, geometry, selection and globally unique panel ownership.
+    /// Check depth, allocation bounds, geometry, selection, globally unique panel ownership and
+    /// that no frame, group, column or window is empty.
     /// Traversal is iterative, including for an invalid, excessively deep supplied tree.
     pub fn validate(&self) -> Result<(), DockError> {
         if self.floating.len() > MAX_PANELS {
@@ -468,9 +469,15 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                     }
                 }
                 Node::Tabs { panels, active } => {
+                    if panels.is_empty() {
+                        return Err(DockError::InvalidGeometry);
+                    }
                     check_tabs(panels, *active, &mut seen)?;
                 }
                 Node::Stack { entries } => {
+                    if entries.is_empty() {
+                        return Err(DockError::InvalidGeometry);
+                    }
                     if entries.len() > MAX_PANELS {
                         return Err(DockError::LimitExceeded);
                     }

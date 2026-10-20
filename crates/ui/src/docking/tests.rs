@@ -225,6 +225,12 @@ fn invalid_saved_layouts_reject_duplicates_selection_depth_and_nonfinite_geometr
     assert_eq!(deep.apply(Action::Activate { panel: 0 }), Err(DockError::LimitExceeded));
     let oversized = Layout { root: Some(Node::Tabs { panels: (0..=MAX_PANELS as u32).collect(), active: 0 }), floating: Vec::new() };
     assert_eq!(oversized.validate(), Err(DockError::LimitExceeded));
+    for empty in [tabs(&[], 0), Node::Stack { entries: Vec::new() }] {
+        let root = Layout { root: Some(empty.clone()), floating: Vec::new() };
+        assert_eq!(root.validate(), Err(DockError::InvalidGeometry));
+        let beside = Node::Split { axis: SplitAxis::Horizontal, size: SplitSize::Ratio(0.5), first: Box::new(tabs(&[1], 0)), second: Box::new(empty) };
+        assert_eq!(Layout { root: Some(beside), floating: Vec::new() }.validate(), Err(DockError::InvalidGeometry));
+    }
 }
 
 fn target(anchor: u32, members: &[u32], rect: Rect) -> DropTarget<u32> {
