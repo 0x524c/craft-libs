@@ -399,7 +399,11 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
                 }
                 if let Some(side) = side {
                     let to = match last_column(layout, *side) {
-                        Some(anchor) => Target::At { anchor, placement: Placement::Column { after: true } },
+                        Some(column) => match column.into_iter().find(|p| !members(layout, panel, unit).contains(p)) {
+                            Some(anchor) => Target::At { anchor, placement: Placement::Column { after: true } },
+                            // What moves already is that dock's last column.
+                            None => return Ok(Vec::new()),
+                        },
                         None => Target::NewDock { side: *side },
                     };
                     let unit = match (unit, &to) {
@@ -548,12 +552,12 @@ impl<P> DockCommand<P> {
     }
 }
 
-/// The first panel of the last column of the dock on `side`.
-fn last_column<P: Clone + Eq + Hash>(layout: &Layout<P>, side: Side) -> Option<P> {
+/// The panels of the last column of the dock on `side`, or `None` without such a dock.
+fn last_column<P: Clone + Eq + Hash>(layout: &Layout<P>, side: Side) -> Option<Vec<P>> {
     let path = layout.dock_path(side)?;
     let node = layout.root.as_ref().and_then(|root| super::dock_model::node_at(root, &path))?;
     match node {
-        super::Node::Dock { columns, .. } => columns.last()?.groups.first()?.panels.first().cloned(),
+        super::Node::Dock { columns, .. } => Some(columns.last()?.groups.iter().flat_map(|g| g.panels.iter().cloned()).collect()),
         _ => None,
     }
 }

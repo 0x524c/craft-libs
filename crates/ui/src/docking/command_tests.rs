@@ -409,3 +409,13 @@ fn dock_with_a_side_zone_and_no_anchor_makes_an_outer_edge_frame() {
     );
     rejected(json!({"command": "window.panel.dock", "panel": "color", "zone": "left", "before": null}), DockError::InvalidPlacement);
 }
+
+#[test]
+fn dock_to_the_side_a_panel_already_leads_the_last_column_of() {
+    // Layers leads the dock's only column: it moves out to a new column after it.
+    let (workspace, _) = applied(json!({"command": "window.panel.dock", "panel": "layers", "side": "Start"}));
+    assert!(matches!(workspace.layout.place(&s("layers")), Some(dock_model::Place::Dock { column: 1, .. })));
+    assert!(matches!(workspace.layout.place(&s("channels")), Some(dock_model::Place::Dock { column: 0, .. })));
+    // The whole column already is the last one: nothing to do.
+    assert_eq!(actions(json!({"command": "window.panel.dock", "panel": "layers", "column": true, "side": "Start"})), vec![]);
+}

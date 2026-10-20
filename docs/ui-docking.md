@@ -231,7 +231,8 @@ let closed = command.apply(&mut app.workspace, style.right_to_left, &space, |pan
   `Placement::for_zone`, so beside a docked panel they make a new column or group. `apply` and
   `to_actions` take the layout's `right_to_left` for that.
 - `group` moves the panel's whole group; `column` moves its dock column, or its whole window when
-  it floats. `side` is `Start` or `End`.
+  it floats. `side` is `Start` or `End`: what moves becomes a new last column of that dock, or
+  a new dock; when it already is that dock's last column, the command does nothing.
 - `window.panel.dock` with `left`, `right`, `top` or `bottom` and no `anchor` or `side` makes a
   new frame on that outer edge (`Placement::Edge`). A hidden panel is shown first.
 - `window.panel.float` without a rect floats what it moves at the size a drag floats it at (see
