@@ -1,7 +1,7 @@
 #![cfg(feature = "egui")]
 
 use craft_keymap::egui::{Dispatcher, Hit, matches, platform};
-use craft_keymap::{Active, Bindable, Binding, Chord, CommandRef, Key, Keymap, Kind, Layout, Mods, Platform, Scope, Scopes, Trigger};
+use craft_keymap::{Active, Bindable, Binding, Chord, CommandRef, Key, KeyInput, Keymap, Kind, Layout, Mods, Platform, Scope, Scopes, Trigger};
 use egui::{Event, InputState, Key as EguiKey, Modifiers};
 
 fn chord(text: &str) -> Chord {
@@ -481,6 +481,26 @@ fn the_dispatcher_reads_presses_by_the_layout() {
     assert_eq!(chord("Cmd+[").display_for(Platform::Windows, d.layout()), "Ctrl+Ü");
     let (ran, _) = run(&mut d, &km, &Active::NONE, frame(2.0, ctrl_shift, vec![at(EguiKey::Slash, EguiKey::Num7, ctrl_shift)]));
     assert_eq!(ran, ["edit.comment"]);
+
+    // German on egui-winit: AltGr+M types µ and AltGr+] types ~ with no modifiers reported, so
+    // presses while right Alt is held teach nothing and Ctrl+Z stays Ctrl+Z on the Y position.
+    let mut d = Dispatcher::new();
+    let typed = vec![at(EguiKey::Plus, EguiKey::CloseBracket, Modifiers::NONE), Event::Text("+".into())];
+    run(&mut d, &km, &Active::NONE, frame(1.0, Modifiers::NONE, typed));
+    let right_alt =
+        |pressed| Event::Key { key: EguiKey::AltRight, physical_key: Some(EguiKey::AltRight), pressed, repeat: false, modifiers: Modifiers::NONE };
+    run(&mut d, &km, &Active::NONE, frame(2.0, Modifiers::NONE, vec![right_alt(true)]));
+    let alt_graph = vec![
+        at(EguiKey::M, EguiKey::M, Modifiers::NONE),
+        Event::Text("µ".into()),
+        at(EguiKey::CloseBracket, EguiKey::CloseBracket, Modifiers::NONE),
+        Event::Text("~".into()),
+        right_alt(false),
+    ];
+    run(&mut d, &km, &Active::NONE, frame(3.0, Modifiers::NONE, alt_graph));
+    assert!(d.layout().is_latin());
+    assert_eq!(d.layout().char_at(Key::CloseBracket), Some('+'));
+    assert_eq!(d.layout().resolve(&KeyInput::new(Mods::CMD).with_typed(Key::Z).with_physical(Key::Y)), Some(chord("Cmd+Z")));
 
     // A layout the platform reports applies from the first press.
     let mut d = Dispatcher::new().with_layout(Layout::new().with_latin(false));

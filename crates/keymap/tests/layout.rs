@@ -127,6 +127,8 @@ fn typing_decides_whether_the_layout_is_latin() {
     assert!(!layout.is_latin(), "a command chord teaches nothing");
     layout.observe(Key::S, Mods::NONE, "š");
     assert!(layout.is_latin(), "Latin letters beyond ASCII count as Latin");
+    layout.observe(Key::M, Mods::NONE, "µ");
+    assert!(layout.is_latin(), "Latin-1 symbols that count as letters say nothing");
 
     // What the platform reports wins.
     let mut reported = Layout::new().with_latin(false);

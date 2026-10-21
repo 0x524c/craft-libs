@@ -179,7 +179,8 @@ impl Layout {
             return;
         }
         if physical.is_letter() {
-            if c.is_alphabetic() {
+            // ª, µ and º are Latin-1 symbols on Latin layouts, no sign of another script.
+            if c.is_alphabetic() && !matches!(c, 'ª' | 'µ' | 'º') {
                 self.seen_latin = Some(is_latin_letter(c));
             }
             if !c.is_control() {

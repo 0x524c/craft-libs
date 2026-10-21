@@ -199,6 +199,9 @@ pub struct Dispatcher {
     /// web build sends them.
     text_first: bool,
     layout: Layout,
+    /// Whether right Alt is held. egui-winit reports AltGr with neither Ctrl nor Alt, so its
+    /// presses would otherwise teach the layout as plain ones.
+    right_alt: bool,
 }
 
 /// eframe's web build sends a press's Text event first when no text field has focus.
@@ -206,7 +209,7 @@ const TEXT_FIRST: bool = cfg!(target_arch = "wasm32");
 
 impl Default for Dispatcher {
     fn default() -> Dispatcher {
-        Dispatcher { last: None, repeat: false, clipboard: false, text_first: TEXT_FIRST, layout: Layout::new() }
+        Dispatcher { last: None, repeat: false, clipboard: false, text_first: TEXT_FIRST, layout: Layout::new(), right_alt: false }
     }
 }
 
@@ -350,6 +353,14 @@ impl Dispatcher {
     /// Teaches the layout what this frame's presses typed.
     fn learn(&mut self, events: &[Event], text_of: &[Option<usize>], platform: Platform) {
         for (event, text) in events.iter().zip(text_of) {
+            match event {
+                Event::Key { physical_key: Some(EguiKey::AltRight), pressed, .. } => self.right_alt = *pressed,
+                Event::WindowFocused(false) => self.right_alt = false,
+                _ => {}
+            }
+            if self.right_alt {
+                continue;
+            }
             let Some(Event::Text(text)) = text.and_then(|j| events.get(j)) else { continue };
             if let Some(KeyInput { mods, physical: Some(physical), .. }) = KeyInput::from_egui(event, platform) {
                 self.layout.observe(physical, mods, text);
