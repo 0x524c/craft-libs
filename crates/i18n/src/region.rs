@@ -2,8 +2,9 @@
 //! interface language. An English interface in Poland still writes `2,54 cm` on A4.
 //!
 //! The territory lists come from Unicode CLDR's supplemental `measurementData` (Unicode License):
-//! `paperSize` US-Letter and `measurementSystem` US. The decimal separators follow CLDR's number
-//! symbols for the common locales; the system's own separator wins where the platform has one.
+//! `paperSize` US-Letter and `measurementSystem` US. The separators numbers are written with
+//! follow the number locale's CLDR data ([`crate::Format`]); the region carries them only where
+//! the system sets its own.
 
 use std::sync::OnceLock;
 
@@ -12,23 +13,6 @@ const LETTER: &[&str] = &["BZ", "CA", "CL", "CO", "CR", "GT", "MX", "NI", "PA", 
 
 /// Territories that measure in inches (CLDR `measurementSystem type="US"`).
 const INCHES: &[&str] = &["LR", "MM", "US"];
-
-/// Languages whose numbers use a decimal comma in most of their territories.
-const COMMA_LANGUAGES: &[&str] = &[
-    "af", "az", "be", "bg", "bs", "ca", "cs", "da", "de", "el", "es", "et", "eu", "fi", "fo", "fr", "gl", "hr", "hu", "hy", "id", "is", "it", "ka",
-    "kk", "ky", "lb", "lt", "lv", "mk", "nb", "nl", "nn", "no", "pl", "pt", "ro", "ru", "sk", "sl", "sq", "sr", "sv", "tr", "uk", "uz", "vi",
-];
-
-/// Territories where those languages use a decimal point after all.
-const POINT_EXCEPTIONS: &[(&str, &[&str])] =
-    &[("de", &["CH", "LI"]), ("it", &["CH"]), ("es", &["CU", "DO", "GT", "HN", "MX", "NI", "PA", "PE", "PR", "SV", "US", "419"])];
-
-/// Territories where English is written with a decimal comma: most of continental Europe, South
-/// Africa and much of South America.
-const COMMA_TERRITORIES: &[&str] = &[
-    "AR", "AT", "BE", "BG", "BO", "BR", "CL", "CO", "CZ", "DE", "DK", "EC", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "ID", "IS", "IT", "LT", "LU",
-    "LV", "NL", "NO", "PL", "PT", "PY", "RO", "RS", "RU", "SE", "SI", "SK", "TR", "UA", "UY", "VE", "VN", "ZA",
-];
 
 /// How lengths, distances and weights are measured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -66,16 +50,17 @@ pub struct Region {
     pub time: String,
     pub measurement: Measurement,
     pub paper: Paper,
-    /// The decimal separator (`,` in Poland).
-    pub decimal: char,
-    /// The grouping separator the system sets (Windows, macOS); `None` follows the locale.
-    pub grouping: Option<char>,
+    /// The decimal separator the system sets (Windows, macOS); `None` follows the locale.
+    pub decimal: Option<char>,
+    /// The grouping separator the system sets (Windows, macOS): `Some(None)` for none at all
+    /// (`1234567`); `None` follows the locale.
+    pub grouping: Option<Option<char>>,
     /// The clock the system sets (Windows, macOS); `None` follows the locale.
     pub hour_cycle: Option<HourCycle>,
 }
 
 impl Default for Region {
-    /// `en-US`: decimal point, Letter, inches.
+    /// `en-US`: Letter, inches.
     fn default() -> Self {
         Region::from_parts(&Tag::default())
     }
@@ -114,21 +99,13 @@ impl Region {
 
     fn from_parts(tag: &Tag) -> Region {
         let territory = tag.territory.as_str();
-        let language = tag.language.as_str();
         let measurement = tag.measurement.unwrap_or(if INCHES.contains(&territory) { Measurement::Us } else { Measurement::Metric });
-        let decimal = if COMMA_LANGUAGES.contains(&language) {
-            if POINT_EXCEPTIONS.iter().any(|(l, ts)| *l == language && ts.contains(&territory)) { '.' } else { ',' }
-        } else if language == "en" && COMMA_TERRITORIES.contains(&territory) {
-            ','
-        } else {
-            '.'
-        };
         Region {
             numbers: tag.bcp47(),
             time: tag.bcp47(),
             measurement,
             paper: if LETTER.contains(&territory) { Paper::Letter } else { Paper::A4 },
-            decimal,
+            decimal: None,
             grouping: None,
             hour_cycle: tag.hour_cycle,
         }
@@ -239,22 +216,23 @@ fn title_case(p: &str) -> String {
     chars.next().map(|c| c.to_ascii_uppercase().to_string() + chars.as_str()).unwrap_or_default()
 }
 
-/// A locale variable that names a locale (not empty, `C` or `POSIX`).
+/// Whether a locale variable names the C locale (`C`, `C.UTF-8`, `POSIX`).
 #[cfg(any(test, all(unix, not(any(target_vendor = "apple", target_os = "android")))))]
-fn usable_locale(v: &str) -> bool {
+fn is_c_locale(v: &str) -> bool {
     let v = v.trim();
-    !v.is_empty() && !v.eq_ignore_ascii_case("c") && !v.eq_ignore_ascii_case("posix") && !v.starts_with("C.")
+    v.eq_ignore_ascii_case("c") || v.eq_ignore_ascii_case("posix") || v.starts_with("C.")
 }
 
-/// The region from the POSIX locale variables `var` reads and, when neither `LC_ALL` nor the
-/// variable for a convention nor `LANG` is set, the platform's preferred locale.
+/// The region from the POSIX locale variables `var` reads. An empty variable is unset; `C` in
+/// `LC_ALL` or an `LC_*` variable is the C locale, written as `en-US`. `LANG` set to `C` or unset
+/// gives way to the platform's preferred locale.
 #[cfg(any(test, all(unix, not(any(target_vendor = "apple", target_os = "android")))))]
 fn from_posix(var: impl Fn(&str) -> Option<String>, platform: impl FnOnce() -> Option<String>) -> Region {
-    let var = |name: &str| var(name).filter(|v| usable_locale(v));
+    let var = |name: &str| var(name).filter(|v| !v.trim().is_empty());
     if let Some(all) = var("LC_ALL") {
         return Region::from_tag(&all);
     }
-    let lang = var("LANG").or_else(platform).unwrap_or_default();
+    let lang = var("LANG").filter(|v| !is_c_locale(v)).or_else(platform).unwrap_or_default();
     let tag = |name: &str| var(name).unwrap_or_else(|| lang.clone());
     let time = Region::from_tag(&tag("LC_TIME"));
     Region {
@@ -272,12 +250,8 @@ fn from_posix(var: impl Fn(&str) -> Option<String>, platform: impl FnOnce() -> O
 #[cfg(any(test, windows))]
 fn from_windows(value: impl Fn(&str) -> Option<String>, platform: impl FnOnce() -> Option<String>) -> Region {
     let mut region = Region::from_tag(&value("LocaleName").or_else(platform).unwrap_or_default());
-    if let Some(c) = value("sDecimal").as_deref().and_then(single_char) {
-        region.decimal = c;
-    }
-    if let Some(s) = value("sThousand") {
-        region.grouping = single_char(&s);
-    }
+    region.decimal = value("sDecimal").as_deref().and_then(single_char);
+    region.grouping = value("sThousand").as_deref().and_then(grouping);
     match value("iMeasure").as_deref().map(str::trim) {
         Some("0") => region.measurement = Measurement::Metric,
         Some("1") => region.measurement = Measurement::Us,
@@ -299,12 +273,17 @@ fn from_windows(value: impl Fn(&str) -> Option<String>, platform: impl FnOnce() 
 fn from_apple(identifier: &str, metric: bool, decimal: &str, grouping: &str, hours: Option<&str>) -> Region {
     let mut region = Region::from_tag(identifier);
     region.measurement = if metric { Measurement::Metric } else { Measurement::Us };
-    if let Some(c) = single_char(decimal) {
-        region.decimal = c;
-    }
-    region.grouping = single_char(grouping);
+    region.decimal = single_char(decimal);
+    region.grouping = self::grouping(grouping);
     region.hour_cycle = hours.and_then(hour_cycle_of).or(region.hour_cycle);
     region
+}
+
+/// A grouping separator the system sets: none at all when empty (Windows' `sThousand` the user
+/// cleared), else one character.
+#[cfg(any(test, windows, target_vendor = "apple"))]
+fn grouping(s: &str) -> Option<Option<char>> {
+    if s.is_empty() { Some(None) } else { single_char(s).map(Some) }
 }
 
 /// A separator that is one character; Windows allows up to three, which the region can't carry.
@@ -369,8 +348,8 @@ fn read_system() -> Region {
 mod tests {
     use super::*;
 
-    fn conventions(r: &Region) -> (Paper, Measurement, char) {
-        (r.paper, r.measurement, r.decimal)
+    fn conventions(r: &Region) -> (Paper, Measurement) {
+        (r.paper, r.measurement)
     }
 
     #[test]
@@ -398,15 +377,15 @@ mod tests {
         assert_eq!(Region::from_tag("en_US@rg=plzzzz;ms=metric").numbers, "en-PL");
     }
 
-    /// Paper and measurement follow the territory, numbers the language and territory.
+    /// Paper and measurement follow the territory; separators are left to the number locale.
     #[test]
     fn conventions_follow_the_territory() {
-        assert_eq!(conventions(&Region::from_tag("pl-PL")), (Paper::A4, Measurement::Metric, ','));
-        assert_eq!(conventions(&Region::from_tag("en-US")), (Paper::Letter, Measurement::Us, '.'));
-        assert_eq!(conventions(&Region::from_tag("fr-CA")), (Paper::Letter, Measurement::Metric, ','));
-        assert_eq!(conventions(&Region::from_tag("en-DE")), (Paper::A4, Measurement::Metric, ','));
-        assert_eq!(conventions(&Region::from_tag("en-GB")), (Paper::A4, Measurement::Metric, '.'));
-        assert_eq!(Region::from_tag("de-CH").decimal, '.');
+        assert_eq!(conventions(&Region::from_tag("pl-PL")), (Paper::A4, Measurement::Metric));
+        assert_eq!(conventions(&Region::from_tag("en-US")), (Paper::Letter, Measurement::Us));
+        assert_eq!(conventions(&Region::from_tag("fr-CA")), (Paper::Letter, Measurement::Metric));
+        assert_eq!(conventions(&Region::from_tag("en-GB")), (Paper::A4, Measurement::Metric));
+        let r = Region::from_tag("de-CH");
+        assert_eq!((r.decimal, r.grouping), (None, None));
         assert_eq!(Region::from_tag("es-MX").paper, Paper::Letter);
         assert_eq!(Region::from_tag("ja-JP").paper, Paper::A4);
     }
@@ -423,12 +402,17 @@ mod tests {
         let env = |pairs: &'static [(&'static str, &'static str)]| move |n: &str| pairs.iter().find(|(k, _)| *k == n).map(|(_, v)| v.to_string());
         let none = || None;
         let r = from_posix(env(&[("LANG", "en_US.UTF-8"), ("LC_NUMERIC", "pl_PL.UTF-8"), ("LC_TIME", "en_GB.UTF-8"), ("LC_PAPER", "de_DE")]), none);
-        assert_eq!((r.numbers.as_str(), r.time.as_str(), r.decimal), ("pl-PL", "en-GB", ','));
+        assert_eq!((r.numbers.as_str(), r.time.as_str(), r.decimal), ("pl-PL", "en-GB", None));
         assert_eq!((r.paper, r.measurement), (Paper::A4, Measurement::Us), "paper from LC_PAPER, measurement from LANG");
         assert_eq!(from_posix(env(&[("LANG", "it_IT.UTF-8"), ("LC_ALL", "en_US"), ("LC_PAPER", "de_DE")]), none).paper, Paper::Letter);
         assert_eq!(from_posix(env(&[("LANG", "en_US"), ("LC_MEASUREMENT", "it_IT")]), none).measurement, Measurement::Metric);
         assert_eq!(from_posix(env(&[("LANG", "C.UTF-8"), ("LC_ALL", "")]), || Some("it-IT".into())).numbers, "it-IT");
         assert_eq!(from_posix(env(&[]), none), Region::default());
+        // `C` in an LC_* variable is the C locale's conventions, not an unset variable.
+        let r = from_posix(env(&[("LANG", "de_DE.UTF-8"), ("LC_NUMERIC", "C"), ("LC_TIME", "C.UTF-8")]), none);
+        assert_eq!((r.numbers.as_str(), r.time.as_str(), r.paper), ("en-US", "en-US", Paper::A4));
+        assert_eq!(from_posix(env(&[("LANG", "de_DE.UTF-8"), ("LC_ALL", "C")]), none), Region::default());
+        assert_eq!(from_posix(env(&[("LANG", "C"), ("LC_NUMERIC", "")]), || Some("it-IT".into())).numbers, "it-IT");
     }
 
     #[test]
@@ -438,15 +422,20 @@ mod tests {
             reg(&[("LocaleName", "pl-PL"), ("sDecimal", ","), ("sThousand", "\u{a0}"), ("iMeasure", "0"), ("sShortTime", "HH:mm")]),
             || None,
         );
-        assert_eq!((r.numbers.as_str(), r.decimal, r.grouping, r.hour_cycle), ("pl-PL", ',', Some('\u{a0}'), Some(HourCycle::H23)));
+        assert_eq!((r.numbers.as_str(), r.decimal, r.grouping, r.hour_cycle), ("pl-PL", Some(','), Some(Some('\u{a0}')), Some(HourCycle::H23)));
         // An English format in the US with the user's metric and A4 choices and a decimal comma.
         let r = from_windows(
             reg(&[("LocaleName", "en-US"), ("sDecimal", ","), ("iMeasure", "0"), ("iPaperSize", "9"), ("sShortTime", "h:mm tt")]),
             || None,
         );
-        assert_eq!((r.decimal, r.measurement, r.paper, r.hour_cycle), (',', Measurement::Metric, Paper::A4, Some(HourCycle::H12)));
+        assert_eq!(
+            (r.decimal, r.grouping, r.measurement, r.paper, r.hour_cycle),
+            (Some(','), None, Measurement::Metric, Paper::A4, Some(HourCycle::H12))
+        );
         let r = from_windows(reg(&[("sDecimal", "dec"), ("sThousand", "")]), || Some("de-DE".into()));
-        assert_eq!((r.numbers.as_str(), r.decimal, r.grouping), ("de-DE", ',', None), "a separator longer than one character keeps the locale's");
+        assert_eq!((r.numbers.as_str(), r.decimal), ("de-DE", None), "a separator longer than one character keeps the locale's");
+        assert_eq!(r.grouping, Some(None), "an empty grouping separator is no grouping");
+        assert_eq!(from_windows(reg(&[("sThousand", "abc")]), || None).grouping, None);
     }
 
     #[test]
@@ -454,7 +443,7 @@ mod tests {
         let r = from_apple("en_PL", true, ",", "\u{a0}", Some("HH"));
         assert_eq!(
             (r.numbers.as_str(), r.paper, r.decimal, r.grouping, r.hour_cycle),
-            ("en-PL", Paper::A4, ',', Some('\u{a0}'), Some(HourCycle::H23))
+            ("en-PL", Paper::A4, Some(','), Some(Some('\u{a0}')), Some(HourCycle::H23))
         );
         let r = from_apple("en_US", false, ".", ",", Some("h a"));
         assert_eq!((r.measurement, r.hour_cycle), (Measurement::Us, Some(HourCycle::H12)));
