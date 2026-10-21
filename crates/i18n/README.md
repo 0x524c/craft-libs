@@ -45,7 +45,8 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   → `pt`, `zh-hant-hk` → `zh-hant`); `sr-latn` never falls back to Cyrillic `sr`. A missing
   translation never errors.
 - **Lookups:** `t` (plain), `tc` (with a context such as `menu` or `@msg`, else plain), `tid` (an
-  `@id` command id, else the English label), `trn` (a count, `@plural` rows, `{n}` filled), `get`
+  `@id` command id, else the English label), `trn` and `trn_decimal` (a count, `@plural` rows,
+  `{n}` filled), `get`
   (one context along the locale chain, so `pt-br` can return a `pt` row, but never the plain row
   or English: a key cap's name under `key`, or "is there a translation?"), and `fmt` for `{name}`
   placeholders, filled in one pass.
@@ -54,10 +55,12 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   are skipped and returned by `I18n::new` for the app to log; craft-i18n's CI rejects them before
   they ship.
 - **Plurals:** forms are listed in CLDR order (zero, one, two, few, many, other) for the categories
-  whole numbers 0 to 1000 reach, from `intl_pluralrules`; a count in any other category takes the
-  last form. CLDR's `pt` is Brazilian, so `pt` uses `pt-PT`'s rules (0 is plural) and `pt-br`
-  `pt`'s. `intl_pluralrules` is pinned to the version craft-i18n's checker uses, and
-  `plural_form_counts` holds the same counts.
+  whole numbers 0 to 1000 reach, from ICU4X's CLDR rules; `plural_form_counts` holds the counts
+  craft-i18n's checker expects. `trn_decimal` picks the form from the digits shown (ICU4X plural
+  operands), so English `1.0` is plural and French `1,5` singular. A count in a category integers
+  never reach takes the `few` form if there is one (Russian and Ukrainian decimals, `1,5 файла`),
+  else the last. CLDR's `pt` is Brazilian, so `pt` uses `pt-PT`'s rules (0 is plural) and `pt-br`
+  `pt`'s. A language outside the baked data (below) has no plural rules and shows English forms.
 - **Names:** a language's name comes from its shared catalog's `@id language.name` row, else its
   code; English is "English".
 - **Right to left:** `rtl` is true for `ar`, `ckb`, `dv`, `fa`, `he`, `ps`, `sd`, `ug`, `ur` and
@@ -74,8 +77,20 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   the smallest, sizes round up), and `B` or words for bytes. `measure(lang, value, decimals,
   "{n} px")` writes any other measure. Unit names are rows in context `unit`, keyed by the English
   template (`{n} MB` → `{n} Mo`, `{n}%` → `{n} %`) and read with `get`, so a plain `B` row (bold)
-  is never used; bytes in words are the `@plural` row `{n} byte|{n} bytes`. Numbers are
-  ASCII digits with a decimal point.
+  is never used; bytes in words are the `@plural` row `{n} byte|{n} bytes`. Numbers are written
+  by `I18n::format`.
+- **Numbers:** `Format` writes numbers for a `Region` on ICU4X's decimal formatter: `integer`
+  (`1.234.567`, Indian `12,34,567`), `number(value, decimals)` and `percent(ratio, decimals)`
+  (`50 %`, Turkish `%50`). It follows the region, not the interface language, with the locale's
+  digits (`١٬٢٣٤٫٥` in Egypt, `۱٬۲۳۴` in Iran) or, with `Digits::Latin`, `0`–`9`. With Latin
+  digits, a decimal or grouping separator the region sets replaces the locale's (English in Poland:
+  `1.234,5`). `I18n::format` is the format `trn`, `file_size` and `measure` use: the system
+  region's until `I18n::set_format` (the user's region setting or digit choice).
+- **CLDR data:** decimal symbols, digits and plural rules (`data/numbers.postcard`, about 6 KB) and
+  percent patterns (`data/locales.rs`) cover the languages the catalogs and apps ship, with their
+  regional variants; `data/generate.sh` lists them and rebuilds both from CLDR. Add a language
+  there when a catalog adds one. The ICU4X code and data add about 90 KB to a stripped release
+  build and 80 KB to wasm.
 - **Formatting region:** `Region` holds how numbers, times and measurements are written, apart
   from the interface language: the number and time locales (BCP 47), metric or US measurement, A4
   or Letter, the decimal separator, and the grouping separator and clock when the system sets
