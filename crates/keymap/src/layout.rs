@@ -16,7 +16,12 @@
 //!    each other so zoom keys work with and without Shift.
 //! 4. **Whether a layout is Latin** is decided for the whole layout ([`Layout::is_latin`]), never
 //!    per key: Dvorak's `'` key on the Q position stays `'`.
-//! 5. **Labels** show letters and digits by name, and a punctuation key as the character the
+//! 5. **No position fallback for unnamed characters on moved layouts:** egui reports a character
+//!    that has no key (Dvorak's ⇧, types `<`) as the key's position, W. With Shift held on a
+//!    Latin layout whose letters are known to sit elsewhere than on QWERTY, such a press at a
+//!    letter position resolves to nothing unless that position is known to type its own letter,
+//!    so Ctrl+Shift+, never runs Ctrl+Shift+W.
+//! 6. **Labels** show letters and digits by name, and a punctuation key as the character the
 //!    layout types at its position when that character has no key of its own: Ctrl+[ is `Ctrl+Ü`
 //!    on German and `Ctrl+Х` on Russian.
 //!
@@ -92,6 +97,8 @@ pub struct Layout {
     seen_latin: Option<bool>,
     /// The character typed without modifiers at each punctuation position.
     chars: BTreeMap<Key, char>,
+    /// The character, lower case, typed without Cmd, Ctrl or Alt at each letter position.
+    letters: BTreeMap<Key, char>,
 }
 
 /// US base keys and the key egui reports for them with Shift held.
@@ -175,6 +182,9 @@ impl Layout {
             if c.is_alphabetic() {
                 self.seen_latin = Some(is_latin_letter(c));
             }
+            if !c.is_control() {
+                self.letters.insert(physical, c.to_lowercase().next().unwrap_or(c));
+            }
         } else if !mods.shift && !c.is_control() {
             self.set_char(physical, c);
         }
@@ -192,9 +202,27 @@ impl Layout {
         {
             return Some(Chord::new(held, position));
         }
+        if held.shift
+            && let Some(position) = input.physical.filter(|k| k.is_letter())
+            && input.typed.is_none_or(|typed| typed == position)
+            && !self.types_own_letter(position)
+        {
+            return None;
+        }
         let key = input.typed.or(input.physical)?;
         let drop_shift = held.shift && key.is_symbol() && input.needs_shift(key);
         Some(Chord::new(if drop_shift { without_shift(held) } else { held }, key))
+    }
+
+    /// Rule 5: whether a press reported as the letter at its own position can be that letter.
+    /// Yes when the position is known to type it, or nothing is known to sit elsewhere than on
+    /// QWERTY; otherwise the press likely typed a character egui has no key for.
+    fn types_own_letter(&self, position: Key) -> bool {
+        let own = |key: Key, c: char| Key::from_char(c) == Some(key);
+        match self.letters.get(&position) {
+            Some(&c) => own(position, c),
+            None => self.letters.iter().all(|(&key, &c)| own(key, c)),
+        }
     }
 
     /// The chords a press can run, most specific first: [`resolve`](Self::resolve)'s chord, the
@@ -235,7 +263,7 @@ impl Layout {
         self.candidates(input).iter().any(|c| c.effective(platform) == want)
     }
 
-    /// Rule 5: the layout's character for the punctuation key `key`, when pressing that position
+    /// Rule 6: the layout's character for the punctuation key `key`, when pressing that position
     /// means `key` and the layout types `key`'s own character nowhere else that is known.
     pub(crate) fn key_label(&self, key: Key) -> Option<String> {
         let typed = self.char_at(key)?;

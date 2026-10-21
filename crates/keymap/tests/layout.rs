@@ -137,6 +137,34 @@ fn typing_decides_whether_the_layout_is_latin() {
 }
 
 #[test]
+fn dvorak_shift_punctuation_never_runs_its_position() {
+    // Dvorak's , key sits on W and types < with Shift, which egui has no key for, so egui
+    // reports the press as W.
+    let ctrl_shift_lt = at("Cmd+Shift+W", Key::W);
+    let mut dvorak = Layout::new();
+    assert_eq!(dvorak.resolve(&ctrl_shift_lt), Some(chord("Cmd+Shift+W")), "nothing known yet");
+
+    dvorak.observe(Key::S, Mods::NONE, "o");
+    assert_eq!(dvorak.resolve(&ctrl_shift_lt), None, "letters are known to be moved");
+    assert!(!dvorak.matches(&chord("Ctrl+Shift+W"), &ctrl_shift_lt, Platform::Windows));
+    dvorak.observe(Key::W, Mods::NONE, ",");
+    assert_eq!(dvorak.resolve(&ctrl_shift_lt), None);
+    // Without Shift, and for letters typed where they sit (Dvorak's A) or elsewhere, presses
+    // resolve as before.
+    assert_eq!(dvorak.resolve(&at("Cmd+W", Key::W)), Some(chord("Cmd+W")));
+    dvorak.observe(Key::A, Mods::NONE, "a");
+    assert_eq!(dvorak.resolve(&at("Cmd+Shift+A", Key::A)), Some(chord("Cmd+Shift+A")));
+    assert_eq!(dvorak.resolve(&at("Cmd+Shift+O", Key::S)), Some(chord("Cmd+Shift+O")));
+
+    // QWERTY: a position typing its own letter keeps the position fallback.
+    let mut qwerty = Layout::new();
+    qwerty.observe(Key::S, Mods::NONE, "s");
+    qwerty.observe(Key::W, Mods::SHIFT, "W");
+    assert_eq!(qwerty.resolve(&ctrl_shift_lt), Some(chord("Cmd+Shift+W")));
+    assert_eq!(qwerty.resolve(&at("Cmd+Shift+E", Key::E)), Some(chord("Cmd+Shift+E")));
+}
+
+#[test]
 fn labels_show_the_layouts_own_punctuation() {
     let mut german = Layout::new().with_char(Key::OpenBracket, 'ü').with_char(Key::Slash, '-').with_char(Key::CloseBracket, '+');
     german.observe(Key::Minus, Mods::NONE, "ß");
