@@ -312,6 +312,38 @@ fn start_and_none_defined_options() {
 }
 
 #[test]
+fn a_failed_change_keeps_its_shortcut_when_a_later_change_frees_room() {
+    // Save's change finds the overrides full. Close's change then frees an entry, and Zoom In
+    // takes Cmd+S. Removing Cmd+S from Save would fit now, but Save's import failed, so Save
+    // keeps it and Zoom In stays as it was.
+    let set = ForeignSet {
+        name: None,
+        entries: vec![
+            win("File", &["Save"], &[("Default", "Ctrl+Alt+S")]),
+            win("File", &["Close"], &[("Default", "Ctrl+W")]),
+            win("View", &["Zoom In"], &[("Default", "Ctrl+S")]),
+        ],
+    };
+    let mut o = Overrides::new();
+    o.insert("file.close", vec!["Cmd+Q".into()]);
+    o.insert("view.zoomIn", vec!["Cmd+Alt+Z".into()]);
+    for n in 2..MAX_COMMANDS {
+        o.insert(format!("junk.{n}"), vec!["Cmd+K".into()]);
+    }
+    assert_eq!(o.len(), MAX_COMMANDS);
+    let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() };
+    let mut km = keymap(Platform::Windows).with_overrides(o);
+    let r = plan(&set, &km, &options).apply(&mut km);
+    has(&km, "file.save", &["Cmd+S"]);
+    has(&km, "file.close", &["Cmd+W"]);
+    has(&km, "view.zoomIn", &["Cmd+Alt+Z"]);
+    let failed: Vec<(&str, FailedChange)> = r.failed.iter().map(|f| (f.command.id.as_str(), f.change)).collect();
+    assert_eq!(failed, [("file.save", FailedChange::Bind), ("view.zoomIn", FailedChange::Bind)]);
+    assert!(r.conflicts_cleared.is_empty(), "{:?}", r.conflicts_cleared);
+    assert_eq!(r.imported, 1);
+}
+
+#[test]
 fn changes_that_find_the_overrides_full_are_reported() {
     let set = ForeignSet {
         name: None,
