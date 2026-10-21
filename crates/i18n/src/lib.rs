@@ -6,6 +6,13 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod catalog;
+#[cfg(feature = "collate")]
+mod collate;
+mod fold;
+
+#[cfg(feature = "collate")]
+pub use collate::Collator;
+pub use fold::{Folded, Folder};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Mutex, OnceLock, PoisonError};
