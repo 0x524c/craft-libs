@@ -12,7 +12,7 @@ build. The build reads a local checkout named by `CRAFT_FONTS_DIR` instead.
 | `CRAFT_FONTS_DIR` unset or empty | Empty table. |
 | `CRAFT_FONTS_DIR` = a craft-fonts checkout | Every selected face of `fonts/manifest.txt`, embedded with `include_bytes!`. |
 | `CRAFT_FONTS_DIR` set, but no manifest or a missing font file | `cargo::warning`, empty table. |
-| `CRAFT_FONTS_REQUIRED=1` (any value but empty or `0`) | Error instead when the directory is unset, unreadable, has no selected face, or has no face for a script passed to `scripts`. |
+| `CRAFT_FONTS_REQUIRED=1` (exactly `1`; other values are ignored) | Error instead when the directory is unset, unreadable, has no selected face, or has no face for a script passed to `scripts`. |
 
 Give `CRAFT_FONTS_DIR` as an absolute path: Cargo runs build scripts in the package's directory.
 
@@ -56,7 +56,7 @@ pub static CRAFT_FONTS: &[EmbeddedFace] = include!(concat!(env!("OUT_DIR"), "/cr
 `craft_fonts_build::embed("craft_fonts.rs")` embeds every face. `Embed` narrows the set:
 
 - `scripts(&["Jpan", "Arab", "Hant"])` keeps faces with any of these script tags. A tag matches
-  itself and its region forms (`Hant` matches `Hant-HK`). With `CRAFT_FONTS_REQUIRED`, each tag
+  itself and its region forms (`Hant` matches `Hant-HK`). With `CRAFT_FONTS_REQUIRED=1`, each tag
   must match at least one face.
 - `filter(|entry| …)` keeps faces by any manifest field (family, style, licence, index).
 - `dir(path)` and `required(bool)` override the two environment variables.

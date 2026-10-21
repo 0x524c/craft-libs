@@ -9,8 +9,8 @@
 //! - **Unset or empty:** the table is empty and the app uses its own and system fonts.
 //! - **Set:** every selected face in `fonts/manifest.txt` is embedded with `include_bytes!`.
 //! - **Set, but not readable as a checkout:** a `cargo::warning` and an empty table.
-//! - **`CRAFT_FONTS_REQUIRED=1`** (release builds): a missing or unreadable checkout, no selected
-//!   face, or a requested script without a face is an [`Error`].
+//! - **`CRAFT_FONTS_REQUIRED=1`** (release builds; any other value is ignored): a missing or
+//!   unreadable checkout, no selected face, or a requested script without a face is an [`Error`].
 //!
 //! Add this crate both as a build-dependency (for [`embed`]) and as a dependency (for
 //! [`EmbeddedFace`]). In `build.rs`'s `main`:

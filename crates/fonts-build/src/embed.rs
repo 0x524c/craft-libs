@@ -34,13 +34,13 @@ pub struct Embed {
 }
 
 impl Embed {
-    /// Every face, from `CRAFT_FONTS_DIR`, required when `CRAFT_FONTS_REQUIRED` is set.
+    /// Every face, from `CRAFT_FONTS_DIR`, required when `CRAFT_FONTS_REQUIRED=1`.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Embed only faces with at least one of these script tags (see
-    /// [`ManifestEntry::has_script`]). With `CRAFT_FONTS_REQUIRED`, each tag must match a face.
+    /// [`ManifestEntry::has_script`]). With `CRAFT_FONTS_REQUIRED=1`, each tag must match a face.
     pub fn scripts(mut self, tags: &[&str]) -> Self {
         self.scripts = Some(tags.iter().map(|t| (*t).to_owned()).collect());
         self
@@ -58,7 +58,7 @@ impl Embed {
         self
     }
 
-    /// Override `CRAFT_FONTS_REQUIRED`.
+    /// Override `CRAFT_FONTS_REQUIRED` (required only when it is exactly `1`).
     pub fn required(mut self, required: bool) -> Self {
         self.required = Some(required);
         self
@@ -88,7 +88,7 @@ impl Embed {
             (false, Some(out_dir)) => Path::new(out_dir).join(out_file),
             (false, None) => return Err(Error::NoOutDir),
         };
-        let required = self.required.unwrap_or_else(|| env.required.as_ref().is_some_and(|v| !v.is_empty() && v != "0"));
+        let required = self.required.unwrap_or_else(|| env.required.as_ref().is_some_and(|v| v == "1"));
         let dir = self.dir.clone().or_else(|| env.dir.clone().filter(|d| !d.is_empty()).map(PathBuf::from));
 
         let selected = match &dir {
@@ -181,7 +181,7 @@ fn write(path: &Path, contents: &str) -> Result<(), Error> {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// `CRAFT_FONTS_REQUIRED` is set but `CRAFT_FONTS_DIR` is unset or empty.
+    /// `CRAFT_FONTS_REQUIRED=1` but `CRAFT_FONTS_DIR` is unset or empty.
     NotSet,
     /// The manifest or a font file it lists can't be read.
     Read { path: PathBuf, source: io::Error },
@@ -201,15 +201,15 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotSet => {
-                write!(f, "{REQUIRED_VAR} is set but {DIR_VAR} is not: set {DIR_VAR} to the absolute path of a storytold/craft-fonts checkout")
+                write!(f, "{REQUIRED_VAR}=1 but {DIR_VAR} is not: set {DIR_VAR} to the absolute path of a storytold/craft-fonts checkout")
             }
             Self::Read { path, source } => {
                 write!(f, "cannot read {} ({DIR_VAR} must be the absolute path of a storytold/craft-fonts checkout): {source}", path.display())
             }
             Self::Parse { manifest, error } => write!(f, "{}: {error}", manifest.display()),
-            Self::NoFaces { manifest } => write!(f, "{REQUIRED_VAR} is set but no face in {} was selected", manifest.display()),
+            Self::NoFaces { manifest } => write!(f, "{REQUIRED_VAR}=1 but no face in {} was selected", manifest.display()),
             Self::MissingScripts { manifest, scripts } => {
-                write!(f, "{REQUIRED_VAR} is set but {} has no face for {}", manifest.display(), scripts.join(", "))
+                write!(f, "{REQUIRED_VAR}=1 but {} has no face for {}", manifest.display(), scripts.join(", "))
             }
             Self::Write { path, source } => write!(f, "cannot write {}: {source}", path.display()),
             Self::NoOutDir => write!(f, "OUT_DIR is not set: call craft-fonts-build from a build script, or pass an absolute out_file"),

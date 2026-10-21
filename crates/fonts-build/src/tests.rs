@@ -75,8 +75,10 @@ fn unset_dir_writes_an_empty_table() {
     assert!(r.cargo.contains(&"cargo::rerun-if-env-changed=CRAFT_FONTS_DIR".to_owned()));
     assert!(r.cargo.contains(&"cargo::rerun-if-env-changed=CRAFT_FONTS_REQUIRED".to_owned()));
     assert!(!r.cargo.iter().any(|l| l.starts_with("cargo::warning")));
-    // `0` and empty are not "required".
-    assert!(run(Embed::new(), None, Some("0")).result.is_ok());
+    // Only `1` means required.
+    for value in ["0", "true", "yes", " 1"] {
+        assert!(run(Embed::new(), None, Some(value)).result.is_ok(), "{value:?}");
+    }
     assert!(run(Embed::new(), Some(Path::new("")), Some("")).result.is_ok());
 }
 
