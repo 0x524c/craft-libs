@@ -292,7 +292,9 @@ pub fn fmt(template: &str, args: &[(&str, &str)]) -> String {
 /// Chinese without a script picks one by region; Portuguese falls back to `pt-br` last, when
 /// there is no `pt`. A glibc script modifier (`sr_RS@latin`) becomes the script subtag. With a
 /// script (`sr-Latn-RS`), a code without one is tried only when that is its language's usual
-/// script, so Latin Serbian never picks Cyrillic `sr`, while `sr-Cyrl-RS` does.
+/// script, so Latin Serbian never picks Cyrillic `sr`, while `sr-Cyrl-RS` does. A region that
+/// implies a script (CLDR likely subtags) counts as that script after the tag as written:
+/// `pa-PK` → `pa-pk`, `pa-arab-pk`, `pa-arab`.
 fn candidates(tag: &str) -> Vec<String> {
     let tag = tag.trim().to_ascii_lowercase();
     let base = tag.split(['.', '@']).next().unwrap_or("").replace('_', "-");
@@ -309,6 +311,16 @@ fn candidates(tag: &str) -> Vec<String> {
         parts.insert(1, s);
     }
     let script = parts.get(1).copied().filter(|s| s.len() == 4 && s.bytes().all(|b| b.is_ascii_alphabetic()));
+    // Chinese picks its script by region below, keeping plain `zh` as the last resort.
+    if script.is_none()
+        && primary != "zh"
+        && let Some(implied) = parts.get(1).filter(|r| is_region(r)).and_then(|r| scripts::region_script(primary, r))
+    {
+        let mut out = vec![parts.join("-")];
+        parts.insert(1, implied);
+        out.extend(candidates(&parts.join("-")));
+        return out;
+    }
     let mut out: Vec<String> = (1..=parts.len()).rev().map(|n| parts.get(..n).unwrap_or_default().join("-")).collect();
     if let Some(s) = script
         && usual_script(primary).is_some_and(|usual| usual != s)
@@ -316,7 +328,8 @@ fn candidates(tag: &str) -> Vec<String> {
         out.retain(|c| c.split('-').any(|p| p == s));
     }
     if primary == "zh" && !parts.iter().any(|p| matches!(*p, "hans" | "hant")) {
-        let script = if parts.iter().any(|p| matches!(*p, "tw" | "hk" | "mo")) { "zh-hant" } else { "zh-hans" };
+        let hant = parts.iter().skip(1).any(|p| scripts::region_script("zh", p) == Some("hant"));
+        let script = if hant { "zh-hant" } else { "zh-hans" };
         out.insert(out.len().saturating_sub(1), script.to_owned());
     }
     if primary == "pt" && !out.iter().any(|c| c == "pt-br") {
@@ -565,6 +578,8 @@ mod tests {
             ("zh", Some("zh-hans")),
             ("zh-Hant-MO", Some("zh-hant")),
             ("zh_CN", Some("zh-hans")),
+            ("zh-US", Some("zh-hant")),
+            ("zh_SG", Some("zh-hans")),
             ("C", Some("en")),
             ("POSIX", Some("en")),
             ("en_US", Some("en")),
@@ -574,6 +589,17 @@ mod tests {
         ] {
             assert_eq!(i.match_tag(tag).map(|l| i.code(l)), want, "{tag}");
         }
+    }
+
+    #[test]
+    fn region_implies_script() {
+        assert_eq!(candidates("pa-PK"), ["pa-pk", "pa-arab-pk", "pa-arab"]);
+        assert_eq!(candidates("pa_PK.UTF-8"), ["pa-pk", "pa-arab-pk", "pa-arab"]);
+        assert_eq!(candidates("pa-IN"), ["pa-in", "pa"]);
+        assert_eq!(candidates("sd-IN"), ["sd-in", "sd-deva-in", "sd-deva"]);
+        assert_eq!(candidates("pa-Guru-PK"), ["pa-guru-pk", "pa-guru", "pa"]);
+        assert_eq!(candidates("zh-US"), ["zh-us", "zh-hant", "zh"]);
+        assert_eq!(candidates("zh-SG"), ["zh-sg", "zh-hans", "zh"]);
     }
 
     #[test]

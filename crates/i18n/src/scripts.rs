@@ -118,7 +118,7 @@ pub fn scripts(tag: &str) -> &'static [Script] {
     if let Some(s) = tag.script.as_deref().and_then(subtag_scripts) {
         return s;
     }
-    if let Some(s) = tag.region.as_deref().and_then(|region| region_scripts(&tag.language, region)) {
+    if let Some(s) = tag.region.as_deref().and_then(|region| region_script(&tag.language, region)).and_then(subtag_scripts) {
         return s;
     }
     match tag.language.as_str() {
@@ -162,39 +162,38 @@ pub fn direction(tag: &str) -> Direction {
 }
 
 /// The forms a language tag's Han characters take: `zh-CN`, `zh-SG`, `zh-Hans` and plain `zh` →
-/// Simplified; `zh-TW` and `zh-Hant` → Traditional; `zh-HK`, `zh-MO` and `zh-Hant-HK` → HongKong;
-/// `ja` → Japanese; `ko` → Korean. `None` for a language not written with Han, which leaves the
-/// choice to the font stack.
+/// Simplified; `zh-TW`, `zh-Hant` and the other regions CLDR writes in Traditional characters
+/// (`zh-US`, `zh-AU`) → Traditional; `zh-HK`, `zh-MO` and `zh-Hant-HK` → HongKong; `ja` →
+/// Japanese; `ko` → Korean. `None` for a language not written with Han, which leaves the choice
+/// to the font stack.
 pub fn han(tag: &str) -> Option<Han> {
     let tag = Subtags::parse(tag);
     let hong_kong = matches!(tag.region.as_deref(), Some("hk" | "mo"));
-    match (tag.language.as_str(), tag.script.as_deref()) {
+    let script = tag.script.as_deref().or_else(|| region_script(&tag.language, tag.region.as_deref()?));
+    match (tag.language.as_str(), script) {
         ("ja", _) => Some(Han::Japanese),
         ("ko", _) => Some(Han::Korean),
         ("zh" | "yue" | "wuu", Some("hans")) => Some(Han::Simplified),
         ("zh" | "yue" | "wuu", Some("hant")) => Some(if hong_kong { Han::HongKong } else { Han::Traditional }),
         // Cantonese is written in Traditional characters with Hong Kong forms unless it says otherwise.
-        ("yue", _) => Some(if tag.region.as_deref() == Some("cn") { Han::Simplified } else { Han::HongKong }),
-        ("zh" | "wuu", _) => Some(match tag.region.as_deref() {
-            Some("tw") => Han::Traditional,
-            _ if hong_kong => Han::HongKong,
-            _ => Han::Simplified,
-        }),
+        ("yue", _) => Some(Han::HongKong),
+        ("zh" | "wuu", _) => Some(Han::Simplified),
         _ => None,
     }
 }
 
-/// The scripts a language takes in a region where CLDR's likely subtags give it a script other
-/// than its usual one (`pa-PK` → `pa-Arab-PK`). Han regions are left to [`han`].
+/// The script subtag of a language in a region where CLDR's likely subtags give it a script
+/// other than its usual one: `pa-PK` → `arab` (`pa-Arab-PK`), `zh-TW` → `hant`.
 // ponytail: mn-CN → Mong is left out until vertical Mongolian layout is supported.
-fn region_scripts(language: &str, region: &str) -> Option<&'static [Script]> {
-    use Script::*;
+pub(crate) fn region_script(language: &str, region: &str) -> Option<&'static str> {
     Some(match (language, region) {
-        ("az", "iq" | "ir") | ("ha", "cm" | "sd") | ("kk", "af" | "cn" | "ir" | "mn") | ("ku", "iq" | "ir" | "lb") => &[Arab],
-        ("ky", "cn") | ("ms", "cc") | ("pa", "pk") | ("tg", "pk") | ("uz", "af") => &[Arab],
-        ("az", "ru") | ("ku", "am" | "az" | "ge" | "tm") | ("ug", "kz" | "mn") | ("uz", "cn") => &[Cyrl],
-        ("ky", "tr") | ("sr", "me" | "ro" | "tr") => &[Latn],
-        ("sd", "in") => &[Deva],
+        ("az", "iq" | "ir") | ("ha", "cm" | "sd") | ("kk", "af" | "cn" | "ir" | "mn") | ("ku", "iq" | "ir" | "lb") => "arab",
+        ("ky", "cn") | ("ms", "cc") | ("pa", "pk") | ("tg", "pk") | ("uz", "af") => "arab",
+        ("az", "ru") | ("ku", "am" | "az" | "ge" | "tm") | ("ug", "kz" | "mn") | ("uz", "cn") => "cyrl",
+        ("ky", "tr") | ("sr", "me" | "ro" | "tr") => "latn",
+        ("sd", "in") => "deva",
+        ("zh", "au" | "bn" | "gb" | "gf" | "hk" | "id" | "mo" | "pa" | "pf" | "ph" | "sr" | "th" | "tw" | "us" | "vn") => "hant",
+        ("yue", "cn") => "hans",
         _ => return None,
     })
 }
@@ -340,6 +339,13 @@ mod tests {
             ("zh-hant-hk", Han::HongKong),
             ("zh-Hans-HK", Han::Simplified),
             ("zh-SG", Han::Simplified),
+            ("zh-US", Han::Traditional),
+            ("zh_AU.UTF-8", Han::Traditional),
+            ("zh-GB", Han::Traditional),
+            ("zh-Hans-US", Han::Simplified),
+            ("zh-MY", Han::Simplified),
+            ("yue-CN", Han::Simplified),
+            ("yue-HK", Han::HongKong),
             ("zh-Hans-SG", Han::Simplified),
             ("yue", Han::HongKong),
             ("yue-Hans", Han::Simplified),
