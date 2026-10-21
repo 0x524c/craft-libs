@@ -88,6 +88,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             return valid(proposal);
         }
         let own = |t: &crate::docking::DropTarget<P>| t.tabs.iter().any(|(p, _)| drag.members.contains(p));
+        let pointer = self.seam_pointer(pointer);
         let target =
             self.targets.iter().rev().find(|t| crate::docking::targets::usable(t.rect) && t.rect.contains(pointer) && !(window && own(t)))?;
         if own(target) {
@@ -104,6 +105,22 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             return None;
         }
         valid(proposal)
+    }
+
+    /// A pointer in the gap between docked frames, outside every target, moves onto the edge of
+    /// the nearest frame that takes splits, so a seam splits beside that frame rather than floating.
+    pub(super) fn seam_pointer(&self, pointer: Pos2) -> Pos2 {
+        let usable = |rect: Rect| crate::docking::targets::usable(rect);
+        if self.targets.iter().any(|t| usable(t.rect) && t.rect.contains(pointer)) {
+            return pointer;
+        }
+        self.targets
+            .iter()
+            .filter(|t| t.allow_splits && usable(t.rect))
+            .map(|t| (t.rect.distance_to_pos(pointer), t.rect))
+            .filter(|(distance, _)| *distance <= self.style.gap)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map_or(pointer, |(_, rect)| rect.clamp(pointer))
     }
 
     /// Release of a group drag: join or split at the target, or float at the ghost with the
@@ -230,7 +247,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let proposal = if float_only {
             None
         } else {
-            self.extra_proposal(std::slice::from_ref(&drag.panel), pointer, false).or_else(|| resolve_drop(&drag.panel, pointer, &self.targets))
+            self.extra_proposal(std::slice::from_ref(&drag.panel), pointer, false)
+                .or_else(|| resolve_drop(&drag.panel, self.seam_pointer(pointer), &self.targets))
         };
         if released {
             cancel_drag::<P>(ctx, self.id);

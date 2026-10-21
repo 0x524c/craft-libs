@@ -42,6 +42,8 @@ mod dock_tests;
 #[cfg(test)]
 mod floating_tests;
 #[cfg(test)]
+mod frame_tests;
+#[cfg(test)]
 mod group_tests;
 #[cfg(test)]
 mod iconic_tests;

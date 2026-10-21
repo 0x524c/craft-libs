@@ -186,6 +186,10 @@ A flyout fits its content the same way, without the title bar.
   4 pt band above the title bar (`chrome::RESIZE_BAND`), so they take no moves and no clicks on
   the title bar's buttons. A resize keeps the opposite edges in place and stays within the size
   limits and the screen. A focused resize handle moves its edge 8 pt per arrow key.
+- Over a frame, the tab strip and the middle join its tabs, and the nearest side splits it. A
+  side zone is a quarter of the frame deep, at least 32 pt and at most half the frame, so a narrow
+  tool strip keeps both side targets. A drop in the gap between two frames splits beside the
+  nearer one.
 - Drop previews show the destination: an outline for tabs, a line for a new group, column or dock,
   a filled half for a split. Escape or losing window focus cancels a drag.
 - Double-click a tab or drag bar to minimize a group to its strip.

@@ -31,8 +31,13 @@ pub(super) fn usable(rect: Rect) -> bool {
     rect.is_finite() && rect.width() > 0.0 && rect.height() > 0.0 && rect.width() <= 1_000_000.0 && rect.height() <= 1_000_000.0
 }
 
-/// Tab header is the center; otherwise the nearest quarter-width/height edge wins.
-/// Outside, non-finite, empty and inverted rectangles have no target.
+/// Least depth of a side zone, so a narrow frame such as a tool strip keeps side targets wide
+/// enough to hit.
+const MIN_SIDE_ZONE: f32 = 32.0;
+
+/// Tab header is the center; otherwise the nearest side zone wins. A side zone is a quarter of
+/// the frame deep, at least 32 pt and at most half the frame, so a frame up to 64 pt wide has no
+/// center. Outside, non-finite, empty and inverted rectangles have no target.
 pub fn drop_zone(rect: Rect, tab_height: f32, pointer: Pos2) -> Option<Zone> {
     if !usable(rect) || !pointer.is_finite() || !rect.contains(pointer) || !tab_height.is_finite() || tab_height < 0.0 {
         return None;
@@ -40,11 +45,16 @@ pub fn drop_zone(rect: Rect, tab_height: f32, pointer: Pos2) -> Option<Zone> {
     if pointer.y < rect.top() + tab_height.min(rect.height()) {
         return Some(Zone::Center);
     }
-    let x = (pointer.x - rect.left()) / rect.width();
-    let y = (pointer.y - rect.top()) / rect.height();
-    let distances = [(x, Zone::Left), (1.0 - x, Zone::Right), (y, Zone::Top), (1.0 - y, Zone::Bottom)];
+    let depth = |extent: f32| (extent * 0.25).max(MIN_SIDE_ZONE).min(extent * 0.5);
+    let (x, y) = (depth(rect.width()), depth(rect.height()));
+    let distances = [
+        ((pointer.x - rect.left()) / x, Zone::Left),
+        ((rect.right() - pointer.x) / x, Zone::Right),
+        ((pointer.y - rect.top()) / y, Zone::Top),
+        ((rect.bottom() - pointer.y) / y, Zone::Bottom),
+    ];
     let (distance, zone) = distances.into_iter().min_by(|a, b| a.0.total_cmp(&b.0))?;
-    Some(if distance > 0.25 { Zone::Center } else { zone })
+    Some(if distance > 1.0 { Zone::Center } else { zone })
 }
 
 /// Preview of the region occupied after a split or group merge.
