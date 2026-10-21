@@ -323,6 +323,7 @@ fn a_failed_change_keeps_its_shortcut_when_a_later_change_frees_room() {
             win("File", &["Close"], &[("Default", "Ctrl+W")]),
             win("View", &["Zoom In"], &[("Default", "Ctrl+S")]),
         ],
+        truncated: 0,
     };
     let mut o = Overrides::new();
     o.insert("file.close", vec!["Cmd+Q".into()]);
