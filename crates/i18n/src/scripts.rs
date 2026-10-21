@@ -3,6 +3,7 @@
 
 /// A writing system, by its ISO 15924 code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum Script {
     Arab,
     Armn,
@@ -90,6 +91,7 @@ pub enum Direction {
 /// KR). The same code point is drawn differently in each, so a font stack picks its Han face by
 /// this, not by script.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Han {
     /// Simplified Chinese, mainland China and Singapore (SC).
     Simplified,
@@ -105,14 +107,18 @@ pub enum Han {
 
 /// The scripts a language tag's interface text is written in (`ja` → Hani, Hira, Kana; `sr` →
 /// Cyrl; `sr-latn` → Latn), the main one first. Any case and glibc form (`sr_RS.UTF-8@latin`). A
-/// script subtag wins over the language's usual script. Latin product names and units appear in
-/// every language, so Latn is listed only where it is the language's own script. A language not
-/// in the table is taken to be written in Latin.
+/// script subtag wins, then a region that implies a script (`pa-PK` → Arab), then the language's
+/// usual script. Latin product names and units appear in every language, so Latn is listed only
+/// where it is the language's own script. A language not in the table is taken to be written in
+/// Latin.
 // ponytail: the languages a Craft app ships or could plausibly ship; add a row with the locale.
 pub fn scripts(tag: &str) -> &'static [Script] {
     use Script::*;
     let tag = Subtags::parse(tag);
     if let Some(s) = tag.script.as_deref().and_then(subtag_scripts) {
+        return s;
+    }
+    if let Some(s) = tag.region.as_deref().and_then(|region| region_scripts(&tag.language, region)) {
         return s;
     }
     match tag.language.as_str() {
@@ -176,6 +182,21 @@ pub fn han(tag: &str) -> Option<Han> {
         }),
         _ => None,
     }
+}
+
+/// The scripts a language takes in a region where CLDR's likely subtags give it a script other
+/// than its usual one (`pa-PK` → `pa-Arab-PK`). Han regions are left to [`han`].
+// ponytail: mn-CN → Mong is left out until vertical Mongolian layout is supported.
+fn region_scripts(language: &str, region: &str) -> Option<&'static [Script]> {
+    use Script::*;
+    Some(match (language, region) {
+        ("az", "iq" | "ir") | ("ha", "cm" | "sd") | ("kk", "af" | "cn" | "ir" | "mn") | ("ku", "iq" | "ir" | "lb") => &[Arab],
+        ("ky", "cn") | ("ms", "cc") | ("pa", "pk") | ("tg", "pk") | ("uz", "af") => &[Arab],
+        ("az", "ru") | ("ku", "am" | "az" | "ge" | "tm") | ("ug", "kz" | "mn") | ("uz", "cn") => &[Cyrl],
+        ("ky", "tr") | ("sr", "me" | "ro" | "tr") => &[Latn],
+        ("sd", "in") => &[Deva],
+        _ => return None,
+    })
 }
 
 /// The scripts a script subtag stands for, including the CLDR unions (`jpan`, `kore`). `None` for
@@ -350,6 +371,38 @@ mod tests {
         assert_eq!(direction("pa-Arab"), Direction::Rtl);
         assert_eq!(direction("sd-Deva"), Direction::Ltr);
         assert_eq!(direction("he_IL.UTF-8"), Direction::Rtl);
+    }
+
+    /// CLDR likely subtags: a region can switch a language to another script.
+    #[test]
+    fn region_implies_script() {
+        for (tag, want) in [
+            ("pa-PK", &[Arab][..]),
+            ("pa_PK.UTF-8", &[Arab]),
+            ("pa-IN", &[Guru]),
+            ("uz-AF", &[Arab]),
+            ("uz-UZ", &[Latn]),
+            ("uz-CN", &[Cyrl]),
+            ("az-IR", &[Arab]),
+            ("az-AZ", &[Latn]),
+            ("sd-IN", &[Deva]),
+            ("sd-PK", &[Arab]),
+            ("ks-IN", &[Arab]),
+            ("ms-CC", &[Arab]),
+            ("ms-BN", &[Latn]),
+            ("sr-ME", &[Latn]),
+            ("kk-CN", &[Arab]),
+            ("ug-KZ", &[Cyrl]),
+            ("pa-Guru-PK", &[Guru]),
+            ("sd-Arab-IN", &[Arab]),
+        ] {
+            assert_eq!(scripts(tag), want, "{tag}");
+        }
+        assert_eq!(direction("pa-PK"), Direction::Rtl);
+        assert_eq!(direction("uz-AF"), Direction::Rtl);
+        assert_eq!(direction("az-IR"), Direction::Rtl);
+        assert_eq!(direction("sd-IN"), Direction::Ltr);
+        assert_eq!(direction("ug-KZ"), Direction::Ltr);
     }
 
     /// The usual scripts tag matching relies on agree with the table.
