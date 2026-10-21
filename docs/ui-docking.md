@@ -68,6 +68,11 @@ layout.apply(Action::Move {
   `Placement::for_zone(layout, anchor, zone, right_to_left)` maps a left, right, top, bottom or
   center zone onto what the anchor's container takes: a split in the frame tree, a new column on
   that side or a new group above or below in a dock, a group above or below in a floating window.
+- A side split zone puts what moves in a new half-size split of the anchor's frame. A frame
+  that holds the fixed size of its parent split along the same axis, such as a tool strip, keeps
+  that size: on its outer side the new split wraps the parent, on its inner side it halves the
+  parent's other child. The new split has its own divider, and the drop preview shows the half
+  the new frame takes.
 - Other actions select, minimize, collapse to icons, resize splits, columns and groups, and move
   a floating window to its own OS window (`SetNative`, feature `native-windows`).
 

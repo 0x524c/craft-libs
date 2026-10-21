@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt, hash::Hash};
 
-use super::dock_model::{Column, ColumnLocation, Group, GroupLocation, Moving, PanelState, Place, Side, Target, Unit, node_at, valid_column};
+use super::dock_model::{Column, ColumnLocation, Group, GroupLocation, Moving, PanelState, Place, Side, Target, Unit, node_at, split_frame, valid_column};
 use crate::layout::{SplitAxis, SplitSize};
 
 /// Limits are checked before cloning or recursively modifying an application layout.
@@ -165,7 +165,9 @@ pub enum Placement<P> {
     /// Insert before this existing destination member, or append. Also reorders a group.
     Tab { before: Option<P> },
     /// Center inserts after the anchor; sides create a new half-size split. Sides apply to
-    /// `Tabs` and `Stack` nodes only.
+    /// `Tabs` and `Stack` nodes only. A frame that holds the fixed size of its parent split
+    /// along the same axis keeps it: on its outer side the new split wraps the parent, on its
+    /// inner side it halves the parent's other child.
     Split(Zone),
     /// A new group above or below the anchor's group, in a dock column or a floating stack.
     /// `height` is the inserted group's preferred height ([`super::Group::height`]); `None`
@@ -1068,6 +1070,13 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             let group = Group::new(vec![entry.panel], 0);
             return self.insert_moving(Moving::group(group), Target::At { anchor: anchor.clone(), placement });
         }
+        if let (Placement::Split(zone), Place::Node(path)) = (&placement, &place)
+            && *zone != Zone::Center
+        {
+            let root = self.root.as_mut().ok_or(DockError::MissingTarget)?;
+            let new = Node::Tabs { panels: vec![entry.panel], active: 0 };
+            return if split_frame(root, path, new, *zone) { Ok(()) } else { Err(DockError::MissingTarget) };
+        }
         if let Some(root) = self.root.as_mut()
             && insert_node(root, &entry, anchor, &placement)
         {
@@ -1212,14 +1221,6 @@ fn insert_node<P: Clone + Eq>(node: &mut Node<P>, entry: &StackEntry<P>, anchor:
     };
     if !here {
         return false;
-    }
-    if let Placement::Split(zone @ (Zone::Left | Zone::Right | Zone::Top | Zone::Bottom)) = placement {
-        let old = std::mem::replace(node, Node::Tabs { panels: Vec::new(), active: 0 });
-        let new = Node::Tabs { panels: vec![entry.panel.clone()], active: 0 };
-        let axis = if matches!(zone, Zone::Top | Zone::Bottom) { SplitAxis::Vertical } else { SplitAxis::Horizontal };
-        let (first, second) = if matches!(zone, Zone::Top | Zone::Left) { (new, old) } else { (old, new) };
-        *node = Node::Split { axis, size: SplitSize::Ratio(0.5), first: Box::new(first), second: Box::new(second) };
-        return true;
     }
     match node {
         Node::Tabs { panels, active } => {

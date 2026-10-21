@@ -9,7 +9,9 @@ use crate::docking::{
     dock_model::{Place, node_at},
     resolve_drop,
     surface::TAB_PADDING,
+    zone_rect,
 };
+use crate::layout::SplitAxis;
 
 /// Ctrl (Windows, Linux) or Cmd (macOS) held: the drop floats and no target is offered.
 fn float_only(ctx: &Context) -> bool {
@@ -104,7 +106,29 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if window && matches!(proposal.placement, Placement::Split(_)) {
             return None;
         }
-        valid(proposal)
+        valid(self.split_preview(proposal))
+    }
+
+    /// The preview of a side split beside a frame that holds its parent's fixed size: the half
+    /// of the parent or of the other child that the new frame takes.
+    fn split_preview(&self, mut proposal: DropProposal<P>) -> DropProposal<P> {
+        let Placement::Split(zone) = proposal.placement else { return proposal };
+        let axis = match zone {
+            Zone::Center => return proposal,
+            Zone::Left | Zone::Right => SplitAxis::Horizontal,
+            Zone::Top | Zone::Bottom => SplitAxis::Vertical,
+        };
+        let Some(slot) = self.fixed_slots.iter().find(|slot| slot.axis == axis && slot.panels.contains(&proposal.anchor)) else { return proposal };
+        let opposite = match zone {
+            Zone::Left => Zone::Right,
+            Zone::Right => Zone::Left,
+            Zone::Top => Zone::Bottom,
+            _ => Zone::Top,
+        };
+        let before = matches!(zone, Zone::Left | Zone::Top);
+        let preview = if before == slot.first { zone_rect(slot.parent, zone) } else { zone_rect(slot.sibling, opposite) };
+        proposal.preview = preview.unwrap_or(proposal.preview);
+        proposal
     }
 
     /// A pointer in the gap between docked frames, outside every target, moves onto the edge of
@@ -248,7 +272,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             None
         } else {
             self.extra_proposal(std::slice::from_ref(&drag.panel), pointer, false)
-                .or_else(|| resolve_drop(&drag.panel, self.seam_pointer(pointer), &self.targets))
+                .or_else(|| resolve_drop(&drag.panel, self.seam_pointer(pointer), &self.targets).map(|p| self.split_preview(p)))
         };
         if released {
             cancel_drag::<P>(ctx, self.id);

@@ -207,6 +207,38 @@ pub(super) fn node_at_mut<'a, P>(mut node: &'a mut Node<P>, path: &[bool]) -> Op
     Some(node)
 }
 
+/// Put `new` on the `zone` side of the frame at `path`, in a new half-size split. A frame that
+/// holds the fixed size of its parent split along the same axis keeps that size: on its outer
+/// side the new split wraps the parent, on its inner side it halves the parent's other child.
+/// So a fixed-width tool strip neither halves nor shares its width with the new frame.
+pub(super) fn split_frame<P>(root: &mut Node<P>, path: &[bool], new: Node<P>, zone: Zone) -> bool {
+    let axis = if matches!(zone, Zone::Top | Zone::Bottom) { SplitAxis::Vertical } else { SplitAxis::Horizontal };
+    let before = matches!(zone, Zone::Top | Zone::Left);
+    let (target, new_first) = match fixed_slot(root, path, axis) {
+        Some((parent, anchor_first)) if before == anchor_first => (parent.to_vec(), before),
+        Some((parent, anchor_first)) => ([parent, &[anchor_first]].concat(), !before),
+        None => (path.to_vec(), before),
+    };
+    let Some(node) = node_at_mut(root, &target) else { return false };
+    let old = std::mem::replace(node, Node::Tabs { panels: Vec::new(), active: 0 });
+    let (first, second) = if new_first { (new, old) } else { (old, new) };
+    *node = Node::Split { axis, size: SplitSize::Ratio(0.5), first: Box::new(first), second: Box::new(second) };
+    true
+}
+
+/// The parent path of the frame at `path` and whether the frame is its first child, when the
+/// parent splits along `axis` and the frame holds its fixed size.
+pub(super) fn fixed_slot<'a, P>(root: &Node<P>, path: &'a [bool], axis: SplitAxis) -> Option<(&'a [bool], bool)> {
+    let (second, parent) = path.split_last()?;
+    let Node::Split { axis: parent_axis, size, .. } = node_at(root, parent)? else { return None };
+    let fixed = match size {
+        SplitSize::FixedFirst(_) => !second,
+        SplitSize::FixedSecond(_) => *second,
+        SplitSize::Ratio(_) => false,
+    };
+    (*parent_axis == axis && fixed).then_some((parent, !second))
+}
+
 /// Insert `new` at `index` and select the member at `index + selected`.
 fn splice<P>(panels: &mut Vec<P>, active: &mut usize, index: usize, new: Vec<P>, selected: usize) {
     let index = index.min(panels.len());
@@ -578,14 +610,9 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                     }
                     Placement::Split(zone) => {
                         let Place::Node(path) = place else { return Err(DockError::InvalidPlacement) };
-                        let node = self.root.as_mut().and_then(|root| node_at_mut(root, &path)).ok_or(DockError::MissingTarget)?;
                         let (panels, active) = flatten(moving.groups);
-                        let new = Node::Tabs { panels, active };
-                        let old = std::mem::replace(node, Node::Tabs { panels: Vec::new(), active: 0 });
-                        let axis = if matches!(zone, Zone::Top | Zone::Bottom) { SplitAxis::Vertical } else { SplitAxis::Horizontal };
-                        let (first, second) = if matches!(zone, Zone::Top | Zone::Left) { (new, old) } else { (old, new) };
-                        *node = Node::Split { axis, size: SplitSize::Ratio(0.5), first: Box::new(first), second: Box::new(second) };
-                        Ok(())
+                        let root = self.root.as_mut().ok_or(DockError::MissingTarget)?;
+                        if split_frame(root, &path, Node::Tabs { panels, active }, zone) { Ok(()) } else { Err(DockError::MissingTarget) }
                     }
                     Placement::Group { below, height } => {
                         if !valid_height(height) {

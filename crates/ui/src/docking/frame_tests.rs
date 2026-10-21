@@ -118,3 +118,51 @@ fn a_narrow_frame_offers_both_side_targets_and_a_seam_splits_beside_its_frames()
         out.actions
     );
 }
+
+
+fn bottom(layout: &Layout<u32>) -> &Node<u32> {
+    let Some(Node::Split { second, .. }) = &layout.root else { panic!("{:?}", layout.root) };
+    second
+}
+
+/// Drag a split divider by `dx`, hovering it first as a pointer does.
+fn drag_divider(d: &mut Driver, path: &[bool], dx: f32) {
+    let divider = d.hit(&Hit::Divider(Divider::Split(path.to_vec()))).unwrap_or_else(|| panic!("{path:?} in {:?}", d.hits()));
+    d.move_to(divider.center());
+    d.drag(divider.center(), divider.center() + vec2(dx, 0.0));
+    d.settle();
+}
+
+#[test]
+fn a_split_beside_a_fixed_width_frame_keeps_its_width_and_gets_its_own_divider() {
+    // Left of Tools: the new frame takes half the row, beside Tools at its own width.
+    let mut d = floated_project();
+    let tools = body(&d, TOOLS);
+    let bar = d.hit(&Hit::DragBar(PROJECT[0])).unwrap();
+    let at = pos2(20.0, tools.center().y);
+    d.hold(bar.center(), at);
+    let row = Rect::from_x_y_ranges(0.0..=1440.0, tools.y_range());
+    assert!(d.filled(Rect::from_min_max(row.min, pos2(row.center().x, row.bottom())).shrink(1.0)), "the preview shows the new frame");
+    d.release(at);
+    assert_eq!(bottom(&d.layout), &hsplit(SplitSize::Ratio(0.5), tabs(&PROJECT), tools_row()));
+    d.settle();
+    assert_eq!(body(&d, TOOLS).width(), TOOLS_WIDTH);
+    // Each divider resizes its own two sides; Tools keeps its width.
+    let project = body(&d, PROJECT[0]).width();
+    drag_divider(&mut d, &[true], -200.0);
+    let widths = |d: &Driver| (body(d, PROJECT[0]).width().round(), body(d, TOOLS).width().round());
+    assert_eq!(widths(&d), ((project - 200.0).round(), TOOLS_WIDTH));
+    drag_divider(&mut d, &[true, true], 30.0);
+    assert_eq!(widths(&d), ((project - 200.0).round(), TOOLS_WIDTH + 30.0));
+
+    // Right of Tools: the new frame takes half of what lies right of Tools.
+    let mut d = driver(editing());
+    let tools = body(&d, TOOLS);
+    let tab = d.hit(&Hit::Tab(PROGRAM)).unwrap();
+    d.drag(tab.center(), pos2(tools.right() - 12.0, tools.center().y));
+    let rest = hsplit(SplitSize::FixedSecond(METERS_WIDTH), tabs(&[TIMELINE]), tabs(&[METERS]));
+    let right = hsplit(SplitSize::FixedFirst(TOOLS_WIDTH), tabs(&[TOOLS]), hsplit(SplitSize::Ratio(0.5), tabs(&[PROGRAM]), rest));
+    assert_eq!(bottom(&d.layout), &hsplit(SplitSize::Ratio(0.29), tabs(&PROJECT), right));
+    d.settle();
+    assert_eq!(body(&d, TOOLS).width(), TOOLS_WIDTH);
+}

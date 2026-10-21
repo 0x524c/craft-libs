@@ -50,6 +50,18 @@ pub(super) struct Renderer<'a, P> {
     /// Each panel's place in `layout`, and its entry in `float_space.contents`.
     pub(super) places: HashMap<P, Place>,
     pub(super) contents: HashMap<P, usize>,
+    /// Frames drawn as the fixed-size side of their parent split, for split previews.
+    pub(super) fixed_slots: Vec<FixedSlot<P>>,
+}
+
+/// A frame that holds the fixed size of its parent split: the parent's and the other child's
+/// rects, where a side split of the frame goes (see `dock_model::split_frame`).
+pub(super) struct FixedSlot<P> {
+    pub(super) panels: Vec<P>,
+    pub(super) axis: SplitAxis,
+    pub(super) first: bool,
+    pub(super) parent: Rect,
+    pub(super) sibling: Rect,
 }
 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
@@ -103,6 +115,21 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 let (lo, hi) = split_bounds(wanted.available(), *axis, self.node_limits(first), self.node_limits(second));
                 let first_size = wanted.first_size().clamp(lo, hi);
                 let Some(split) = split_rect(rect, *axis, SplitSize::FixedFirst(first_size), self.style.gap, 0.0) else { return };
+                let fixed = match size {
+                    SplitSize::FixedFirst(_) => Some((first, true, split.second)),
+                    SplitSize::FixedSecond(_) => Some((second, false, split.first)),
+                    SplitSize::Ratio(_) => None,
+                };
+                let panels = |node: &Node<P>| match node {
+                    Node::Tabs { panels, .. } => Some(panels.clone()),
+                    Node::Stack { entries } => Some(entries.iter().map(|e| e.panel.clone()).collect()),
+                    Node::Split { .. } | Node::Dock { .. } => None,
+                };
+                if let Some((node, first, sibling)) = fixed
+                    && let Some(panels) = panels(node)
+                {
+                    self.fixed_slots.push(FixedSlot { panels, axis: *axis, first, parent: rect, sibling });
+                }
                 path.push(false);
                 self.node(ui, first, split.first, path);
                 path.pop();
