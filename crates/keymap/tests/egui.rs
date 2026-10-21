@@ -537,3 +537,37 @@ fn letters_follow_the_latin_layout_from_egui_winit_to_the_dispatcher() {
         assert_eq!(ran, [expected], "{name}, reported");
     }
 }
+
+/// `input` with the Latin layout characters the suite's egui-winit reports per physical key, set
+/// through serde because crates.io egui has no such field; `None` there.
+fn with_latin_layout_chars(mut input: InputState, chars: &[(EguiKey, char)]) -> Option<InputState> {
+    let mut raw = serde_json::to_value(&input.raw).unwrap();
+    raw.get("latin_layout_chars")?;
+    raw["latin_layout_chars"] = serde_json::to_value(chars).unwrap();
+    input.raw = serde_json::from_value(raw).unwrap();
+    Some(input)
+}
+
+#[test]
+fn a_key_without_a_latin_letter_runs_no_letter_binding() {
+    let app = |id: &str, key: &str| Bindable::new(id, id, Scope::app()).with_default(Binding::parse(key).unwrap());
+    let km = Keymap::new(vec![app("quit", "Cmd+Q"), app("quote", "Cmd+'"), app("j", "Cmd+J")], Scopes::new(), Platform::Linux);
+    let at = |key, physical| Event::Key { key, physical_key: Some(physical), pressed: true, repeat: false, modifiers: CTRL };
+
+    // Dvorak + Russian. The QWERTY Q key types й, and Dvorak ' there: egui-winit reports the key
+    // as ', and egui without a key for the character as its position, Q. The QWERTY C key types
+    // с, and Dvorak j.
+    let latin = [(EguiKey::Q, '\''), (EguiKey::C, 'j')];
+    let cases = [(at(EguiKey::Quote, EguiKey::Q), "quote"), (at(EguiKey::Q, EguiKey::Q), "quote"), (at(EguiKey::J, EguiKey::C), "j")];
+    for (press, expected) in cases {
+        let mut d = Dispatcher::new().with_layout(Layout::new().with_latin(false));
+        let Some(input) = with_latin_layout_chars(frame(1.0, CTRL, vec![press.clone()]), &latin) else {
+            // crates.io egui reports no Latin layout, so the position decides: Ctrl+Q.
+            let (ran, _) = run(&mut d, &km, &Active::NONE, frame(1.0, CTRL, vec![at(EguiKey::Q, EguiKey::Q)]));
+            assert_eq!(ran, ["quit"]);
+            return;
+        };
+        let (ran, _) = run(&mut d, &km, &Active::NONE, input);
+        assert_eq!(ran, [expected], "{press:?}");
+    }
+}

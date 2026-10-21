@@ -3,11 +3,12 @@
 //!
 //! One rule decides matching ([`Layout::candidates`]), recording ([`Layout::resolve`]) and labels
 //! ([`Chord::display_for`]):
-//! 1. **Letters A–Z:** the layout's Latin letter for the key, [`KeyInput::latin`] when the
-//!    platform reports it. Without it, on a layout that is not Latin, the letter the toolkit
-//!    reports as typed, else the key's position (the Russian `с` key is C, the Hebrew `/` key is
-//!    Q). The suite's egui-winit reports the Latin layout's letter there, so on Dvorak + Russian
-//!    the `с` key is Dvorak's J. On a Latin layout (Dvorak, AZERTY), the letter typed.
+//! 1. **Letters A–Z:** the layout's Latin letter for the key, from [`KeyInput::latin`] when the
+//!    platform reports the Latin layout's character: on Dvorak + Russian the `с` key is Dvorak's
+//!    J, and the `й` key, `'` on Dvorak, runs no letter binding. Without a report, on a layout
+//!    that is not Latin, the letter the toolkit reports as typed, else the key's position (the
+//!    Russian `с` key is C, the Hebrew `/` key is Q); on a Latin layout (Dvorak, AZERTY), the
+//!    letter typed.
 //! 2. **Digits:** the digit typed, else the key's position (AZERTY's `&é"` row types no digit
 //!    without Shift). A digit-row press that types punctuation also matches its position's digit,
 //!    after the punctuation: AZERTY's `-` key runs Ctrl+- and, when that has no binding, Ctrl+6.
@@ -46,10 +47,12 @@ pub struct KeyInput {
     /// The key at the same position on a US QWERTY keyboard (winit's physical key, the web's
     /// `code`).
     pub physical: Option<Key>,
-    /// The layout's Latin letter for this key, when the platform reports one: the virtual-key
-    /// code on Windows, the layout's ⌘ table on macOS, the first Latin layout group on Linux, the
-    /// key code on the web when the layout is not Latin. Keys other than letters are ignored.
-    pub latin: Option<Key>,
+    /// The character this key types on the layout the platform takes shortcut letters from, when
+    /// it reports one: the layout's ⌘ table on macOS, the first Latin layout group on Linux. A
+    /// letter makes the press that letter; any other character means the key has no Latin letter,
+    /// so the press runs no letter binding (Dvorak's `'` on the key Russian types `й` on is no
+    /// Ctrl+Q).
+    pub latin: Option<char>,
     /// Whether the layout needs Shift to type `typed`, when the platform reports it. Otherwise
     /// Shift counts as needed when `typed` differs from `physical`, and without `physical` when
     /// `typed` is a shifted symbol on a US layout (`:`, `?`, `+`). Only punctuation drops Shift.
@@ -71,8 +74,8 @@ impl KeyInput {
         self
     }
 
-    pub const fn with_latin(mut self, letter: Key) -> KeyInput {
-        self.latin = Some(letter);
+    pub const fn with_latin(mut self, c: char) -> KeyInput {
+        self.latin = Some(c);
         self
     }
 
@@ -196,12 +199,14 @@ impl Layout {
     /// `None` when the press names no key.
     pub fn resolve(&self, input: &KeyInput) -> Option<Chord> {
         let held = input.mods;
-        if let Some(letter) = input.latin.filter(|k| k.is_letter()) {
+        let latin = input.latin.map(|c| Key::from_char(c).filter(|k| k.is_letter()));
+        if let Some(Some(letter)) = latin {
             return Some(Chord::new(held, letter));
         }
         // A letter typed on a layout that is not Latin is the toolkit's letter for shortcuts, or
         // egui standing in the position for a letter it has no key for.
-        if !self.is_latin()
+        if latin.is_none()
+            && !self.is_latin()
             && let Some(letter) = input.typed.filter(|k| k.is_letter()).or(input.physical).filter(|k| k.is_letter())
         {
             return Some(Chord::new(held, letter));
@@ -213,7 +218,12 @@ impl Layout {
         {
             return None;
         }
-        let key = input.typed.or(input.physical)?;
+        let mut key = input.typed.or(input.physical)?;
+        // The Latin layout has no letter here, so a letter egui reports is its position: the
+        // press is the Latin layout's key, or nothing.
+        if let (Some(c), true) = (input.latin, key.is_letter()) {
+            key = Key::from_char(c)?;
+        }
         let drop_shift = held.shift && key.is_symbol() && input.needs_shift(key);
         Some(Chord::new(if drop_shift { without_shift(held) } else { held }, key))
     }

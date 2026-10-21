@@ -93,9 +93,10 @@ impl Chord {
 impl KeyInput {
     /// What an egui key press reports: the logical key as typed and the physical key. On a layout
     /// that is not Latin, the suite's egui-winit reports the Latin layout's letter as the logical
-    /// key (Linux, Windows, and macOS with ⌘ held), and crates.io egui the physical key, so [`Layout::resolve`] takes a
-    /// letter there before the position. egui reports no Shift level, so [`Layout`] infers it.
-    /// `None` for events other than key presses and releases.
+    /// key (Linux, Windows, and macOS with ⌘ held), and crates.io egui the physical key, so
+    /// [`Layout::resolve`] takes a letter there before the position. The Latin layout's character
+    /// comes from the frame's input ([`Dispatcher::dispatch`] fills it in). egui reports no Shift
+    /// level, so [`Layout`] infers it. `None` for events other than key presses and releases.
     pub fn from_egui(event: &Event, platform: Platform) -> Option<KeyInput> {
         let Event::Key { key, physical_key, modifiers, .. } = event else { return None };
         let mut input = KeyInput::new(Mods::from_egui(modifiers, platform));
@@ -285,12 +286,12 @@ impl Dispatcher {
         let mut drop = vec![false; events.len()];
         // The web build sends both a clipboard key press and the clipboard event it causes. The
         // press decides: its event goes with it when it runs a command and stays otherwise.
-        let causes = clipboard_event_follows(&events, &self.layout, platform);
+        let causes = clipboard_event_follows(&events, &self.layout, platform, input);
         let mut caused_taken: Vec<Option<bool>> = vec![None; events.len()];
         for (i, event) in events.into_iter().enumerate() {
             match &event {
                 Event::Key { pressed: true, repeat, .. } if !*repeat || self.repeat => {
-                    let input = KeyInput::from_egui(&event, platform).unwrap_or_default();
+                    let input = key_input(&event, platform, input);
                     let held = input.mods;
                     if let Some(chord) = self.layout.resolve(&input) {
                         let plain_clip = is_plain_clipboard(chord.key, chord.mods);
@@ -423,14 +424,36 @@ trait KeyboardLayoutIsLatin {
 
 impl KeyboardLayoutIsLatin for InputState {}
 
-fn clipboard_event_follows(events: &[Event], layout: &Layout, platform: Platform) -> Vec<Option<(usize, Option<String>)>> {
+/// The suite's egui fork has an inherent `InputState::latin_layout_char`, the character a key
+/// pressed this frame types on the Latin layout shortcuts follow; crates.io egui reports none.
+/// Reached as [`KeyboardLayoutIsLatin`] is.
+#[allow(dead_code, reason = "unused when egui has the inherent method")]
+trait LatinLayoutChar {
+    fn latin_layout_char(&self, _physical_key: EguiKey) -> Option<char> {
+        None
+    }
+}
+
+impl LatinLayoutChar for InputState {}
+
+/// A press as [`KeyInput::from_egui`] reads it, with the Latin layout's character `input` reports
+/// for its key.
+fn key_input(event: &Event, platform: Platform, input: &InputState) -> KeyInput {
+    let mut key = KeyInput::from_egui(event, platform).unwrap_or_default();
+    if let Event::Key { physical_key: Some(physical), .. } = event {
+        key.latin = input.latin_layout_char(*physical);
+    }
+    key
+}
+
+fn clipboard_event_follows(events: &[Event], layout: &Layout, platform: Platform, input: &InputState) -> Vec<Option<(usize, Option<String>)>> {
     let mut out = vec![None; events.len()];
     let mut ahead: [Option<usize>; 3] = [None; 3];
     for (i, event) in events.iter().enumerate().rev() {
         if let Some(seen) = event_clip(event).and_then(|c| ahead.get_mut(c as usize)) {
             *seen = Some(i);
         } else if let Event::Key { pressed: true, .. } = event {
-            let chord = KeyInput::from_egui(event, platform).and_then(|input| layout.resolve(&input));
+            let chord = layout.resolve(&key_input(event, platform, input));
             let clip = chord.and_then(|c| clipboard_kind(c.key, c.mods));
             if let Some(j) = clip.and_then(|c| ahead.get_mut(c as usize)).and_then(Option::take) {
                 let text = if let Some(Event::Paste(text)) = events.get(j) { Some(text.clone()) } else { None };

@@ -35,6 +35,14 @@ fn each_layout_resolves_presses_by_the_rule() {
         // Greek: Q types ;.
         ("Greek ⌃Q", &other, at("Cmd+;", Key::Q), "Cmd+Q"),
         ("Greek ⌃Z", &other, at("Cmd+Z", Key::Z), "Cmd+Z"),
+        // Dvorak + Russian, as the suite's egui-winit reports them: the Latin layout's character
+        // for each key. Dvorak types ' on the Q position, which egui reports as Q or as '.
+        ("Dvorak + Russian ⌃С", &other, at("Cmd+J", Key::C).with_latin('j'), "Cmd+J"),
+        ("Dvorak + Russian ⌃Й", &other, at("Cmd+Q", Key::Q).with_latin('\''), "Cmd+'"),
+        ("Dvorak + Russian ⌃Й as '", &other, at("Cmd+'", Key::Q).with_latin('\''), "Cmd+'"),
+        ("Dvorak + Russian / key types .", &other, at("Cmd+.", Key::Slash).with_latin('z'), "Cmd+Z"),
+        // Dvorak + Hebrew: the Q position types / and has no Dvorak letter.
+        ("Dvorak + Hebrew ⌃Q", &other, at("Cmd+/", Key::Q).with_latin('\''), "Cmd+/"),
         // Thai Kedmanee: 2 types /, - types ข, D types ก.
         ("Thai 2 key types /", &other, at("Cmd+/", Key::Num2), "Cmd+/"),
         ("Thai - key types ข", &other, at("Cmd+-", Key::Minus), "Cmd+-"),
@@ -64,7 +72,7 @@ fn each_layout_resolves_presses_by_the_rule() {
         ("US ⇧- types _, which has no key", &latin, at("Shift+-", Key::Minus), "Shift+-"),
         // macOS "Dvorak – QWERTY ⌘": with ⌘ held the layout's ⌘ table is QWERTY, while the
         // logical key egui reports is Dvorak's K.
-        ("Dvorak – QWERTY ⌘ ⌘V", &latin, at("Cmd+K", Key::V).with_latin(Key::V), "Cmd+V"),
+        ("Dvorak – QWERTY ⌘ ⌘V", &latin, at("Cmd+K", Key::V).with_latin('v'), "Cmd+V"),
         // A Shift level the platform reports wins over the inference.
         ("reported Shift level", &latin, at("Cmd+Shift+/", Key::Num7).with_shift_needed(false), "Cmd+Shift+/"),
     ];
@@ -81,7 +89,10 @@ fn reported_cases_match_only_the_chord_the_press_means() {
     assert!(arabic.matches(&chord("Ctrl+Shift+D"), &ctrl_shift_d, p));
     assert!(!arabic.matches(&chord("Ctrl+Shift+]"), &ctrl_shift_d, p), "Arabic Ctrl+Shift+D must not run Ctrl+Shift+]");
 
-    let qwerty_cmd = at("Cmd+K", Key::V).with_latin(Key::V);
+    let dvorak_russian_q = at("Cmd+Q", Key::Q).with_latin('\'');
+    assert!(!Layout::new().with_latin(false).matches(&chord("Ctrl+Q"), &dvorak_russian_q, p), "Dvorak + Russian й must not quit");
+
+    let qwerty_cmd = at("Cmd+K", Key::V).with_latin('v');
     assert!(Layout::new().matches(&chord("Cmd+V"), &qwerty_cmd, Platform::Mac));
     assert!(!Layout::new().matches(&chord("Cmd+K"), &qwerty_cmd, Platform::Mac), "⌘V must not open the command palette");
 
