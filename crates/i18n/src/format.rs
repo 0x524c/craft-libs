@@ -68,7 +68,7 @@ impl Format {
         let group = format.group.clone().unwrap_or(probe.group);
         // Latin digits typed into an Arabic-Indic format take the locale's Latin marks.
         let comma = match (latin, digits) {
-            (true, _) => point == ",",
+            (true, _) => point == "," || group == ".",
             (false, Digits::Locale) => !Format::new(region, Digits::Latin).marks.point,
             (false, Digits::Latin) => false,
         };

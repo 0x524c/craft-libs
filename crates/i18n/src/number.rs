@@ -365,8 +365,14 @@ mod tests {
             .iter()
             .flat_map(|t| [Format::from_tag(t), Format::new(&Region::from_tag(t), Digits::Latin)])
             .collect();
-        for (decimal, grouping) in [(Some(','), None), (Some('.'), Some(Some('\u{a0}'))), (None, Some(None)), (Some('·'), Some(Some('_')))] {
-            let mut region = Region::from_tag("en-US");
+        for (tag, decimal, grouping) in [
+            ("en-US", Some(','), None),
+            ("en-US", Some('.'), Some(Some('\u{a0}'))),
+            ("en-US", None, Some(None)),
+            ("en-US", Some('·'), Some(Some('_'))),
+            ("de-DE", Some('·'), None),
+        ] {
+            let mut region = Region::from_tag(tag);
             region.decimal = decimal;
             region.grouping = grouping;
             formats.push(Format::new(&region, Digits::Locale));
