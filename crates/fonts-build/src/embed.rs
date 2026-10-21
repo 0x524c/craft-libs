@@ -15,12 +15,6 @@ const DIR_VAR: &str = "CRAFT_FONTS_DIR";
 const REQUIRED_VAR: &str = "CRAFT_FONTS_REQUIRED";
 const EMPTY_TABLE: &str = "&[]\n";
 
-/// Embed every face in `CRAFT_FONTS_DIR`'s manifest into `out_file` (relative paths are under
-/// `OUT_DIR`). Shorthand for `Embed::new().write(out_file)`.
-pub fn embed(out_file: impl AsRef<Path>) -> Result<Vec<ManifestEntry>, Error> {
-    Embed::new().write(out_file)
-}
-
 /// Whether the build script is building for wasm32 (web builds usually embed fewer faces).
 pub fn target_is_wasm() -> bool {
     std::env::var("CARGO_CFG_TARGET_ARCH").is_ok_and(|arch| arch == "wasm32")
@@ -38,6 +32,8 @@ pub struct Embed {
     ui: bool,
     catalogs: Option<Vec<PathBuf>>,
     texts: Vec<PathBuf>,
+    families: Option<Vec<String>>,
+    elsewhere: Vec<String>,
 }
 
 /// A selected face and the file the table embeds it from.
@@ -51,9 +47,21 @@ struct Face {
 }
 
 impl Embed {
-    /// Every face, from `CRAFT_FONTS_DIR`, required when `CRAFT_FONTS_REQUIRED=1`.
+    /// Every face except the interface faces' sources (`role` `ui`), from `CRAFT_FONTS_DIR`,
+    /// required when `CRAFT_FONTS_REQUIRED=1`. Narrow it with [`Embed::scripts`] and
+    /// [`Embed::filter`]; a table of document fonts starts from [`Embed::documents`] instead.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Every face of these families, whole, and nothing else: an app's document fonts. A family
+    /// is named as the manifest spells it (`"Noto Sans"`, `"Shippori Mincho"`) and contributes all
+    /// its styles, interface faces included (`"BIZ UDPGothic"` brings its Regular as well).
+    /// A name the manifest lacks is an [`Error::UnknownFamilies`], so the build fails with
+    /// `CRAFT_FONTS_REQUIRED=1` and warns and embeds nothing otherwise. Narrow it further with
+    /// [`Embed::scripts`] and [`Embed::filter`].
+    pub fn documents(families: &[&str]) -> Self {
+        Self { families: Some(families.iter().map(|f| (*f).to_owned()).collect()), ..Self::default() }
     }
 
     /// Embed only faces with at least one of these script tags (see
@@ -104,6 +112,15 @@ impl Embed {
     /// only when a checkout was read.
     pub fn check_text<P: Into<PathBuf>>(mut self, paths: impl IntoIterator<Item = P>) -> Self {
         self.texts.extend(paths.into_iter().map(Into::into));
+        self
+    }
+
+    /// Families the app embeds in another table, such as its interface faces next to its document
+    /// fonts: [`Embed::check_text`] and the catalog check count their characters as covered. Each
+    /// is read from the checkout whole, so for a face cut elsewhere this is exact only for the
+    /// catalogs it was cut to. A name the manifest lacks is a `cargo::warning`.
+    pub fn embedded_elsewhere(mut self, families: &[&str]) -> Self {
+        self.elsewhere.extend(families.iter().map(|f| (*f).to_owned()));
         self
     }
 
@@ -160,7 +177,9 @@ impl Embed {
                 write(&out, EMPTY_TABLE)?;
                 return Err(e);
             }
-            self.check_coverage(faces, cargo);
+            if let Some(dir) = &dir {
+                self.check_coverage(faces, dir, cargo);
+            }
         }
         let (table, faces) = match selected {
             Ok(faces) => (table(&faces), faces.into_iter().map(|face| face.entry).collect()),
@@ -184,9 +203,29 @@ impl Embed {
         cargo.push(format!("cargo::rerun-if-changed={}", manifest.display()));
         let text = std::fs::read_to_string(&manifest).map_err(|source| Error::Read { path: manifest.clone(), source })?;
         let entries = parse_manifest(&text).map_err(|error| Error::Parse { manifest: manifest.clone(), error })?;
+        if let Some(families) = &self.families {
+            let unknown: Vec<String> = families.iter().filter(|f| !entries.iter().any(|e| &e.family == *f)).cloned().collect();
+            if !unknown.is_empty() {
+                let mut known: Vec<String> = Vec::new();
+                for entry in &entries {
+                    if !known.contains(&entry.family) {
+                        known.push(entry.family.clone());
+                    }
+                }
+                return Err(Error::UnknownFamilies { manifest, families: unknown, known });
+            }
+        }
         let mut faces = Vec::new();
         let mut uncut = Vec::new();
         for entry in entries {
+            // Interface faces are the sources of the cuts: embedded whole only when named.
+            let named = match &self.families {
+                Some(families) => families.contains(&entry.family),
+                None => self.ui || !entry.is_ui(),
+            };
+            if !named {
+                continue;
+            }
             let wanted = self.scripts.as_ref().is_none_or(|tags| tags.iter().any(|t| entry.has_script(t)));
             let ui_dropped = self.ui && entry.is_cjk() && !entry.is_ui();
             if !wanted || ui_dropped || self.filter.as_ref().is_some_and(|keep| !keep(&entry)) {
@@ -267,16 +306,36 @@ impl Embed {
         files
     }
 
-    /// Warn about each catalog's and [`Embed::check_text`] file's characters that no embedded face
-    /// covers.
-    fn check_coverage(&self, faces: &[Face], cargo: &mut Vec<String>) {
+    /// The manifest entries of the [`Embed::embedded_elsewhere`] families, with a
+    /// `cargo::warning` for a family the manifest lacks.
+    fn elsewhere(&self, dir: &Path, cargo: &mut Vec<String>) -> Vec<ManifestEntry> {
+        if self.elsewhere.is_empty() {
+            return Vec::new();
+        }
+        let manifest = dir.join("fonts/manifest.txt");
+        // `select` read and parsed this manifest already.
+        let entries = std::fs::read_to_string(&manifest).ok().and_then(|text| parse_manifest(&text).ok()).unwrap_or_default();
+        for family in self.elsewhere.iter().filter(|f| !entries.iter().any(|e| &e.family == *f)) {
+            cargo.push(format!("cargo::warning=craft-fonts: embedded_elsewhere names {family}, which {} lacks", manifest.display()));
+        }
+        entries.into_iter().filter(|e| self.elsewhere.contains(&e.family)).collect()
+    }
+
+    /// Warn about each catalog's and [`Embed::check_text`] file's characters that neither an
+    /// embedded face nor an [`Embed::embedded_elsewhere`] face covers.
+    fn check_coverage(&self, faces: &[Face], dir: &Path, cargo: &mut Vec<String>) {
         let files = self.checked_files();
         if files.is_empty() {
             return;
         }
-        let fonts: Vec<(&Face, Option<Vec<u8>>)> = faces.iter().map(|face| (face, std::fs::read(&face.path).ok())).collect();
+        let elsewhere = self.elsewhere(dir, cargo);
+        let fonts: Vec<(&ManifestEntry, u32, Option<Vec<u8>>)> = faces
+            .iter()
+            .map(|face| (&face.entry, face.index, std::fs::read(&face.path).ok()))
+            .chain(elsewhere.iter().map(|entry| (entry, entry.index, std::fs::read(dir.join(&entry.file)).ok())))
+            .collect();
         let mut cmaps = Vec::new();
-        for (Face { entry, index, .. }, bytes) in &fonts {
+        for (entry, index, bytes) in &fonts {
             match bytes.as_deref().and_then(|bytes| Cmap::read(bytes, *index)) {
                 Some(cmap) => cmaps.push(cmap),
                 None => cargo
@@ -385,6 +444,8 @@ pub enum Error {
     NotTrueType { path: PathBuf },
     /// An interface face can't be cut.
     Subset { path: PathBuf, reason: String },
+    /// [`Embed::documents`] names families the manifest lacks; `known` lists the manifest's.
+    UnknownFamilies { manifest: PathBuf, families: Vec<String>, known: Vec<String> },
 }
 
 impl fmt::Display for Error {
@@ -409,6 +470,13 @@ impl fmt::Display for Error {
                 path.display()
             ),
             Self::Subset { path, reason } => write!(f, "cannot subset {}: {reason}", path.display()),
+            Self::UnknownFamilies { manifest, families, known } => write!(
+                f,
+                "{} has no family {}; Embed::documents names families as the manifest spells them: {}",
+                manifest.display(),
+                families.join(", "),
+                known.join(", ")
+            ),
         }
     }
 }

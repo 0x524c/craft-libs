@@ -80,7 +80,9 @@ use craft_fonts_build::EmbeddedFace;
 pub static CRAFT_FONTS: &[EmbeddedFace] = include!(concat!(env!("OUT_DIR"), "/craft_fonts.rs"));
 ```
 
-`craft_fonts_build::embed("craft_fonts.rs")` embeds every face whole. `Embed` narrows the set:
+`Embed::new()` selects every face except the sources of the interface faces (`role` `ui`, see
+below), and `Embed::documents(&["Noto Sans", …])` only the families it names (see
+[Document fonts](#document-fonts)). The builder narrows the set:
 
 - `scripts(&["Jpan", "Arab", "Hant"])` keeps faces with any of these script tags. A tag matches
   itself and its region forms (`Hant` matches `Hant-HK`). With `CRAFT_FONTS_REQUIRED=1`, each tag
@@ -90,11 +92,34 @@ pub static CRAFT_FONTS: &[EmbeddedFace] = include!(concat!(env!("OUT_DIR"), "/cr
 - `subset_to(catalogs)` (feature `subset`) cuts the interface faces to the catalogs' characters;
   it implies `for_ui()`.
 - `check_text(paths)` warns about characters in these files that no embedded face covers.
+- `embedded_elsewhere(&["Noto Sans Math", …])` names families another table of the app embeds,
+  so `check_text` and the catalog check count their characters as covered.
 - `dir(path)` and `required(bool)` override the two environment variables.
 
 `write` returns the embedded `ManifestEntry`s, for build-time checks such as "the interface face
 is present". The generated file is a slice expression of `EmbeddedFace { family, style, scripts,
 index, bytes }` literals; any struct with those fields and that name in scope works too.
+`EmbeddedFace` itself has `name()`, `has_script(tag)`, `is_cjk()` and `weight()`.
+
+## Document fonts
+
+An app that draws document text (titles, layouts, vector text) embeds the families its documents
+use, and only those, in a table of its own:
+
+```rust
+let embedded = craft_fonts_build::Embed::documents(&["Noto Sans", "Shippori Mincho"])
+    // The interface table holds the CJK cuts and the symbol faces.
+    .embedded_elsewhere(&["Noto Sans Math", "Noto Sans Symbols 2"])
+    .write("document_fonts.rs");
+```
+
+Each named family brings all its styles, as whole files: a CJK document face takes 5–17 MB, so a
+release embeds exactly the faces the app's documents need. A family named here is embedded even
+when it is also an interface face's source (`BIZ UDPGothic` brings its Regular too). A name the
+manifest lacks is an `Error::UnknownFamilies` listing the manifest's families: a build error with
+`CRAFT_FONTS_REQUIRED=1`, and a `cargo::warning` with an empty table otherwise, as for any
+checkout that can't be used. `scripts` and `filter` narrow the families further, for example to
+their Regular faces.
 
 ## Interface faces
 
@@ -105,8 +130,9 @@ app's build cuts them to the characters its translation catalogs use; for FilmCr
 the five cuts take about 3 MB together.
 
 - `for_ui()` drops every face with a CJK script tag (`Hans`, `Hant`, `Hant-HK`, `Jpan`, `Kore`,
-  `Hani`) that is not an interface face, and keeps the rest. Document text (FigCraft, DeckCraft)
-  embeds the full faces with `Embed::new()` instead.
+  `Hani`) that is not an interface face, and keeps the rest. Document text embeds the full faces
+  it names with `Embed::documents` instead. Without `for_ui()` or `subset_to`, the interface
+  faces' sources are left out unless `Embed::documents` names their family.
 - `subset_to(catalogs)` cuts each interface face to the characters the catalogs use from U+2E80 up
   (CJK and later blocks, without emoji, variation selectors and tags), plus CJK punctuation
   (U+3000–303F), kana (U+3040–30FF, U+31F0–31FF) and full-width forms (U+FF00–FFEF), and keeps
@@ -129,7 +155,9 @@ A character the faces lack still shows: craft-ui's system font provider draws it
 font. The build says so: for each catalog, and each file passed to `check_text`, it prints one
 `cargo::warning` with the count and the first few characters from U+2E80 up that no embedded face
 covers. Since the cuts hold every catalog character their sources have, these are the characters
-the sources lack. It also reruns the build script when a file changes.
+the sources lack. Faces the app embeds in another table count as covering their characters when
+named with `embedded_elsewhere`; they are read whole from the checkout, so a face cut elsewhere is
+exact only for the catalogs it was cut to. It also reruns the build script when a file changes.
 
 ## The manifest
 
