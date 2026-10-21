@@ -50,11 +50,13 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   or English: a key cap's name under `key`, or "is there a translation?"), and `fmt` for `{name}`
   placeholders, filled in one pass.
 - **Isolation:** when a message or a value inserted into it has a right-to-left letter (bidi
-  class R or AL), `fmt` wraps each inserted value in a first-strong isolate (FSI…PDI), and `trn`
-  wraps `{n}` in a left-to-right one (LRI…PDI), so a Latin file name in an Arabic sentence, or a
-  Hebrew name in an English one, can't reorder the words around it. Wrap numbers, paths and codes
-  in `ltr` before passing them; a value that already is one isolate goes in as it is, and a stray
-  PDI in a value can't close its isolate early. Text with no right-to-left letter comes out
+  class R or AL), or a value has a bidi control (LRE, RLE, PDF, LRO, RLO, LRI, RLI, FSI, PDI,
+  LRM, RLM, ALM), `fmt` wraps each inserted value in a first-strong isolate (FSI…PDI), and `trn`
+  wraps `{n}` in a left-to-right one (LRI…PDI), so a Latin file name in an Arabic sentence, a
+  Hebrew name in an English one, or an ASCII file name with a right-to-left override can't
+  reorder the words around it. Embeddings, overrides and isolates a value opens are closed inside
+  its isolate, and a stray PDF or PDI in it is dropped. Wrap numbers, paths and codes in `ltr`
+  before passing them; a value that already is one isolate keeps it. Other text comes out
   without marks, as if `fmt` didn't isolate at all. egui draws the marks as nothing. For text
   that leaves the interface (file names, logs, terminals, text parsed later), use `fmt_plain` or
   `strip_isolates`.

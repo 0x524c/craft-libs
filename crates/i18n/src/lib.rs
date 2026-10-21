@@ -264,11 +264,13 @@ impl I18n {
 }
 
 /// Fill `{name}` placeholders from `args` in one pass. When the template or an inserted value
-/// has a right-to-left letter (Hebrew, Arabic and the like), each value goes in as a first-strong
-/// isolate (FSI…PDI), so its direction can't reorder the sentence around it: a Latin file name in
-/// an Arabic message stays where the translator put it. A value that already is one isolate goes
-/// in as it is; pass numbers, paths and codes through [`ltr`]. Text with no right-to-left letter
-/// gets no marks, and a value's own isolate is taken off. Unknown placeholders stay as written,
+/// has a right-to-left letter (Hebrew, Arabic and the like), or a value has a bidi control
+/// (an embedding, override, isolate or mark), each value goes in as a first-strong isolate
+/// (FSI…PDI), so its direction can't reorder the sentence around it: a Latin file name in an
+/// Arabic message stays where the translator put it, and an override in a file name ends with
+/// the name. Embeddings, overrides and isolates a value opens are closed inside its isolate. A
+/// value that already is one isolate keeps it; pass numbers, paths and codes through [`ltr`].
+/// Other text gets no marks, and a value's own isolate is taken off. Unknown placeholders stay as written,
 /// and inserted values are never read as templates, so a file name containing `{n}` stays intact.
 pub fn fmt(template: &str, args: &[(&str, &str)]) -> String {
     fill(template, args, true)
@@ -285,6 +287,14 @@ const LRI: char = '\u{2066}';
 const RLI: char = '\u{2067}';
 const FSI: char = '\u{2068}';
 const PDI: char = '\u{2069}';
+const LRE: char = '\u{202A}';
+const RLE: char = '\u{202B}';
+const PDF: char = '\u{202C}';
+const LRO: char = '\u{202D}';
+const RLO: char = '\u{202E}';
+const LRM: char = '\u{200E}';
+const RLM: char = '\u{200F}';
+const ALM: char = '\u{061C}';
 
 /// `value` as a first-strong isolate (FSI…PDI): it takes the direction of its first strong
 /// letter and can't reorder the text around it. What [`fmt`] does to each value in text with a
@@ -307,25 +317,44 @@ pub fn strip_isolates(text: &str) -> String {
     text.chars().filter(|c| !matches!(*c, LRI | RLI | FSI | PDI)).collect()
 }
 
-/// `value` between `initiator` and PDI. A stray PDI in the value would close the isolate early, so
-/// it is dropped; isolates the value leaves open are closed.
+/// `value` between `initiator` and PDI, with every embedding, override and isolate it opens
+/// closed inside: a stray PDF or PDI is dropped, and open ones are closed in order. Under the
+/// bidi algorithm the outer PDI alone would close them, but a renderer that handles only
+/// embeddings would let them run on into the rest of the text.
 fn wrap(initiator: char, value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 6);
     out.push(initiator);
-    let mut open = 0_usize;
+    // One entry per open initiator: true for an isolate, false for an embedding or override.
+    let mut open: Vec<bool> = Vec::new();
     for c in value.chars() {
         match c {
-            LRI | RLI | FSI => open += 1,
-            PDI if open == 0 => continue,
-            PDI => open -= 1,
+            LRI | RLI | FSI => open.push(true),
+            LRE | RLE | LRO | RLO => open.push(false),
+            PDF if open.last() == Some(&false) => {
+                open.pop();
+            }
+            PDF => continue,
+            PDI if open.contains(&true) => {
+                while open.pop() == Some(false) {
+                    out.push(PDF);
+                }
+            }
+            PDI => continue,
             _ => {}
         }
         out.push(c);
     }
-    for _ in 0..=open {
-        out.push(PDI);
+    while let Some(isolate) = open.pop() {
+        out.push(if isolate { PDI } else { PDF });
     }
+    out.push(PDI);
     out
+}
+
+/// Whether `value`, without its own isolate, has a bidi control: an embedding, override,
+/// isolate or mark that could reorder the text around it unless it is contained.
+fn has_bidi_control(value: &str) -> bool {
+    !value.is_ascii() && unwrap_isolate(value).chars().any(|c| matches!(c, LRE | RLE | PDF | LRO | RLO | LRI | RLI | FSI | PDI | LRM | RLM | ALM))
 }
 
 /// Whether `text` has a strong right-to-left character (bidi class R or AL): the text that needs
@@ -381,13 +410,18 @@ fn fill(template: &str, args: &[(&str, &str)], isolated: bool) -> String {
         rest = after_close;
     }
     pieces.push((rest, false));
-    let isolated = isolated && pieces.iter().any(|(text, _)| has_rtl(text));
+    let isolated = isolated && pieces.iter().any(|(text, value)| has_rtl(text) || (*value && has_bidi_control(text)));
     let mut out = String::with_capacity(template.len());
     for (text, value) in pieces {
         match (value, isolated) {
             (false, _) => out.push_str(text),
             (true, false) => out.push_str(unwrap_isolate(text)),
-            (true, true) if text.is_empty() || is_one_isolate(text) => out.push_str(text),
+            (true, true) if text.is_empty() => {}
+            // Rebuilt rather than copied, so what it opens inside is closed too.
+            (true, true) if is_one_isolate(text) => {
+                let initiator = text.chars().next().unwrap_or(FSI);
+                out.push_str(&wrap(initiator, unwrap_isolate(text)));
+            }
             (true, true) => out.push_str(&isolate(text)),
         }
     }
@@ -626,6 +660,45 @@ mod tests {
         assert_eq!(fmt("ש {n}", &[("n", &one)]), format!("ש {one}"));
         // Two isolates side by side are not one, so they get wrapped.
         assert_eq!(fmt("ש{v}", &[("v", "\u{2066}a\u{2069}\u{2066}b\u{2069}")]), "ש\u{2068}\u{2066}a\u{2069}\u{2066}b\u{2069}\u{2069}");
+    }
+
+    /// `text` in display order, as one line in a left-to-right paragraph, without bidi controls.
+    fn visual(text: &str) -> String {
+        let info = unicode_bidi::BidiInfo::new(text, Some(unicode_bidi::Level::ltr()));
+        let para = &info.paragraphs[0];
+        let shown = info.reorder_line(para, para.range.clone());
+        shown
+            .chars()
+            .filter(|c| bidi_class(*c) != BidiClass::BN && !"\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}".contains(*c))
+            .collect()
+    }
+
+    #[test]
+    fn a_value_with_bidi_controls_cannot_reorder_the_sentence() {
+        let file_names = [
+            "\u{202E}fdp.exe",
+            "\u{202B}abc def",
+            "\u{202D}abc def",
+            "\u{2067}abc def",
+            "\u{2068}abc\u{2069}\u{202E}def",
+            "\u{202E}abc\u{2069}",
+            "x\u{200F}",
+            "x\u{061C}",
+        ];
+        for name in file_names {
+            let text = fmt("Open {name} -> {name} now?", &[("name", name)]);
+            let shown = visual(&text);
+            assert!(shown.starts_with("Open ") && shown.contains(" -> ") && shown.ends_with(" now?"), "{name:?}: {shown:?}");
+            let i = all(P).0;
+            let wording = i.trn(Lang::EN, 2, "{n} page in {name}, done", "{n} pages in {name}, done");
+            let shown = visual(&fmt(&wording, &[("name", name)]));
+            assert!(shown.starts_with("2 pages in ") && shown.ends_with(", done"), "{name:?}: {shown:?}");
+        }
+        // An override the value opens is closed inside its isolate, and a stray PDF dropped.
+        assert_eq!(fmt("Open {name}.", &[("name", "\u{202E}abc")]), "Open \u{2068}\u{202E}abc\u{202C}\u{2069}.");
+        assert_eq!(fmt("Open {name}.", &[("name", "a\u{202C}b")]), "Open \u{2068}ab\u{2069}.");
+        assert_eq!(fmt("Open {n}.", &[("n", &ltr("\u{202B}1"))]), "Open \u{2066}\u{202B}1\u{202C}\u{2069}.");
+        assert_eq!(isolate("\u{2067}a\u{202E}b\u{2069}c"), "\u{2068}\u{2067}a\u{202E}b\u{202C}\u{2069}c\u{2069}");
     }
 
     #[test]
