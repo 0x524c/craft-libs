@@ -86,8 +86,10 @@ macOS it folds into `cmd` (`Chord::effective`).
 (`Chord::display_for`):
 
 1. Letters A–Z: the layout's Latin letter for the key. On a layout that is not Latin (Russian,
-   Arabic, Hebrew, Greek, Thai), the key's position; on a Latin layout (Dvorak, AZERTY), the
-   letter typed. Arabic Ctrl+Shift+D is Ctrl+Shift+D, not the `]` it types.
+   Arabic, Hebrew, Greek, Thai), the letter the toolkit reports for shortcuts, else the key's
+   position: the suite's egui-winit reports the Latin layout's letter, so Ctrl+С on Dvorak +
+   Russian is Dvorak's Ctrl+J. On a Latin layout (Dvorak, AZERTY), the letter typed. Arabic
+   Ctrl+Shift+D is Ctrl+Shift+D, not the `]` it types.
 2. Digits: the digit typed, else the key's position (AZERTY's `&é"` row). A digit-row key that
    types punctuation also matches its digit when the punctuation has no binding.
 3. Punctuation: the character typed, without Shift when the layout needs Shift for it: German

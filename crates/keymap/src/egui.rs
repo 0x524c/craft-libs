@@ -91,9 +91,11 @@ impl Chord {
 }
 
 impl KeyInput {
-    /// What an egui key press reports: the logical key as typed and the physical key. egui
-    /// reports no Latin letter and no Shift level, so [`Layout`] infers them; a toolkit that
-    /// reports them fills them in here. `None` for events other than key presses and releases.
+    /// What an egui key press reports: the logical key as typed and the physical key. On a layout
+    /// that is not Latin, the suite's egui-winit reports the Latin layout's letter as the logical
+    /// key (Linux, Windows, and macOS with ⌘ held), and crates.io egui the physical key, so [`Layout::resolve`] takes a
+    /// letter there before the position. egui reports no Shift level, so [`Layout`] infers it.
+    /// `None` for events other than key presses and releases.
     pub fn from_egui(event: &Event, platform: Platform) -> Option<KeyInput> {
         let Event::Key { key, physical_key, modifiers, .. } = event else { return None };
         let mut input = KeyInput::new(Mods::from_egui(modifiers, platform));

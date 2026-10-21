@@ -4,9 +4,10 @@
 //! One rule decides matching ([`Layout::candidates`]), recording ([`Layout::resolve`]) and labels
 //! ([`Chord::display_for`]):
 //! 1. **Letters A–Z:** the layout's Latin letter for the key, [`KeyInput::latin`] when the
-//!    platform reports it. Without it, on a layout that is not Latin, the key's position (the
-//!    Russian `с` key is C, the Hebrew `/` key is Q); on a Latin layout (Dvorak, AZERTY), the
-//!    letter typed.
+//!    platform reports it. Without it, on a layout that is not Latin, the letter the toolkit
+//!    reports as typed, else the key's position (the Russian `с` key is C, the Hebrew `/` key is
+//!    Q). The suite's egui-winit reports the Latin layout's letter there, so on Dvorak + Russian
+//!    the `с` key is Dvorak's J. On a Latin layout (Dvorak, AZERTY), the letter typed.
 //! 2. **Digits:** the digit typed, else the key's position (AZERTY's `&é"` row types no digit
 //!    without Shift). A digit-row press that types punctuation also matches its position's digit,
 //!    after the punctuation: AZERTY's `-` key runs Ctrl+- and, when that has no binding, Ctrl+6.
@@ -198,10 +199,12 @@ impl Layout {
         if let Some(letter) = input.latin.filter(|k| k.is_letter()) {
             return Some(Chord::new(held, letter));
         }
+        // A letter typed on a layout that is not Latin is the toolkit's letter for shortcuts, or
+        // egui standing in the position for a letter it has no key for.
         if !self.is_latin()
-            && let Some(position) = input.physical.filter(|k| k.is_letter())
+            && let Some(letter) = input.typed.filter(|k| k.is_letter()).or(input.physical).filter(|k| k.is_letter())
         {
-            return Some(Chord::new(held, position));
+            return Some(Chord::new(held, letter));
         }
         if held.shift
             && let Some(position) = input.physical.filter(|k| k.is_letter())

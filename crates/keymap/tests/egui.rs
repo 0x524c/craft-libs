@@ -507,3 +507,33 @@ fn the_dispatcher_reads_presses_by_the_layout() {
     let (ran, _) = run(&mut d, &km, &Active::NONE, frame(1.0, ctrl_shift, vec![at(EguiKey::CloseBracket, EguiKey::D, ctrl_shift)]));
     assert_eq!(ran, ["edit.duplicate"]);
 }
+
+#[test]
+fn letters_follow_the_latin_layout_from_egui_winit_to_the_dispatcher() {
+    let app = |id: &str, key: &str| Bindable::new(id, id, Scope::app()).with_default(Binding::parse(key).unwrap());
+    let km = Keymap::new(vec![app("d", "Cmd+D"), app("e", "Cmd+E")], Scopes::new(), Platform::Linux);
+    let at = |key, modifiers| Event::Key { key, physical_key: Some(EguiKey::D), pressed: true, repeat: false, modifiers };
+
+    // The QWERTY D key, as the suite's egui-winit reports it: on a layout that is not Latin, the
+    // logical key is the Latin layout's letter (Dvorak types e there), and the text is Cyrillic.
+    // (layout, logical key, text typed, platform report, command Ctrl runs)
+    let cases = [
+        ("Dvorak + Russian", EguiKey::E, "в", Some(false), "e"),
+        ("QWERTY + Russian", EguiKey::D, "в", Some(false), "d"),
+        ("Dvorak", EguiKey::E, "e", Some(true), "e"),
+        ("QWERTY", EguiKey::D, "d", Some(true), "d"),
+    ];
+    for (name, key, text, latin, expected) in cases {
+        // The layout learned from typing.
+        let mut d = Dispatcher::new();
+        run(&mut d, &km, &Active::NONE, frame(1.0, Modifiers::NONE, vec![at(key, Modifiers::NONE), Event::Text(text.into())]));
+        assert_eq!(Some(d.layout().is_latin()), latin, "{name}");
+        let (ran, _) = run(&mut d, &km, &Active::NONE, frame(2.0, CTRL, vec![at(key, CTRL)]));
+        assert_eq!(ran, [expected], "{name}, learned");
+
+        // The layout the platform reports, before anything is typed.
+        let mut d = Dispatcher::new().with_layout(Layout::new().with_latin(latin == Some(true)));
+        let (ran, _) = run(&mut d, &km, &Active::NONE, frame(1.0, CTRL, vec![at(key, CTRL)]));
+        assert_eq!(ran, [expected], "{name}, reported");
+    }
+}
