@@ -657,8 +657,10 @@ name = "craft-i18n"
 version = "0.1.0"
 dependencies = [
  "intl_pluralrules",
+ "objc2-foundation 0.3.2",
  "sys-locale",
  "unic-langid",
+ "windows-registry",
 ]
 
 [[package]]

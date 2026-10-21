@@ -7,6 +7,7 @@
 
 mod catalog;
 mod size;
+mod region;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Mutex, OnceLock, PoisonError};
@@ -15,6 +16,7 @@ use intl_pluralrules::{PluralCategory, PluralRuleType, PluralRules};
 use unic_langid::LanguageIdentifier;
 
 pub use size::{FileSize, SizeUnit};
+pub use region::{HourCycle, Measurement, Paper, Region};
 
 /// The catalogs an app embeds, one entry per locale: (locale, shared catalog, the app's catalog).
 /// A missing catalog is `""`.
