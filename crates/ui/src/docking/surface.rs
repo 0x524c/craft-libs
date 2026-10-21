@@ -90,6 +90,9 @@ pub struct DockStyle {
     pub restore_frame_label: String,
     /// Shown where native windows are available (feature `native-windows`).
     pub new_window_label: String,
+    /// Frame profile: shown under the pointer while a drag offers a docking target. `{key}`
+    /// stands for the modifier that floats the drop instead: ⌘ on macOS, Ctrl elsewhere.
+    pub float_hint_label: String,
     /// Show the built-in Close items in tab and group menus (Close Panel, Close Tab Group,
     /// Close Other Panels in Group) for closable panels. A host that draws its own Close items
     /// turns this off and keeps [`Permissions::closable`], so its close actions still apply.
@@ -180,6 +183,7 @@ impl DockStyle {
             maximize_label: "Maximize Frame".into(),
             restore_frame_label: "Restore Frame Size".into(),
             new_window_label: "Move Panel to New Window".into(),
+            float_hint_label: "Hold {key} to float".into(),
             close_menu_items: true,
             close_button: true,
             wheel_selects_tabs: None,

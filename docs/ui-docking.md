@@ -16,7 +16,7 @@ fields; new fields can be added, so the struct has no literal form outside the c
 | Profile | Arrangement | Apps |
 |---|---|---|
 | `Profile::Dock` (default) | Docks on the window's start and end edges. A dock has columns; a column has stacked groups and can collapse to icons. Frames (tab groups and splits) fill the space between the docks. | Creative apps with a canvas and panel docks |
-| `Profile::Frame` | A split tree of tab frames. Frame menus offer Maximize Frame, Undock and Close Other Panels. Ctrl/Cmd + tab drag undocks. Drops on all four outer edges split at the root. | Apps whose whole window is frames |
+| `Profile::Frame` | A split tree of tab frames. Frame menus offer Maximize Frame, Undock and Close Other Panels. Ctrl/Cmd + drag undocks, and a hint under the pointer says so. Drops on all four outer edges split at the root. | Apps whose whole window is frames |
 
 Sides are logical: `Side::Start` is the left edge, or the right edge when
 `DockStyle::right_to_left` is set. egui has no app-wide direction, so the app sets it from its
@@ -197,6 +197,9 @@ A flyout fits its content the same way, without the title bar.
   nearer one.
 - Drop previews show the destination: an outline for tabs, a line for a new group, column or dock,
   a filled half for a split. Escape or losing window focus cancels a drag.
+- In the Frame profile, Ctrl (⌘ on macOS) held while dragging a tab, a drag bar or a grip that
+  calls `begin_drag` floats the drop wherever it lands. While a drag offers a docking target, a
+  hint under the pointer names the modifier: `float_hint_label`, where `{key}` becomes ⌘ or Ctrl.
 - Double-click a tab or drag bar to minimize a group to its strip.
 - Right-click a tab for its menu, or a drag bar for the group menu; Enter or Space on a focused
   drag bar opens it too. A left click on the drag bar only focuses it.

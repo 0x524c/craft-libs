@@ -206,6 +206,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if let Some((action, line)) = self.dock_group_proposal(drag, pointer) {
             if action.is_some() {
                 self.paint_dock_line(ctx, line);
+                self.paint_float_hint(ctx, pointer);
             }
             return;
         }
@@ -216,6 +217,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             if let Some(marker) = proposal.insertion {
                 painter.rect_filled(marker, 0.0, self.style.accent);
+            }
+            if drag.gesture != GroupGesture::Window {
+                self.paint_float_hint(ctx, pointer);
             }
         }
     }
@@ -265,6 +269,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 }
             } else if action.is_some() {
                 self.paint_dock_line(ctx, line);
+                self.paint_float_hint(ctx, pointer);
             }
             return;
         }
@@ -307,6 +312,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             if let Some(marker) = proposal.insertion {
                 painter.rect_filled(marker, 0.0, self.style.accent);
+            }
+            if !proposal.noop {
+                self.paint_float_hint(ctx, pointer);
             }
         } else if let Some(rect) = floating_rect {
             drop_preview(&painter, rect, self.style.accent, false);

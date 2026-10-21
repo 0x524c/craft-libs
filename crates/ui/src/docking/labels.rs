@@ -46,6 +46,7 @@ impl DockStyle {
     /// | `dock.restoreFrame` | `restore_frame_label` | Restore Frame Size |
     /// | `dock.newWindow` | `new_window_label` | Move Panel to New Window |
     /// | `dock.autoCollapse` | `auto_collapse_label` | Auto-Collapse Iconic Panels |
+    /// | `dock.floatHint` | `float_hint_label` | Hold {key} to float |
     #[must_use]
     pub fn localized(mut self, translate: impl Fn(&str) -> Option<String>) -> Self {
         for (key, label) in self.labels_mut() {
@@ -56,7 +57,7 @@ impl DockStyle {
         self
     }
 
-    fn labels_mut(&mut self) -> [(&'static str, &mut String); 27] {
+    fn labels_mut(&mut self) -> [(&'static str, &mut String); 28] {
         [
             ("dock.float", &mut self.float_label),
             ("dock.close", &mut self.close_label),
@@ -85,6 +86,7 @@ impl DockStyle {
             ("dock.restoreFrame", &mut self.restore_frame_label),
             ("dock.newWindow", &mut self.new_window_label),
             ("dock.autoCollapse", &mut self.auto_collapse_label),
+            ("dock.floatHint", &mut self.float_hint_label),
         ]
     }
 }

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use super::testing::DockDriver;
 use super::*;
 use crate::layout::{SplitAxis, SplitSize};
-use egui::{Id, Pos2, Rect, Sense, pos2, vec2};
+use egui::{Id, Modifiers, Pos2, Rect, Sense, pos2, vec2};
 
 const SOURCE: [u32; 4] = [1, 11, 12, 13];
 const PROGRAM: u32 = 2;
@@ -165,4 +165,47 @@ fn a_split_beside_a_fixed_width_frame_keeps_its_width_and_gets_its_own_divider()
     assert_eq!(bottom(&d.layout), &hsplit(SplitSize::Ratio(0.29), tabs(&PROJECT), right));
     d.settle();
     assert_eq!(body(&d, TOOLS).width(), TOOLS_WIDTH);
+}
+
+fn texts(d: &Driver) -> Vec<String> {
+    fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+            egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    d.shapes().iter().for_each(|clipped| walk(&clipped.shape, &mut out));
+    out
+}
+
+#[test]
+fn ctrl_or_cmd_floats_from_a_tab_a_drag_bar_or_a_grip_and_the_preview_says_so() {
+    const HINT: &str = "Hold Ctrl to float";
+    let floated = |actions: &[Action<u32>], panel: u32| match actions {
+        [Action::Float { panel: p, .. }] => *p == panel,
+        [Action::MoveGroup { panel: p, to: Target::Float { .. } }] => *p == panel,
+        _ => false,
+    };
+    let d = driver(editing());
+    let over = body(&d, TIMELINE).center();
+    let tab = d.hit(&Hit::Tab(PROJECT[0])).unwrap().center();
+    let bar = d.hit(&Hit::DragBar(PROJECT[0])).unwrap().center();
+    let grip = pos2(body(&d, TOOLS).center().x, body(&d, TOOLS).top() + 4.0);
+    for (from, panel) in [(tab, PROJECT[0]), (bar, PROJECT[0]), (grip, TOOLS)] {
+        // Without the modifier, a release over a frame docks there; the preview names the modifier.
+        let mut d = driver(editing());
+        d.hold(from, over);
+        assert!(texts(&d).iter().any(|t| t == HINT), "{from:?}: {:?}", texts(&d));
+        let out = d.release(over);
+        assert!(!out.actions.is_empty() && !floated(&out.actions, panel), "{from:?}: {:?}", out.actions);
+        // Held, it floats, and the hint is gone.
+        let mut d = driver(editing());
+        d.modifiers = Modifiers::COMMAND;
+        d.hold(from, over);
+        assert!(!texts(&d).iter().any(|t| t == HINT), "{from:?}");
+        let out = d.release(over);
+        assert!(floated(&out.actions, panel), "{from:?}: {:?}", out.actions);
+    }
 }

@@ -10,6 +10,9 @@ use crate::docking::{
     dock_model::{Place, node_at},
 };
 
+/// How far below the pointer the float hint sits, clear of the cursor.
+const HINT_OFFSET: f32 = 28.0;
+
 /// What the renderer draws when it is not the layout itself, and the targets that depend on it.
 pub(in crate::docking) struct FrameState<P> {
     /// View path to layout path of each split, when the view is not the layout.
@@ -178,6 +181,21 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             Zone::Bottom | Zone::Center => Rect::from_min_max(pos2(area.left(), area.bottom() - size.y), area.max),
         };
         Some((anchor, zone, preview))
+    }
+
+    /// Under the pointer while a drag offers a docking target (frame profile): which modifier
+    /// floats the drop instead.
+    pub(super) fn paint_float_hint(&self, ctx: &Context, pointer: Pos2) {
+        if self.style.profile != Profile::Frame || self.style.float_hint_label.is_empty() {
+            return;
+        }
+        let key = if ctx.os() == egui::os::OperatingSystem::Mac { "⌘" } else { "Ctrl" };
+        let painter = self.preview_painter(ctx);
+        let galley = painter.layout_no_wrap(self.style.float_hint_label.replace("{key}", key), self.style.font.clone(), self.style.text);
+        let rect = Rect::from_center_size(pointer + vec2(0.0, HINT_OFFSET), galley.size() + vec2(12.0, 6.0));
+        let rect = crate::docking::chrome::clamp(rect, self.float_bounds);
+        painter.rect(rect, 4.0, self.style.floating_background, egui::Stroke::new(1.0, self.style.accent), egui::StrokeKind::Inside);
+        painter.galley(rect.center() - galley.size() * 0.5, galley, self.style.text);
     }
 
     pub(super) fn float_label(&self) -> String {
