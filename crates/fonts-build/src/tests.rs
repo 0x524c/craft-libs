@@ -32,6 +32,9 @@ struct Run {
     result: Result<Vec<String>, Error>,
     cargo: Vec<String>,
     table: String,
+    /// `OUT_DIR`, which holds the table and the cut faces.
+    #[cfg_attr(not(feature = "subset"), expect(dead_code))]
+    out: Scratch,
 }
 
 /// Run `embed` with `CRAFT_FONTS_DIR` and `CRAFT_FONTS_REQUIRED` as given; returns the embedded
@@ -43,7 +46,7 @@ fn run(embed: Embed, dir: Option<&Path>, required: Option<&str>) -> Run {
     let mut cargo = Vec::new();
     let result = embed.run(&env, Path::new("craft_fonts.rs"), &mut cargo);
     let table = std::fs::read_to_string(scratch.0.join("craft_fonts.rs")).unwrap();
-    Run { result: result.map(|faces| faces.iter().map(|f| format!("{} {}", f.family, f.style)).collect()), cargo, table }
+    Run { result: result.map(|faces| faces.iter().map(|f| format!("{} {}", f.family, f.style)).collect()), cargo, table, out: scratch }
 }
 
 #[test]
@@ -268,8 +271,12 @@ fn checkout(scratch: &Scratch, faces: &[(&str, &str, &str, Vec<u8>)]) -> PathBuf
     dir
 }
 
+fn warnings(r: &Run) -> Vec<String> {
+    r.cargo.iter().filter(|l| l.starts_with("cargo::warning")).cloned().collect()
+}
+
 #[test]
-fn for_ui_embeds_cjk_faces_only_as_ui_subsets() {
+fn for_ui_embeds_cjk_faces_only_as_cut_interface_faces() {
     let scratch = Scratch::new("for-ui");
     let latin = || tiny_font(&[(0x20, 0x7E, None)], &[]);
     let dir = checkout(
@@ -277,23 +284,25 @@ fn for_ui_embeds_cjk_faces_only_as_ui_subsets() {
         &[
             ("Noto Sans TC", "Hant,Latn", "", latin()),
             ("Noto Sans TC UI", "Hant,Latn", "ui", latin()),
-            ("Noto Sans HK", "Hant-HK,Latn", "", latin()),
             ("Noto Sans HK UI", "Hant-HK,Latn", "ui", latin()),
-            ("Noto Sans JP", "Jpan,Latn", "", latin()),
             ("Noto Sans Arabic", "Arab", "", latin()),
         ],
     );
-    let r = run(Embed::new().for_ui(), Some(&dir), Some("1"));
-    assert_eq!(r.result.unwrap(), ["Noto Sans TC UI Regular", "Noto Sans HK UI Regular", "Noto Sans Arabic Regular"]);
-    let r = run(Embed::new().for_ui().scripts(&["Hant"]), Some(&dir), Some("1"));
-    assert_eq!(r.result.unwrap(), ["Noto Sans TC UI Regular", "Noto Sans HK UI Regular"]);
-    let r = run(Embed::new().scripts(&["Hant-HK"]).for_ui().filter(|f| f.style == "Regular"), Some(&dir), Some("1"));
-    assert_eq!(r.result.unwrap(), ["Noto Sans HK UI Regular"]);
-    // Japanese has only a full face here, which `for_ui` leaves out.
-    let r = run(Embed::new().for_ui().scripts(&["Hant", "Jpan"]), Some(&dir), Some("1"));
+    // Without catalogs to cut them to, the interface faces are left out too.
+    let r = run(Embed::new().for_ui(), Some(&dir), None);
+    assert_eq!(r.result.as_ref().unwrap(), &["Noto Sans Arabic Regular"]);
+    let w = warnings(&r);
+    assert_eq!(w.len(), 1, "{w:#?}");
+    assert!(w[0].contains("not embedding the interface faces Noto Sans TC UI Regular, Noto Sans HK UI Regular"), "{}", w[0]);
+    assert!(w[0].contains("Embed::subset_to"), "{}", w[0]);
+    let r = run(Embed::new().for_ui().scripts(&["Hant", "Arab"]), Some(&dir), Some("1"));
     let Err(Error::MissingScripts { scripts, .. }) = r.result else { panic!("{:?}", r.result) };
-    assert_eq!(scripts, ["Jpan"]);
-    assert_eq!(run(Embed::new().scripts(&["Jpan"]), Some(&dir), Some("1")).result.unwrap(), ["Noto Sans JP Regular"]);
+    assert_eq!(scripts, ["Hant"]);
+    assert_eq!(r.table.trim(), "&[]");
+    // Without `for_ui` every face is embedded whole, as document text needs.
+    let r = run(Embed::new().scripts(&["Hant"]), Some(&dir), Some("1"));
+    assert_eq!(r.result.as_ref().unwrap(), &["Noto Sans TC Regular", "Noto Sans TC UI Regular", "Noto Sans HK UI Regular"]);
+    assert_eq!(warnings(&r), Vec::<String>::new());
 }
 
 #[test]
@@ -302,36 +311,34 @@ fn check_text_warns_about_characters_no_face_covers() {
     let dir = checkout(
         &scratch,
         &[
-            ("Noto Sans TC", "Hant,Latn", "", tiny_font(&[(0x20, 0x7E, None), (0x3000, 0x9FFF, None)], &[])),
-            ("Noto Sans TC UI", "Hant,Latn", "ui", tiny_font(&[(0x20, 0x7E, None), (0x4E00, 0x4E03, None)], &[])),
+            ("Noto Sans TC", "Hant,Latn", "", tiny_font(&[(0x20, 0x7E, None), (0x4E00, 0x4E03, None)], &[])),
             ("Noto Sans Arabic", "Arab", "", tiny_font(&[(0x600, 0x6FF, None)], &[])),
+            ("Noto Sans SC", "Hans,Latn", "", tiny_font(&[(0x20, 0x7E, None), (0x3000, 0x9FFF, None)], &[])),
         ],
     );
     let catalogs = scratch.0.join("i18n");
     std::fs::create_dir_all(&catalogs).unwrap();
-    std::fs::write(catalogs.join("zh-TW.ftl"), "\u{FEFF}open = 一丁万。\nclose = 丁万\u{FE0F}\n").unwrap();
+    std::fs::write(catalogs.join("zh-TW.ftl"), "\u{FEFF}open = 一丁万。\nclose = 丁万\u{FE0F} \u{1F600}\n").unwrap();
     std::fs::write(catalogs.join("ar.ftl"), "open = فتح\nok = 一\n").unwrap();
     let long: String = (0x4E10..0x4E20).filter_map(char::from_u32).collect();
     std::fs::write(catalogs.join("long.ftl"), format!("x = {long}\n")).unwrap();
     let paths = ["zh-TW.ftl", "ar.ftl", "long.ftl", "missing.ftl"].map(|f| catalogs.join(f));
-    let warnings = |r: &Run| r.cargo.iter().filter(|l| l.starts_with("cargo::warning")).cloned().collect::<Vec<_>>();
 
-    let r = run(Embed::new().for_ui().check_text(paths.clone()), Some(&dir), None);
+    let r = run(Embed::new().scripts(&["Hant", "Arab"]).check_text(paths.clone()), Some(&dir), None);
     assert_eq!(r.result.as_ref().unwrap().len(), 2);
     for path in &paths {
         assert!(r.cargo.contains(&format!("cargo::rerun-if-changed={}", path.display())), "{:?}", r.cargo);
     }
     let w = warnings(&r);
     assert_eq!(w.len(), 3, "{w:#?}");
-    assert!(w[0].contains("zh-TW.ftl has 2 characters no selected face covers (万。); system fonts"), "{}", w[0]);
-    assert!(w[0].contains("tools/ui-chars and tools/ui-subset"), "{}", w[0]);
+    assert!(w[0].contains("zh-TW.ftl has 2 characters no embedded face covers (万。); system fonts"), "{}", w[0]);
     assert!(w[1].contains("long.ftl has 16 characters") && w[1].contains("(丐丑丒专且丕世丗 …)"), "{}", w[1]);
     assert!(w[2].contains("cannot check") && w[2].contains("missing.ftl"), "{}", w[2]);
 
     // The full face covers everything; without a checkout there is nothing to check.
     let r = run(Embed::new().check_text(paths[..3].to_vec()), Some(&dir), None);
     assert_eq!(warnings(&r), Vec::<String>::new());
-    let r = run(Embed::new().for_ui().check_text(paths.clone()), None, None);
+    let r = run(Embed::new().check_text(paths.clone()), None, None);
     assert_eq!(warnings(&r), Vec::<String>::new());
     assert!(r.cargo.contains(&format!("cargo::rerun-if-changed={}", paths[0].display())));
 
@@ -339,5 +346,123 @@ fn check_text_warns_about_characters_no_face_covers() {
     let r = run(Embed::new().scripts(&["Arab"]).check_text([&paths[1]]), Some(&fixture()), None);
     let w = warnings(&r);
     assert!(w[0].contains("cannot read the character map of Sans Arabic Regular"), "{w:#?}");
-    assert!(w[1].contains("ar.ftl has 1 character no selected face covers (一)"), "{w:#?}");
+    assert!(w[1].contains("ar.ftl has 1 character no embedded face covers (一)"), "{w:#?}");
+}
+
+#[cfg(feature = "subset")]
+mod subset {
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
+
+    use super::{Run, Scratch, checkout, run, tiny_font, warnings};
+    use crate::cmap::Cmap;
+    use crate::{Embed, Error};
+
+    /// `fixture/subset/make-fonts.py` writes these.
+    fn tiny(file: &str) -> Vec<u8> {
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixture/subset").join(file)).unwrap()
+    }
+
+    /// The BMP characters `font` maps.
+    fn mapped(font: &[u8]) -> Vec<u32> {
+        let cmap = Cmap::read(font, 0).unwrap();
+        ('\0'..='\u{FFFF}').filter(|&c| cmap.covers(c)).map(u32::from).collect()
+    }
+
+    fn table<'a>(font: &'a [u8], tag: &[u8; 4]) -> Option<&'a [u8]> {
+        let u16_at = |at: usize| usize::from(u16::from_be_bytes([font[at], font[at + 1]]));
+        let u32_at = |at: usize| usize::try_from(u32::from_be_bytes(font[at..at + 4].try_into().unwrap())).unwrap();
+        let record = (0..u16_at(4)).map(|i| 12 + 16 * i).find(|&r| &font[r..r + 4] == tag)?;
+        Some(&font[u32_at(record + 8)..][..u32_at(record + 12)])
+    }
+
+    /// The feature tags of a GSUB or GPOS table.
+    fn features(table: &[u8]) -> BTreeSet<String> {
+        let list = usize::from(u16::from_be_bytes([table[6], table[7]]));
+        let count = usize::from(u16::from_be_bytes([table[list], table[list + 1]]));
+        (0..count).map(|i| String::from_utf8_lossy(&table[list + 2 + 6 * i..][..4]).into_owned()).collect()
+    }
+
+    fn glyph_count(font: &[u8]) -> u16 {
+        let maxp = table(font, b"maxp").unwrap();
+        u16::from_be_bytes([maxp[4], maxp[5]])
+    }
+
+    fn cut_file(r: &Run, family: &str) -> PathBuf {
+        r.out.0.join("craft-fonts-ui").join(format!("{}-Regular.ttf", family.replace(' ', "-")))
+    }
+
+    #[test]
+    fn subset_to_cuts_interface_faces_to_the_catalogs() {
+        let scratch = Scratch::new("subset");
+        let latin = || tiny_font(&[(0x20, 0x7E, None)], &[]);
+        let dir = checkout(
+            &scratch,
+            &[
+                ("Noto Sans TC", "Hant,Latn", "", latin()),
+                ("Noto Sans TC UI", "Hant,Latn", "ui", tiny("Tiny-glyf.ttf")),
+                ("Noto Sans HK UI", "Hant-HK,Latn", "ui", tiny("Tiny-glyf.ttf")),
+                ("Noto Sans Arabic", "Arab", "", latin()),
+            ],
+        );
+        let tw = scratch.0.join("zh-TW.tsv");
+        std::fs::write(&tw, "Open\t一万\n").unwrap();
+        let ko = scratch.0.join("ko.tsv");
+        std::fs::write(&ko, "Open\t丁\u{FE0F} \u{1F600}\n").unwrap();
+
+        let r = run(Embed::new().subset_to([&tw]).scripts(&["Hant"]), Some(&dir), Some("1"));
+        assert_eq!(r.result.as_ref().unwrap(), &["Noto Sans TC UI Regular", "Noto Sans HK UI Regular"]);
+        let tc = cut_file(&r, "Noto Sans TC UI");
+        assert!(r.table.contains(&format!("index: 0, bytes: include_bytes!({:?})", tc.display().to_string())), "{}", r.table);
+        assert!(r.cargo.contains(&format!("cargo::rerun-if-changed={}", tw.display())), "{:?}", r.cargo);
+        let cut = std::fs::read(&tc).unwrap();
+        // The catalog's 一, plus the punctuation, kana and full-width forms the source has; not
+        // its Latin, nor the 丁 and 七 no catalog uses.
+        assert_eq!(mapped(&cut), [0x3001, 0x300C, 0x3042, 0x4E00, 0xFF01]);
+        assert!(table(&cut, b"glyf").is_some());
+        assert_eq!(features(table(&cut, b"GSUB").unwrap()), BTreeSet::from(["vert".to_owned()]));
+        // .notdef, five characters and the vertical form of U+300C.
+        assert_eq!(glyph_count(&cut), 7);
+        // The source lacks 万, so system fonts draw it.
+        let w = warnings(&r);
+        assert_eq!(w.len(), 1, "{w:#?}");
+        assert!(w[0].contains("zh-TW.tsv has 1 character no embedded face covers (万)"), "{}", w[0]);
+
+        // The same bytes on every run. Another catalog adds its characters, but no emoji or
+        // variation selector, and a `check_text` file is only checked.
+        let again = run(Embed::new().for_ui().subset_to([&tw]), Some(&dir), None);
+        assert_eq!(std::fs::read(cut_file(&again, "Noto Sans TC UI")).unwrap(), cut);
+        let r = run(Embed::new().subset_to([&tw, &ko]).check_text([scratch.0.join("zh-TW.tsv")]), Some(&dir), None);
+        assert_eq!(mapped(&std::fs::read(cut_file(&r, "Noto Sans TC UI")).unwrap()), [0x3001, 0x300C, 0x3042, 0x4E00, 0x4E01, 0xFF01]);
+        assert_eq!(warnings(&r).len(), 1, "{:#?}", warnings(&r));
+    }
+
+    #[test]
+    fn subset_to_rejects_cff_interface_faces() {
+        let scratch = Scratch::new("subset-cff");
+        let dir = checkout(&scratch, &[("Noto Sans SC UI", "Hans", "ui", tiny("Tiny-cff.otf"))]);
+        let catalog = scratch.0.join("zh-CN.tsv");
+        std::fs::write(&catalog, "Open\t一\n").unwrap();
+        for required in [None, Some("1")] {
+            let r = run(Embed::new().subset_to([&catalog]), Some(&dir), required);
+            let Err(e @ Error::NotTrueType { .. }) = r.result else { panic!("{:?}", r.result) };
+            assert!(e.to_string().contains("0.ttf has CFF outlines"), "{e}");
+            assert_eq!(r.table.trim(), "&[]");
+        }
+    }
+
+    /// With `CRAFT_FONTS_DIR` set to a craft-fonts checkout, cut its BIZ UDPGothic Regular.
+    #[test]
+    fn cuts_biz_udpgothic() {
+        let Some(dir) = std::env::var_os("CRAFT_FONTS_DIR").filter(|dir| !dir.is_empty()) else { return };
+        let Ok(source) = std::fs::read(Path::new(&dir).join("fonts/biz-ud-pgothic/BIZUDPGothic-Regular.ttf")) else { return };
+        let chars: BTreeSet<char> = "ファイルを開く「新規」、保存。編集表示".chars().collect();
+        let cut = crate::subset::subset(&source, 0, &chars).unwrap();
+        let (source_cmap, cmap) = (Cmap::read(&source, 0).unwrap(), Cmap::read(&cut, 0).unwrap());
+        assert!(chars.iter().all(|&c| cmap.covers(c) == source_cmap.covers(c)));
+        assert!(!cmap.covers('A') && !cmap.covers('漢'));
+        assert!(features(table(&cut, b"GSUB").unwrap()).contains("vert"));
+        assert!(cut.len() < source.len() / 20, "{} of {} bytes", cut.len(), source.len());
+        assert_eq!(crate::subset::subset(&source, 0, &chars).unwrap(), cut);
+    }
 }

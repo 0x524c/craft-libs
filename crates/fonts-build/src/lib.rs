@@ -13,15 +13,18 @@
 //!   unreadable checkout, no selected face, or a requested script without a face is an [`Error`].
 //!
 //! Add this crate both as a build-dependency (for [`embed`]) and as a dependency (for
-//! [`EmbeddedFace`]). In `build.rs`'s `main`:
+//! [`EmbeddedFace`]). The build-dependency enables the `subset` feature for `Embed::subset_to`,
+//! which cuts the CJK interface faces to the translation catalogs' characters; the dependency
+//! leaves it off, so the subsetter is not part of the app. In `build.rs`'s `main`:
 //!
-//! ```no_run
+//! ```ignore
 //! println!("cargo::rerun-if-changed=build.rs");
 //! let wasm = craft_fonts_build::target_is_wasm();
+//! let catalogs: Vec<std::path::PathBuf> = /* the app's translation catalogs */;
 //! let embedded = craft_fonts_build::Embed::new()
-//!     // CJK faces as their UI subsets, cut to the characters the translation catalogs use.
-//!     .for_ui()
-//!     // Web builds have a size budget: embed only the Japanese UI face there.
+//!     // CJK faces only as the interface faces, cut to the characters the catalogs use.
+//!     .subset_to(catalogs)
+//!     // Web builds have a size budget: embed only the Japanese interface face there.
 //!     .filter(move |face| !wasm || face.has_script("Jpan"))
 //!     .write("craft_fonts.rs");
 //! if let Err(e) = embedded {
@@ -43,6 +46,8 @@
 mod cmap;
 mod embed;
 mod manifest;
+#[cfg(feature = "subset")]
+mod subset;
 #[cfg(test)]
 mod tests;
 
