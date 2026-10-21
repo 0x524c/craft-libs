@@ -183,7 +183,7 @@ impl DockStyle {
             maximize_label: "Maximize Frame".into(),
             restore_frame_label: "Restore Frame Size".into(),
             new_window_label: "Move Panel to New Window".into(),
-            float_hint_label: "Hold {key} to float".into(),
+            float_hint_label: "Hold {key} to undock".into(),
             close_menu_items: true,
             close_button: true,
             wheel_selects_tabs: None,

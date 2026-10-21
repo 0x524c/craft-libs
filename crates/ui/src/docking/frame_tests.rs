@@ -182,7 +182,7 @@ fn texts(d: &Driver) -> Vec<String> {
 
 #[test]
 fn ctrl_or_cmd_floats_from_a_tab_a_drag_bar_or_a_grip_and_the_preview_says_so() {
-    const HINT: &str = "Hold Ctrl to float";
+    const HINT: &str = "Hold Ctrl to undock";
     let floated = |actions: &[Action<u32>], panel: u32| match actions {
         [Action::Float { panel: p, .. }] => *p == panel,
         [Action::MoveGroup { panel: p, to: Target::Float { .. } }] => *p == panel,

@@ -46,7 +46,7 @@ impl DockStyle {
     /// | `dock.restoreFrame` | `restore_frame_label` | Restore Frame Size |
     /// | `dock.newWindow` | `new_window_label` | Move Panel to New Window |
     /// | `dock.autoCollapse` | `auto_collapse_label` | Auto-Collapse Iconic Panels |
-    /// | `dock.floatHint` | `float_hint_label` | Hold {key} to float |
+    /// | `dock.floatHint` | `float_hint_label` | Hold {key} to undock |
     #[must_use]
     pub fn localized(mut self, translate: impl Fn(&str) -> Option<String>) -> Self {
         for (key, label) in self.labels_mut() {
