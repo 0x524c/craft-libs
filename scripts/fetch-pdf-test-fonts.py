@@ -11,6 +11,8 @@ import urllib.request
 
 
 def fetch(url):
+    if not url.startswith("https://"):
+        raise ValueError("refusing to fetch a non-HTTPS URL")
     for attempt in range(3):
         try:
             with urllib.request.urlopen(url, timeout=60) as response:
@@ -42,7 +44,9 @@ def main():
         name, url, digest = fixture["name"], fixture["source"], fixture["sha256"]
         if Path(name).name != name or name in ("", ".", "..") or not url.startswith("https://"):
             raise ValueError("invalid fixture name or source")
-        path = destination / name
+        path = (destination / name).resolve()
+        if path.parent != destination:
+            raise ValueError(f"fixture path escapes destination: {name}")
         if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == digest:
             print(f"Verified {name}")
             continue
