@@ -275,10 +275,10 @@ pub fn fmt(template: &str, args: &[(&str, &str)]) -> String {
 }
 
 /// [`fmt`] without isolates, for text that goes where the marks would get in the way: file
-/// names, logs, terminals, text compared or parsed later. A value that is one isolate goes in
-/// without it.
+/// names, logs, terminals, text compared or parsed later. Every isolate mark is taken off, in
+/// the template and in the values.
 pub fn fmt_plain(template: &str, args: &[(&str, &str)]) -> String {
-    fill(template, args, false)
+    strip_isolates(&fill(template, args, false))
 }
 
 const LRI: char = '\u{2066}';
@@ -602,6 +602,7 @@ mod tests {
         assert_eq!(fmt("Saved {name} in {dir}.", &[("name", "Report 2.pdf"), ("dir", &ltr("/home/sara"))]), "Saved Report 2.pdf in /home/sara.");
         assert_eq!(fmt("{a}", &[("a", "x"), ("b", "שלום")]), "x", "an unused value doesn't count");
         assert_eq!(fmt_plain("{a}", &[("a", &isolate("x"))]), "x");
+        assert_eq!(fmt_plain("\u{2066}{a} {b}", &[("a", "x\u{2069}"), ("b", &isolate(&ltr("y")))]), "x y");
         let i = all(P).0;
         assert_eq!(i.trn(Lang::EN, 2, "{n} page", "{n} pages"), "2 pages");
     }
