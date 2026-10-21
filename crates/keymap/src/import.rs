@@ -562,8 +562,9 @@ impl ImportPlan {
     ///
     /// A change that finds the overrides full is left out and reported in
     /// [`ImportReport::failed`]; the others still apply, and a chord it would have taken from an
-    /// earlier entry stays with that entry. That includes taking a chord from another command:
-    /// both commands keep the bindings they had. With [`Start::Defaults`] that cannot happen.
+    /// earlier entry stays with that entry. That includes taking a chord from another command,
+    /// or from a command whose own change failed: both commands keep the bindings they had. With
+    /// [`Start::Defaults`] that cannot happen.
     pub fn apply(&self, keymap: &mut Keymap) -> ImportReport {
         let before: Vec<Vec<Binding>> = self.commands.iter().map(|p| keymap.bindings(&p.command)).collect();
         // Dropping every entry leaves room for all of them: each catalog command takes at most one
@@ -582,11 +583,14 @@ impl ImportPlan {
             let home_of = |km: &Keymap, c: &CommandRef| km.bindable(c).map_or_else(Scope::app, |b| b.scope.clone());
             let label_of = |km: &Keymap, c: &CommandRef| km.bindable(c).map(|b| b.label.clone()).unwrap_or_default();
             let mut decided: HashSet<String> = HashSet::new();
+            // Commands whose change failed keep the bindings they had, whatever later changes free.
+            let mut failed_here: HashSet<String> = HashSet::new();
             for (c, (p, list)) in self.commands.iter().zip(&accepted).enumerate() {
                 let failed =
                     |km: &Keymap, change, shortcuts| Failed { command: p.command.clone(), label: label_of(km, &p.command), change, shortcuts };
                 if let Some(f) = dropped.get(&c) {
                     report.failed.push(f.clone());
+                    failed_here.insert(p.command.key());
                     continue;
                 }
                 if !list.is_empty() {
@@ -600,11 +604,13 @@ impl ImportPlan {
                             continue 'attempt;
                         }
                         report.failed.push(f);
+                        failed_here.insert(p.command.key());
                         continue;
                     }
                 } else if p.none_defined && self.none_defined == NoneDefined::Clear {
                     if !keymap.clear(&p.command) {
                         report.failed.push(failed(keymap, FailedChange::Clear, Vec::new()));
+                        failed_here.insert(p.command.key());
                         continue;
                     }
                 } else {
@@ -614,7 +620,8 @@ impl ImportPlan {
             }
 
             // A command that cannot take a chord from another command is dropped, so both keep
-            // the bindings they had.
+            // the bindings they had. That includes a command whose own change failed: freeing an
+            // entry later must not take its chord away.
             let mut unbind_failed = false;
             for (c, (p, list)) in self.commands.iter().zip(&accepted).enumerate() {
                 if list.is_empty() || !decided.contains(&p.command.key()) {
@@ -627,7 +634,7 @@ impl ImportPlan {
                     let home = home_of(keymap, &h.command);
                     let label = label_of(keymap, &h.command);
                     let shortcut = h.binding.text(&home);
-                    if keymap.remove(&h.command, &h.binding) {
+                    if !failed_here.contains(&h.command.key()) && keymap.remove(&h.command, &h.binding) {
                         report.conflicts_cleared.push(Cleared { command: h.command, label, shortcut });
                     } else {
                         let home = home_of(keymap, &p.command);
