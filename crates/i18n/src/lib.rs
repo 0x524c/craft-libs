@@ -12,6 +12,7 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 
 use intl_pluralrules::{PluralCategory, PluralRuleType, PluralRules};
 use unic_langid::LanguageIdentifier;
+use unicode_bidi::{BidiClass, bidi_class};
 
 /// The catalogs an app embeds, one entry per locale: (locale, shared catalog, the app's catalog).
 /// A missing catalog is `""`.
@@ -158,9 +159,9 @@ impl I18n {
         self.find(lang, &[("@id", id), ("", label)]).unwrap_or(label)
     }
 
-    /// A count's wording in `lang`, `{n}` filled in as a left-to-right isolate ([`ltr`]). `one`
-    /// and `other` are the English forms; they are also the key of the `@plural` row, and the
-    /// fallback.
+    /// A count's wording in `lang`, `{n}` filled in, as a left-to-right isolate ([`ltr`]) when the
+    /// wording has a right-to-left letter. `one` and `other` are the English forms; they are also
+    /// the key of the `@plural` row, and the fallback.
     pub fn trn(&self, lang: Lang, n: u64, one: &str, other: &str) -> String {
         let key = format!("{one}|{other}");
         let chain = self.locale(lang).map_or(&[][..], |l| l.chain.as_slice());
@@ -262,18 +263,20 @@ impl I18n {
     }
 }
 
-/// Fill `{name}` placeholders from `args` in one pass, each value wrapped in a first-strong
-/// isolate (FSI…PDI), so its direction can't reorder the sentence around it: a Latin file name
-/// in an Arabic message stays where the translator put it. A value that already is one isolate
-/// goes in as it is; pass numbers, paths and codes through [`ltr`]. Unknown placeholders stay as
-/// written, and inserted values are never read as templates, so a file name containing `{n}`
-/// stays intact.
+/// Fill `{name}` placeholders from `args` in one pass. When the template or an inserted value
+/// has a right-to-left letter (Hebrew, Arabic and the like), each value goes in as a first-strong
+/// isolate (FSI…PDI), so its direction can't reorder the sentence around it: a Latin file name in
+/// an Arabic message stays where the translator put it. A value that already is one isolate goes
+/// in as it is; pass numbers, paths and codes through [`ltr`]. Text with no right-to-left letter
+/// gets no marks, and a value's own isolate is taken off. Unknown placeholders stay as written,
+/// and inserted values are never read as templates, so a file name containing `{n}` stays intact.
 pub fn fmt(template: &str, args: &[(&str, &str)]) -> String {
     fill(template, args, true)
 }
 
 /// [`fmt`] without isolates, for text that goes where the marks would get in the way: file
-/// names, logs, terminals, text compared or parsed later.
+/// names, logs, terminals, text compared or parsed later. A value that is one isolate goes in
+/// without it.
 pub fn fmt_plain(template: &str, args: &[(&str, &str)]) -> String {
     fill(template, args, false)
 }
@@ -284,14 +287,16 @@ const FSI: char = '\u{2068}';
 const PDI: char = '\u{2069}';
 
 /// `value` as a first-strong isolate (FSI…PDI): it takes the direction of its first strong
-/// letter and can't reorder the text around it. What [`fmt`] does to each value.
+/// letter and can't reorder the text around it. What [`fmt`] does to each value in text with a
+/// right-to-left letter.
 pub fn isolate(value: &str) -> String {
     wrap(FSI, value)
 }
 
 /// `value` as a left-to-right isolate (LRI…PDI), for numbers, paths, file sizes, timecodes and
 /// codes, which read left to right in every language. In an RTL first-strong isolate, the
-/// segments of `/home/مستخدم/file.txt` would run right to left.
+/// segments of `/home/مستخدم/file.txt` would run right to left. [`fmt`] takes the isolate off
+/// again in text with no right-to-left letter.
 pub fn ltr(value: &str) -> String {
     wrap(LRI, value)
 }
@@ -323,6 +328,22 @@ fn wrap(initiator: char, value: &str) -> String {
     out
 }
 
+/// Whether `text` has a strong right-to-left character (bidi class R or AL): the text that needs
+/// isolates.
+fn has_rtl(text: &str) -> bool {
+    !text.is_ascii() && text.chars().any(|c| matches!(bidi_class(c), BidiClass::R | BidiClass::AL))
+}
+
+/// `value` without its isolate, if it is exactly one.
+fn unwrap_isolate(value: &str) -> &str {
+    if is_one_isolate(value) {
+        // The initiator and PDI are three bytes each in UTF-8.
+        value.get(3..value.len() - 3).unwrap_or(value)
+    } else {
+        value
+    }
+}
+
 /// Whether `value` is exactly one isolate: an initiator, then the PDI that closes it last.
 fn is_one_isolate(value: &str) -> bool {
     let mut depth = 0_usize;
@@ -344,27 +365,32 @@ fn is_one_isolate(value: &str) -> bool {
 }
 
 fn fill(template: &str, args: &[(&str, &str)], isolated: bool) -> String {
-    let mut out = String::with_capacity(template.len());
+    let mut pieces: Vec<(&str, bool)> = Vec::new();
     let mut rest = template;
     while let Some((before, after_open)) = rest.split_once('{') {
-        out.push_str(before);
+        pieces.push((before, false));
         let Some((name, after_close)) = after_open.split_once('}') else {
-            out.push('{');
+            pieces.push(("{", false));
             rest = after_open;
             break;
         };
         match args.iter().find(|(k, _)| *k == name) {
-            Some((_, value)) if !isolated || value.is_empty() || is_one_isolate(value) => out.push_str(value),
-            Some((_, value)) => out.push_str(&isolate(value)),
-            None => {
-                out.push('{');
-                out.push_str(name);
-                out.push('}');
-            }
+            Some((_, value)) => pieces.push((value, true)),
+            None => pieces.extend([("{", false), (name, false), ("}", false)]),
         }
         rest = after_close;
     }
-    out.push_str(rest);
+    pieces.push((rest, false));
+    let isolated = isolated && pieces.iter().any(|(text, _)| has_rtl(text));
+    let mut out = String::with_capacity(template.len());
+    for (text, value) in pieces {
+        match (value, isolated) {
+            (false, _) => out.push_str(text),
+            (true, false) => out.push_str(unwrap_isolate(text)),
+            (true, true) if text.is_empty() || is_one_isolate(text) => out.push_str(text),
+            (true, true) => out.push_str(&isolate(text)),
+        }
+    }
     out
 }
 
@@ -562,21 +588,33 @@ mod tests {
         ("fr", "@plural\t{n} page|{n} pages\t{n} page|{n} pages\n", ""),
         ("ru", "@plural\t{n} file|{n} files\t{n} файл|{n} файла|{n} файлов\n", ""),
         ("ja", "@plural\t{n} file|{n} files\t{n} 個\n", ""),
+        ("fa", "@plural\t{n} page|{n} pages\t{n} صفحه|{n} صفحه\n", ""),
     ];
 
     #[test]
     fn fmt_fills_once() {
-        assert_eq!(fmt_plain("{a} to {b}", &[("a", "x"), ("b", "{a}")]), "x to {a}");
+        assert_eq!(fmt("{a} to {b}", &[("a", "x"), ("b", "{a}")]), "x to {a}");
         assert_eq!(fmt("{z} {", &[]), "{z} {");
     }
 
     #[test]
-    fn inserted_values_are_isolated() {
+    fn left_to_right_text_gets_no_marks() {
+        assert_eq!(fmt("Saved {name} in {dir}.", &[("name", "Report 2.pdf"), ("dir", &ltr("/home/sara"))]), "Saved Report 2.pdf in /home/sara.");
+        assert_eq!(fmt("{a}", &[("a", "x"), ("b", "שלום")]), "x", "an unused value doesn't count");
+        assert_eq!(fmt_plain("{a}", &[("a", &isolate("x"))]), "x");
+        let i = all(P).0;
+        assert_eq!(i.trn(Lang::EN, 2, "{n} page", "{n} pages"), "2 pages");
+    }
+
+    #[test]
+    fn right_to_left_text_isolates_values() {
         let saved = fmt("تم حفظ {name} في {dir}.", &[("name", "Report 2.pdf"), ("dir", &ltr("/home/سارة/docs"))]);
         assert_eq!(saved, "تم حفظ \u{2068}Report 2.pdf\u{2069} في \u{2066}/home/سارة/docs\u{2069}.");
         assert_eq!(strip_isolates(&saved), "تم حفظ Report 2.pdf في /home/سارة/docs.");
-        assert_eq!(fmt_plain("{a}", &[("a", "x")]), "x");
-        assert_eq!(fmt("[{a}]", &[("a", "")]), "[]");
+        assert_eq!(fmt("Opened {name}.", &[("name", "שלום.txt")]), "Opened \u{2068}שלום.txt\u{2069}.");
+        assert_eq!(fmt("[{a}] {b}", &[("a", ""), ("b", "ש")]), "[] \u{2068}ש\u{2069}");
+        let i = all(P).0;
+        assert_eq!(i.trn(lang(&i, "fa"), 3, "{n} page", "{n} pages"), "\u{2066}3\u{2069} صفحه");
     }
 
     #[test]
@@ -584,15 +622,9 @@ mod tests {
         assert_eq!(isolate("a\u{2069}b"), "\u{2068}ab\u{2069}");
         assert_eq!(isolate("a\u{2067}b"), "\u{2068}a\u{2067}b\u{2069}\u{2069}");
         let one = ltr("12");
-        assert_eq!(fmt("{n}", &[("n", &one)]), one);
+        assert_eq!(fmt("ש {n}", &[("n", &one)]), format!("ש {one}"));
         // Two isolates side by side are not one, so they get wrapped.
-        assert_eq!(fmt("{v}", &[("v", "\u{2066}a\u{2069}\u{2066}b\u{2069}")]), "\u{2068}\u{2066}a\u{2069}\u{2066}b\u{2069}\u{2069}");
-    }
-
-    #[test]
-    fn counts_are_left_to_right_isolates() {
-        let i = all(P).0;
-        assert_eq!(i.trn(lang(&i, "fr"), 2, "{n} page", "{n} pages"), "\u{2066}2\u{2069} pages");
+        assert_eq!(fmt("ש{v}", &[("v", "\u{2066}a\u{2069}\u{2066}b\u{2069}")]), "ש\u{2068}\u{2066}a\u{2069}\u{2066}b\u{2069}\u{2069}");
     }
 
     #[test]
@@ -600,8 +632,8 @@ mod tests {
         let (i, problems) = all(P);
         assert!(problems.is_empty(), "{problems:?}");
         let fr = lang(&i, "fr");
-        assert_eq!(strip_isolates(&i.trn(fr, 0, "{n} page", "{n} pages")), "0 page");
-        assert_eq!(strip_isolates(&i.trn(fr, 2, "{n} page", "{n} pages")), "2 pages");
+        assert_eq!(i.trn(fr, 0, "{n} page", "{n} pages"), "0 page");
+        assert_eq!(i.trn(fr, 2, "{n} page", "{n} pages"), "2 pages");
     }
 
     #[test]
@@ -609,27 +641,27 @@ mod tests {
         let i = all(P).0;
         let ru = lang(&i, "ru");
         for (n, want) in [(1, "1 файл"), (3, "3 файла"), (5, "5 файлов"), (11, "11 файлов"), (21, "21 файл")] {
-            assert_eq!(strip_isolates(&i.trn(ru, n, "{n} file", "{n} files")), want);
+            assert_eq!(i.trn(ru, n, "{n} file", "{n} files"), want);
         }
     }
 
     #[test]
     fn one_form_ja() {
         let i = all(P).0;
-        assert_eq!(strip_isolates(&i.trn(lang(&i, "ja"), 7, "{n} file", "{n} files")), "7 個");
+        assert_eq!(i.trn(lang(&i, "ja"), 7, "{n} file", "{n} files"), "7 個");
     }
 
     #[test]
     fn english_fallback() {
         let i = all(P).0;
-        assert_eq!(strip_isolates(&i.trn(Lang::EN, 1, "{n} file", "{n} files")), "1 file");
-        assert_eq!(strip_isolates(&i.trn(lang(&i, "fr"), 2, "{n} x", "{n} xs")), "2 xs");
+        assert_eq!(i.trn(Lang::EN, 1, "{n} file", "{n} files"), "1 file");
+        assert_eq!(i.trn(lang(&i, "fr"), 2, "{n} x", "{n} xs"), "2 xs");
     }
 
     #[test]
     fn beyond_sweep() {
         let i = all(P).0;
-        assert_eq!(strip_isolates(&i.trn(lang(&i, "fr"), 1_000_000, "{n} page", "{n} pages")), "1000000 pages");
+        assert_eq!(i.trn(lang(&i, "fr"), 1_000_000, "{n} page", "{n} pages"), "1000000 pages");
     }
 
     static L: &Embedded =
@@ -696,7 +728,7 @@ mod tests {
         assert_eq!(i.t(Lang::PSEUDO, "A\nB"), "⟦A⟧\n⟦B⟧");
         assert_eq!(i.tc(Lang::PSEUDO, "menu", "Open"), "⟦Open⟧");
         assert_eq!(i.tid(Lang::PSEUDO, "file.save", "Save"), "⟦Save⟧");
-        assert_eq!(strip_isolates(&i.trn(Lang::PSEUDO, 2, "{n} x", "{n} xs")), "⟦2 xs⟧");
+        assert_eq!(i.trn(Lang::PSEUDO, 2, "{n} x", "{n} xs"), "⟦2 xs⟧");
         assert!(!i.languages().contains(&Lang::PSEUDO));
         assert_eq!(i.from_code("pseudo"), cfg!(debug_assertions).then_some(Lang::PSEUDO));
         assert_eq!(i.get(Lang::PSEUDO, "key", "Esc"), Some("⟦Esc⟧"));
@@ -775,9 +807,9 @@ mod tests {
     #[test]
     fn european_portuguese_zero_is_plural() {
         let i = all(PT).0;
-        assert_eq!(strip_isolates(&i.trn(lang(&i, "pt"), 0, "{n} file", "{n} files")), "0 ficheiros");
-        assert_eq!(strip_isolates(&i.trn(lang(&i, "pt"), 1, "{n} file", "{n} files")), "1 ficheiro");
-        assert_eq!(strip_isolates(&i.trn(lang(&i, "pt-br"), 0, "{n} file", "{n} files")), "0 arquivo");
+        assert_eq!(i.trn(lang(&i, "pt"), 0, "{n} file", "{n} files"), "0 ficheiros");
+        assert_eq!(i.trn(lang(&i, "pt"), 1, "{n} file", "{n} files"), "1 ficheiro");
+        assert_eq!(i.trn(lang(&i, "pt-br"), 0, "{n} file", "{n} files"), "0 arquivo");
     }
 
     /// The same counts as craft-i18n's checker (`plural_form_counts`), which rejects a catalog
