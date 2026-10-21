@@ -537,6 +537,19 @@ fn malformed_streams_return_errors_not_panics() {
     assert!(crate::decode(&streams[0][..40]).is_err());
 }
 
+/// Scans past `MAX_SCANS` aren't decoded (each one walks the whole MCU grid, with or without
+/// data): the image keeps what the earlier scans decoded and is reported damaged.
+#[test]
+fn scans_past_the_limit_are_not_decoded() {
+    let blocks = coefficients(1, 3, 500);
+    for (count, damaged) in [(MAX_SCANS, false), (MAX_SCANS + 1, true)] {
+        let stream = arith_stream(8, 1, 1, &blocks, &vec![(0, 0, 0, 0); count], 0);
+        let (frame, _, d) = decode_coefficients(&stream, &Limits::default()).unwrap();
+        assert_eq!(d, damaged, "{count} scans");
+        assert_eq!(frame.comps[0].coefs[0][0], blocks[0][0], "{count} scans");
+    }
+}
+
 #[test]
 fn limits_are_checked_before_allocating() {
     let mut s = vec![0xFF, 0xD8];

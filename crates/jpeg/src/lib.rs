@@ -13,7 +13,8 @@
 //! truncated). Restart intervals, 1, 3 and 4 components and any sampling factors are supported.
 //!
 //! The decoder never panics on input: every read from the stream is bounds-checked, the work
-//! is bounded by the frame size, and allocations are checked against the [`Limits`] first.
+//! is bounded by the frame size times the scan count (capped at `MAX_SCANS`), and
+//! allocations are checked against the [`Limits`] first.
 //! Damaged entropy-coded data stops that scan; what was decoded is kept and the caller is told.
 
 use crate::Format;
@@ -928,6 +929,12 @@ fn decode_scan(frame: &mut Frame, tables: &Tables, scan: &Scan, d: &[u8], done: 
     }
 }
 
+/// The most scans decoded from one stream; later ones are dropped and the image is reported
+/// damaged. Every scan walks its whole MCU grid, and an arithmetic-coded scan does so even with
+/// no data (the decoder is fed zeros, D.2.6), so without a cap a small file repeating empty
+/// scan headers multiplies the work by the frame size. Real files have a few dozen at most.
+const MAX_SCANS: usize = 500;
+
 /// Parse the stream and decode every scan into coefficients.
 fn decode_coefficients(b: &[u8], limits: &Limits) -> Result<(Frame, Tables, bool), CodecError> {
     if b.get(..2) != Some(&[0xFF, 0xD8]) {
@@ -983,6 +990,10 @@ fn decode_coefficients(b: &[u8], limits: &Limits) -> Result<(Frame, Tables, bool
             }
             0xDA => {
                 let f = frame.as_mut().ok_or_else(|| err("scan before the frame header"))?;
+                if scans >= MAX_SCANS {
+                    damaged = true;
+                    break;
+                }
                 let scan = parse_scan(seg, f)?;
                 let end = scan_end(b, i);
                 let data = b.get(i..end).unwrap_or_default();
