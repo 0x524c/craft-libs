@@ -1,7 +1,7 @@
 #![cfg(feature = "egui")]
 
 use craft_keymap::egui::{Dispatcher, Hit, matches, platform};
-use craft_keymap::{Active, Bindable, Binding, Chord, CommandRef, Key, Keymap, Kind, Mods, Platform, Scope, Scopes, Trigger};
+use craft_keymap::{Active, Bindable, Binding, Chord, CommandRef, Key, Keymap, Kind, Layout, Mods, Platform, Scope, Scopes, Trigger};
 use egui::{Event, InputState, Key as EguiKey, Modifiers};
 
 fn chord(text: &str) -> Chord {
@@ -452,4 +452,38 @@ fn key_repeats_run_only_when_turned_on() {
     let (ran, left) = run(&mut Dispatcher::new(), &km, &Active::NONE, frame(1.0, Modifiers::NONE, events()));
     assert_eq!(ran, ["nudge.right"]);
     assert_eq!(left, [held(true), held(true)]);
+}
+
+#[test]
+fn the_dispatcher_reads_presses_by_the_layout() {
+    let app = |id: &str, key: &str| Bindable::new(id, id, Scope::app()).with_default(Binding::parse(key).unwrap());
+    let km = Keymap::new(
+        vec![app("edit.duplicate", "Cmd+Shift+D"), app("tab.next", "Cmd+Shift+]"), app("edit.comment", "Cmd+/")],
+        Scopes::new(),
+        Platform::Windows,
+    );
+    let at = |key, physical, modifiers| Event::Key { key, physical_key: Some(physical), pressed: true, repeat: false, modifiers };
+    let ctrl_shift = Modifiers { shift: true, ..CTRL };
+
+    // Arabic 101: typing ي on the D key shows the layout is not Latin, so ⌃⇧D (which types ]) is
+    // Ctrl+Shift+D.
+    let mut d = Dispatcher::new();
+    let typed = vec![at(EguiKey::D, EguiKey::D, Modifiers::NONE), Event::Text("ي".into())];
+    run(&mut d, &km, &Active::NONE, frame(1.0, Modifiers::NONE, typed));
+    assert!(!d.layout().is_latin());
+    let (ran, _) = run(&mut d, &km, &Active::NONE, frame(2.0, ctrl_shift, vec![at(EguiKey::CloseBracket, EguiKey::D, ctrl_shift)]));
+    assert_eq!(ran, ["edit.duplicate"]);
+
+    // German: ⇧7 types /, so Ctrl+Shift+7 runs Ctrl+/; the ü key's label is learned from typing.
+    let mut d = Dispatcher::new();
+    let typed = vec![at(EguiKey::OpenBracket, EguiKey::OpenBracket, Modifiers::NONE), Event::Text("ü".into())];
+    run(&mut d, &km, &Active::NONE, frame(1.0, Modifiers::NONE, typed));
+    assert_eq!(chord("Cmd+[").display_for(Platform::Windows, d.layout()), "Ctrl+Ü");
+    let (ran, _) = run(&mut d, &km, &Active::NONE, frame(2.0, ctrl_shift, vec![at(EguiKey::Slash, EguiKey::Num7, ctrl_shift)]));
+    assert_eq!(ran, ["edit.comment"]);
+
+    // A layout the platform reports applies from the first press.
+    let mut d = Dispatcher::new().with_layout(Layout::new().with_latin(false));
+    let (ran, _) = run(&mut d, &km, &Active::NONE, frame(1.0, ctrl_shift, vec![at(EguiKey::CloseBracket, EguiKey::D, ctrl_shift)]));
+    assert_eq!(ran, ["edit.duplicate"]);
 }

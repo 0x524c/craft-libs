@@ -1,0 +1,255 @@
+//! Which chord a key press means on the active keyboard layout, and the layout's own characters
+//! for labels.
+//!
+//! One rule decides matching ([`Layout::candidates`]), recording ([`Layout::resolve`]) and labels
+//! ([`Chord::display_for`]):
+//! 1. **Letters A–Z:** the layout's Latin letter for the key, [`KeyInput::latin`] when the
+//!    platform reports it. Without it, on a layout that is not Latin, the key's position (the
+//!    Russian `с` key is C, the Hebrew `/` key is Q); on a Latin layout (Dvorak, AZERTY), the
+//!    letter typed.
+//! 2. **Digits:** the digit typed, else the key's position (AZERTY's `&é"` row types no digit
+//!    without Shift). A digit-row press that types punctuation also matches its position's digit,
+//!    after the punctuation: AZERTY's `-` key runs Ctrl+- and, when that has no binding, Ctrl+6.
+//! 3. **Punctuation:** the character typed, without Shift when the layout needs Shift for it
+//!    (German `/` is ⇧7, so ⇧⌘7 is ⌘/; US `:` is ⇧;, so ⇧; is `:`). A Shift binding on a US
+//!    base key also matches the same press (`Shift+;` matches `:`), and `=` and `+` stand for
+//!    each other so zoom keys work with and without Shift.
+//! 4. **Whether a layout is Latin** is decided for the whole layout ([`Layout::is_latin`]), never
+//!    per key: Dvorak's `'` key on the Q position stays `'`.
+//! 5. **Labels** show letters and digits by name, and a punctuation key as the character the
+//!    layout types at its position when that character has no key of its own: Ctrl+[ is `Ctrl+Ü`
+//!    on German and `Ctrl+Х` on Russian.
+//!
+//! [`KeyInput`] carries what the toolkit reports for one press; toolkits that learn more from the
+//! platform fill more of it. [`Layout`] holds what is known about the layout itself, reported by
+//! the platform or learned from what plain typing produces ([`Layout::observe`]).
+
+use std::collections::BTreeMap;
+
+use crate::chord::{Chord, Key, Mods, Platform};
+
+/// What the toolkit reports about one key press.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct KeyInput {
+    /// The modifiers held, read for the platform as [`Mods`] describes.
+    pub mods: Mods,
+    /// The key for the character the layout typed with `mods` held, when there is one (egui's
+    /// logical key).
+    pub typed: Option<Key>,
+    /// The key at the same position on a US QWERTY keyboard (winit's physical key, the web's
+    /// `code`).
+    pub physical: Option<Key>,
+    /// The layout's Latin letter for this key, when the platform reports one: the virtual-key
+    /// code on Windows, the layout's ⌘ table on macOS, the first Latin layout group on Linux, the
+    /// key code on the web when the layout is not Latin. Keys other than letters are ignored.
+    pub latin: Option<Key>,
+    /// Whether the layout needs Shift to type `typed`, when the platform reports it. Otherwise
+    /// Shift counts as needed when `typed` differs from `physical`, and without `physical` when
+    /// `typed` is a shifted symbol on a US layout (`:`, `?`, `+`). Only punctuation drops Shift.
+    pub shift_needed: Option<bool>,
+}
+
+impl KeyInput {
+    pub const fn new(mods: Mods) -> KeyInput {
+        KeyInput { mods, typed: None, physical: None, latin: None, shift_needed: None }
+    }
+
+    pub const fn with_typed(mut self, key: Key) -> KeyInput {
+        self.typed = Some(key);
+        self
+    }
+
+    pub const fn with_physical(mut self, key: Key) -> KeyInput {
+        self.physical = Some(key);
+        self
+    }
+
+    pub const fn with_latin(mut self, letter: Key) -> KeyInput {
+        self.latin = Some(letter);
+        self
+    }
+
+    pub const fn with_shift_needed(mut self, needed: bool) -> KeyInput {
+        self.shift_needed = Some(needed);
+        self
+    }
+
+    fn needs_shift(&self, typed: Key) -> bool {
+        // A shifted symbol is no key position (egui's numeric keypad Plus is the one physical
+        // key among them), so it says nothing about the Shift level.
+        self.shift_needed.unwrap_or(match self.physical {
+            Some(physical) if us_base(physical).is_none() => physical != typed,
+            _ => us_base(typed).is_some(),
+        })
+    }
+}
+
+/// The active keyboard layout, as far as the platform reports it or typing has shown it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Layout {
+    reported_latin: Option<bool>,
+    seen_latin: Option<bool>,
+    /// The character typed without modifiers at each punctuation position.
+    chars: BTreeMap<Key, char>,
+}
+
+/// US base keys and the key egui reports for them with Shift held.
+const SHIFTED: &[(Key, Key)] = &[
+    (Key::Semicolon, Key::Colon),
+    (Key::Slash, Key::Questionmark),
+    (Key::Backslash, Key::Pipe),
+    (Key::OpenBracket, Key::OpenCurlyBracket),
+    (Key::CloseBracket, Key::CloseCurlyBracket),
+    (Key::Equals, Key::Plus),
+    (Key::Num1, Key::Exclamationmark),
+];
+
+fn us_base(shifted: Key) -> Option<Key> {
+    SHIFTED.iter().find(|&&(_, s)| s == shifted).map(|&(b, _)| b)
+}
+
+const fn without_shift(m: Mods) -> Mods {
+    Mods { shift: false, ..m }
+}
+
+/// Letters of the Latin script: ASCII, Latin-1, Latin Extended-A and -B, Latin Extended
+/// Additional.
+fn is_latin_letter(c: char) -> bool {
+    c.is_alphabetic() && matches!(c, 'A'..='Z' | 'a'..='z' | '\u{00C0}'..='\u{024F}' | '\u{1E00}'..='\u{1EFF}')
+}
+
+impl Layout {
+    /// Nothing known yet: the layout counts as Latin until the platform or typing says otherwise.
+    pub fn new() -> Layout {
+        Layout::default()
+    }
+
+    /// Whether the layout is Latin, as the platform reports it.
+    pub fn with_latin(mut self, latin: bool) -> Layout {
+        self.reported_latin = Some(latin);
+        self
+    }
+
+    /// Whether the layout is Latin, as the platform reports it; `None` when it cannot tell, so
+    /// that typing decides. Call again when the user switches layouts.
+    pub fn set_latin(&mut self, latin: Option<bool>) {
+        self.reported_latin = latin;
+    }
+
+    /// Whether letters are read as typed (rule 1): what the platform reported, else what a letter
+    /// key typed last, else true.
+    pub fn is_latin(&self) -> bool {
+        self.reported_latin.or(self.seen_latin).unwrap_or(true)
+    }
+
+    /// The character the layout types without modifiers at the punctuation position `physical`.
+    pub fn with_char(mut self, physical: Key, typed: char) -> Layout {
+        self.set_char(physical, typed);
+        self
+    }
+
+    /// See [`with_char`](Self::with_char). Positions other than punctuation are ignored.
+    pub fn set_char(&mut self, physical: Key, typed: char) {
+        if physical.is_symbol() {
+            self.chars.insert(physical, typed);
+        }
+    }
+
+    /// The character known to be typed without modifiers at the punctuation position `physical`.
+    pub fn char_at(&self, physical: Key) -> Option<char> {
+        self.chars.get(&physical).copied()
+    }
+
+    /// Learns from a press at `physical` with `mods` held that typed `text`: a letter typed at a
+    /// letter position tells whether the layout is Latin, and a character typed without
+    /// modifiers at a punctuation position is that position's label. Presses with Cmd, Ctrl or
+    /// Alt, and text longer than one character, teach nothing.
+    pub fn observe(&mut self, physical: Key, mods: Mods, text: &str) {
+        let mut chars = text.chars();
+        let (Some(c), None) = (chars.next(), chars.next()) else { return };
+        if mods.cmd || mods.ctrl || mods.alt {
+            return;
+        }
+        if physical.is_letter() {
+            if c.is_alphabetic() {
+                self.seen_latin = Some(is_latin_letter(c));
+            }
+        } else if !mods.shift && !c.is_control() {
+            self.set_char(physical, c);
+        }
+    }
+
+    /// The chord a press means, as the shortcut recorder records it and lookups try first.
+    /// `None` when the press names no key.
+    pub fn resolve(&self, input: &KeyInput) -> Option<Chord> {
+        let held = input.mods;
+        if let Some(letter) = input.latin.filter(|k| k.is_letter()) {
+            return Some(Chord::new(held, letter));
+        }
+        if !self.is_latin()
+            && let Some(position) = input.physical.filter(|k| k.is_letter())
+        {
+            return Some(Chord::new(held, position));
+        }
+        let key = input.typed.or(input.physical)?;
+        let drop_shift = held.shift && key.is_symbol() && input.needs_shift(key);
+        Some(Chord::new(if drop_shift { without_shift(held) } else { held }, key))
+    }
+
+    /// The chords a press can run, most specific first: [`resolve`](Self::resolve)'s chord, the
+    /// same press written as Shift with a US base key (`Shift+;` for `:`), `=` for `+` and `+`
+    /// for Shift+`=`, and on the digit row the position's digit.
+    pub fn candidates(&self, input: &KeyInput) -> Vec<Chord> {
+        let Some(first) = self.resolve(input) else { return Vec::new() };
+        let mut out = Vec::with_capacity(4);
+        let mut push = |chord: Chord| {
+            if !out.contains(&chord) {
+                out.push(chord);
+            }
+        };
+        push(first);
+        if input.mods.shift
+            && !first.mods.shift
+            && let Some(base) = us_base(first.key)
+        {
+            push(Chord::new(input.mods, base));
+        }
+        match first.key {
+            Key::Plus => push(Chord::new(first.mods, Key::Equals)),
+            Key::Equals if first.mods.shift => push(Chord::new(without_shift(first.mods), Key::Plus)),
+            _ => {}
+        }
+        if let Some(digit) = input.physical.filter(|k| k.is_digit())
+            && first.key.is_symbol()
+        {
+            push(Chord::new(input.mods, digit));
+        }
+        out
+    }
+
+    /// Whether a press runs `binding` on `platform`: one of its [`candidates`](Self::candidates)
+    /// is the binding.
+    pub fn matches(&self, binding: &Chord, input: &KeyInput, platform: Platform) -> bool {
+        let want = binding.effective(platform);
+        self.candidates(input).iter().any(|c| c.effective(platform) == want)
+    }
+
+    /// Rule 5: the layout's character for the punctuation key `key`, when pressing that position
+    /// means `key` and the layout types `key`'s own character nowhere else that is known.
+    pub(crate) fn key_label(&self, key: Key) -> Option<String> {
+        let typed = self.char_at(key)?;
+        if Key::from_char(typed).is_some() {
+            return None;
+        }
+        let own = key.name().chars().next()?;
+        if self.chars.values().any(|&c| c == own) {
+            return None;
+        }
+        let mut upper = typed.to_uppercase();
+        Some(match (upper.next(), upper.next()) {
+            (Some(u), None) => u.to_string(),
+            _ => typed.to_string(),
+        })
+    }
+}

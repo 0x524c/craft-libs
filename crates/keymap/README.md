@@ -79,6 +79,30 @@ macOS it folds into `cmd` (`Chord::effective`).
 - `chord::foreign::read_foreign` reads key text written by other applications (Windows or Mac
   modifier names, numeric keypad keys).
 
+## Keyboard layouts
+
+[`layout`](src/layout.rs) decides which chord a key press means, the same way for matching
+(`Layout::candidates`), the shortcut recorder (`Layout::resolve`) and labels
+(`Chord::display_for`):
+
+1. Letters A–Z: the layout's Latin letter for the key. On a layout that is not Latin (Russian,
+   Arabic, Hebrew, Greek, Thai), the key's position; on a Latin layout (Dvorak, AZERTY), the
+   letter typed. Arabic Ctrl+Shift+D is Ctrl+Shift+D, not the `]` it types.
+2. Digits: the digit typed, else the key's position (AZERTY's `&é"` row). A digit-row key that
+   types punctuation also matches its digit when the punctuation has no binding.
+3. Punctuation: the character typed, without Shift when the layout needs Shift for it: German
+   `/` is ⇧7, so ⇧⌘7 runs ⌘/.
+4. Whether a layout is Latin is decided for the layout, not per key.
+5. Labels show letters and digits by name, and a punctuation key as the character the layout
+   types at its position when that character has no key of its own (`Ctrl+Ü` for Ctrl+[ on
+   German).
+
+A `KeyInput` holds what the toolkit reports for one press: modifiers, the key typed, the
+physical key, and, when the platform reports them, the layout's Latin letter (Windows
+virtual-key code, macOS ⌘ table, Linux Latin layout group) and whether Shift was needed. A
+`Layout` holds whether the layout is Latin, as the platform reports it or as plain typing shows
+it (`Layout::observe`), and the characters it types at punctuation positions.
+
 ## Storing overrides
 
 `Overrides` is a field of the app's settings type. It is stored as a map of one text per command
@@ -209,9 +233,10 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
 
 ## Features
 
-- `egui`: conversions to and from egui keys and modifiers; `egui::matches`, which accepts the
-  shifted key egui reports for a Shift binding (`Shift+;` matches `:`); and `egui::Dispatcher`,
-  which runs a frame's key presses against the keymap:
+- `egui`: conversions to and from egui keys and modifiers; `KeyInput::from_egui`;
+  `egui::matches`, which accepts the shifted key egui reports for a Shift binding (`Shift+;`
+  matches `:`); and `egui::Dispatcher`, which runs a frame's key presses against the keymap,
+  reading them by the layout it learns from typing or is given (`with_layout`, `layout()`):
 
   ```rust,ignore
   let hits = ctx.input_mut(|i| dispatcher.dispatch(i, &keymap, &active));

@@ -9,7 +9,8 @@
 //! editing and conflicts. [`reserved`] lists the chords each operating system takes; a keymap
 //! reserves no chord unless the app opts in with [`Keymap::with_reserved`], e.g.
 //! `with_reserved(reserved::system(platform))`. [`import`] brings in other applications' shortcut
-//! sets. With the `egui` feature, the `egui` module
+//! sets. [`layout`] decides which chord a key press means on the user's keyboard layout, for
+//! matching, recording and labels. With the `egui` feature, the `egui` module
 //! converts to and from egui keys, matches key presses against bindings and dispatches a frame's
 //! key events.
 //!
@@ -136,6 +137,7 @@ pub mod command;
 pub mod egui;
 pub mod import;
 pub mod keymap;
+pub mod layout;
 pub mod reserved;
 pub mod scope;
 
@@ -147,4 +149,5 @@ pub use keymap::{
     AssignError, Assigned, Bindable, Binding, BindingError, Conflict, ConflictKind, DropReason, Holder, Keymap, Kind, Lookup, MAX_BINDING_TEXT,
     MAX_BINDINGS, MAX_COMMANDS, MAX_CONFLICTS, Overrides, Policy, Problem, TypingRule, text_editing_chords,
 };
+pub use layout::{KeyInput, Layout};
 pub use scope::{Active, MAX_SCOPE_NAME, Scope, ScopeKind, Scopes};
