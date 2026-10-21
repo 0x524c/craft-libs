@@ -659,6 +659,7 @@ dependencies = [
  "intl_pluralrules",
  "sys-locale",
  "unic-langid",
+ "unicode-bidi",
 ]
 
 [[package]]

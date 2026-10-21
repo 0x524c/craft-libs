@@ -14,7 +14,7 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 use intl_pluralrules::{PluralCategory, PluralRuleType, PluralRules};
 use unic_langid::LanguageIdentifier;
 
-pub use scripts::{Direction, Han, Script, direction, han, scripts};
+pub use scripts::{Direction, Han, Script, base_direction, direction, han, scripts};
 
 /// The catalogs an app embeds, one entry per locale: (locale, shared catalog, the app's catalog).
 /// A missing catalog is `""`.

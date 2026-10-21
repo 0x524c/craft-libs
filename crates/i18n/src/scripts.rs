@@ -161,6 +161,18 @@ pub fn direction(tag: &str) -> Direction {
     }
 }
 
+/// The direction of a paragraph of text, from its first strong character (UAX #9 rules P2 and
+/// P3): the contents of isolates (LRI, RLI or FSI up to the matching PDI) are skipped, and the
+/// search stops at the first paragraph separator. `None` when the paragraph has no strong
+/// character; P3 then reads it as left to right, and an app may use the interface direction.
+pub fn base_direction(text: &str) -> Option<Direction> {
+    match unicode_bidi::get_base_direction(text) {
+        unicode_bidi::Direction::Ltr => Some(Direction::Ltr),
+        unicode_bidi::Direction::Rtl => Some(Direction::Rtl),
+        unicode_bidi::Direction::Mixed => None,
+    }
+}
+
 /// The forms a language tag's Han characters take: `zh-CN`, `zh-SG`, `zh-Hans` and plain `zh` →
 /// Simplified; `zh-TW`, `zh-Hant` and the other regions CLDR writes in Traditional characters
 /// (`zh-US`, `zh-AU`) → Traditional; `zh-HK`, `zh-MO`, `zh-Hant-HK` and `yue` → HongKong; `ja` →
@@ -276,6 +288,20 @@ impl Subtags {
 mod tests {
     use super::Script::*;
     use super::*;
+
+    #[test]
+    fn base_direction_of_text() {
+        assert_eq!(base_direction("Hello"), Some(Direction::Ltr));
+        assert_eq!(base_direction("123 שלום"), Some(Direction::Rtl));
+        assert_eq!(base_direction("(مرحبا) hi"), Some(Direction::Rtl));
+        // The isolate's Hebrew is skipped; the Latin after it decides.
+        assert_eq!(base_direction("\u{2067}שלום\u{2069} hello"), Some(Direction::Ltr));
+        assert_eq!(base_direction("\u{2068}abc\u{2069} שלום"), Some(Direction::Rtl));
+        // Only the first paragraph counts.
+        assert_eq!(base_direction("123\nשלום"), None);
+        assert_eq!(base_direction("1920 × 1080"), None);
+        assert_eq!(base_direction(""), None);
+    }
 
     /// Every locale the craft-i18n catalogs or an app ship, as the apps spell them.
     #[test]
