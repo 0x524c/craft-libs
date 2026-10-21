@@ -1,5 +1,5 @@
 //! Numbers, percentages and counts written for a formatting [`Region`], on ICU4X's decimal
-//! formatter with CLDR data for the shipped languages (`data/generate.sh`).
+//! formatter with CLDR data for every CLDR locale (`data/generate.sh`).
 
 use std::fmt;
 
@@ -29,7 +29,7 @@ pub enum Digits {
 pub struct Format {
     /// `None` only if the data doesn't load: numbers are then written as Rust writes them.
     decimal: Option<DecimalFormatter>,
-    /// The region's separators where the system set them apart from the locale's.
+    /// The system's separators where they differ from the locale's; an empty `group` is none.
     group: Option<String>,
     point: Option<String>,
     percent: (&'static str, &'static str),
@@ -37,8 +37,7 @@ pub struct Format {
 
 impl Format {
     /// The format for `region`'s number locale. With Latin digits, a decimal or grouping separator
-    /// the region sets (Windows' and macOS's own settings, English in continental Europe) replaces
-    /// the locale's.
+    /// the region carries (Windows' and macOS's own settings) replaces the locale's.
     pub fn new(region: &Region, digits: Digits) -> Format {
         let mut locale = Locale::try_from_str(&region.numbers).unwrap_or(Locale::UNKNOWN);
         if digits == Digits::Latin {
@@ -50,15 +49,14 @@ impl Format {
         let probe = format.parts(&Decimal::try_from_str("-1234567.5").unwrap_or_default());
         let latin = probe.integer.starts_with(|c: char| c.is_ascii_digit());
         if latin {
-            let point = region.decimal.to_string();
-            if probe.point != point {
+            if let Some(point) = region.decimal.map(String::from).filter(|p| *p != probe.point) {
                 // `1,234.5` with a decimal comma becomes `1.234,5`, never `1,234,5`.
                 if probe.group == point && region.grouping.is_none() {
                     format.group = Some(probe.point.clone());
                 }
                 format.point = Some(point);
             }
-            if let Some(g) = region.grouping.map(String::from).filter(|g| *g != probe.group) {
+            if let Some(g) = region.grouping.map(|g| g.map(String::from).unwrap_or_default()).filter(|g| *g != probe.group) {
                 format.group = Some(g);
             }
         }
@@ -76,12 +74,12 @@ impl Format {
         self.write(&Decimal::from(n.into()))
     }
 
-    /// `value` rounded to `decimals` digits after the decimal separator.
-    /// Infinities and NaN are written as Rust writes them.
+    /// `value` rounded to `decimals` digits after the decimal separator; infinities and NaN are
+    /// `∞`, `-∞` and `NaN`.
     pub fn number(&self, value: f64, decimals: usize) -> String {
         match to_decimal(value, decimals) {
             Some(d) => self.write(&d),
-            None => value.to_string(),
+            None => non_finite(value).to_owned(),
         }
     }
 
@@ -89,7 +87,7 @@ impl Format {
     /// `50%`, `50 %` (French, German), `%50` (Turkish), `٥٠٪؜` (Egyptian Arabic).
     pub fn percent(&self, ratio: f64, decimals: usize) -> String {
         let Some(d) = to_decimal(ratio * 100.0, decimals) else {
-            return format!("{}%", ratio * 100.0);
+            return format!("{}{}{}", self.percent.0, non_finite(ratio), self.percent.1);
         };
         let p = self.parts(&d);
         format!("{}{}{}{}", p.sign, self.percent.0, p.text, self.percent.1)
@@ -200,6 +198,15 @@ pub(crate) fn to_decimal(value: f64, decimals: usize) -> Option<Decimal> {
     Some(d)
 }
 
+/// CLDR's root symbols for a value that isn't finite.
+fn non_finite(value: f64) -> &'static str {
+    match value {
+        f64::INFINITY => "∞",
+        f64::NEG_INFINITY => "-∞",
+        _ => "NaN",
+    }
+}
+
 /// The percent affixes for a number locale (`ar-EG`), found by dropping trailing subtags.
 fn percent_affixes(tag: &str, latin: bool) -> (&'static str, &'static str) {
     let mut tag = tag;
@@ -248,17 +255,39 @@ mod tests {
     }
 
     #[test]
-    fn region_separators() {
-        // English in Poland writes a decimal comma; the grouping moves out of its way.
-        assert_eq!(Format::from_tag("en-PL").number(1234.5, 1), "1.234,5");
+    fn cldr_separators_for_every_region() {
+        for (tag, want) in [
+            ("en-PL", "1.234.567,5"),
+            ("en-DE", "1.234.567,5"),
+            ("ar-MA", "1.234.567,5"),
+            ("de-CH", "1'234'567.5"),
+            ("nb-NO", "1\u{a0}234\u{a0}567,5"),
+            ("sk-SK", "1\u{a0}234\u{a0}567,5"),
+            ("bn-BD", "১২,৩৪,৫৬৭.৫"),
+            ("he-IL", "1,234,567.5"),
+            ("km", "1,234,567.5"),
+            ("lo", "1.234.567,5"),
+        ] {
+            assert_eq!(Format::from_tag(tag).number(1_234_567.5, 1), want, "{tag}");
+        }
+    }
+
+    #[test]
+    fn system_separators() {
+        // A decimal comma the system sets moves the grouping out of its way.
+        let mut region = Region::from_tag("en-US");
+        region.decimal = Some(',');
+        assert_eq!(Format::new(&region, Digits::Locale).number(1234.5, 1), "1.234,5");
         let mut region = Region::from_tag("de-DE");
-        region.grouping = Some('\u{a0}');
+        region.grouping = Some(Some('\u{a0}'));
         assert_eq!(Format::new(&region, Digits::Locale).number(1234.5, 1), "1\u{a0}234,5");
-        region.decimal = '.';
+        region.decimal = Some('.');
         assert_eq!(Format::new(&region, Digits::Locale).number(1234.5, 1), "1\u{a0}234.5");
+        region.grouping = Some(None);
+        assert_eq!(Format::new(&region, Digits::Locale).integer(1_234_567), "1234567", "no grouping");
         // A system's separators don't apply to Arabic-Indic digits.
         let mut region = Region::from_tag("ar-EG");
-        region.grouping = Some(',');
+        region.grouping = Some(Some(','));
         assert_eq!(Format::new(&region, Digits::Locale).number(1234.5, 1), "١٬٢٣٤٫٥");
     }
 
@@ -280,7 +309,10 @@ mod tests {
         let en = Format::from_tag("en");
         assert_eq!(en.number(-1234.5, 0), "-1,234");
         assert_eq!(en.number(-0.04, 1), "0.0", "no sign on zero");
-        assert_eq!(en.number(f64::INFINITY, 1), "inf");
+        assert_eq!(en.number(f64::INFINITY, 1), "∞");
+        assert_eq!(en.number(f64::NEG_INFINITY, 1), "-∞");
+        assert_eq!(en.number(f64::NAN, 1), "NaN");
+        assert_eq!(Format::from_tag("de").percent(f64::NAN, 0), "NaN\u{a0}%");
         assert_eq!(en.integer(-5_i64), "-5");
     }
 }
