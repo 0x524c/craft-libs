@@ -269,7 +269,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         if floatable && !matches!(owner.kind, GroupKind::Floating { .. }) && self.menu_action(ui, &self.float_group_label()) {
             let size = self.group_float_size(owner.panels, owner.rect.size());
-            let rect = clamp_float(Rect::from_min_size(owner.rect.min + vec2(24.0, 24.0), size), ui.ctx().content_rect());
+            let rect = clamp_float(Rect::from_min_size(owner.rect.min + vec2(24.0, 24.0), size), self.float_bounds);
             self.output.actions.push(Action::MoveGroup {
                 panel: panel.clone(),
                 to: Target::Float { rect: Some([rect.left(), rect.top(), rect.width(), rect.height()]) },
@@ -410,7 +410,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &logical));
                 if response.clicked() {
                     let size = self.float_size(panel, group.size());
-                    let rect = clamp_float(Rect::from_min_size(group.min + vec2(24.0, 24.0), size), ui.ctx().content_rect());
+                    let rect = clamp_float(Rect::from_min_size(group.min + vec2(24.0, 24.0), size), self.float_bounds);
                     self.output.actions.push(Action::Float { panel: panel.clone(), rect: [rect.left(), rect.top(), rect.width(), rect.height()] });
                     ui.close();
                 }

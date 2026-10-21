@@ -34,7 +34,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let (escape, focused, down, released, pointer) =
             ctx.input(|i| (i.key_pressed(Key::Escape), i.focused, i.pointer.primary_down(), i.pointer.primary_released(), i.pointer.interact_pos()));
         let pointer = pointer.filter(|p| p.is_finite());
-        let ghost = pointer.map(|pointer| self.group_ghost(ctx, &drag, pointer));
+        let ghost = pointer.map(|pointer| self.group_ghost(&drag, pointer));
         if !escape
             && focused
             && (down || released)
@@ -67,7 +67,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let Some(pointer) = pointer.filter(|p| !self.blockers.iter().any(|r| r.contains(*p))) else { return };
             match drag.gesture {
                 GroupGesture::Window => self.drop_window(&drag, pointer, float_only),
-                GroupGesture::Group | GroupGesture::Column => self.drop_group(ctx, &drag, pointer, float_only),
+                GroupGesture::Group | GroupGesture::Column => self.drop_group(&drag, pointer, float_only),
             }
         } else if let Some(pointer) = pointer.filter(|p| !self.blockers.iter().any(|r| r.contains(*p))) {
             self.output.group_drag = Some(drag.panel.clone());
@@ -109,7 +109,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// Release of a group drag: join or split at the target, or float at the ghost with the
     /// group's size. Over its own docked position nothing changes; a floating group released
     /// over itself moves there.
-    fn drop_group(&mut self, ctx: &Context, drag: &GroupDrag<P>, pointer: Pos2, float_only: bool) {
+    fn drop_group(&mut self, drag: &GroupDrag<P>, pointer: Pos2, float_only: bool) {
         if pointer.distance(drag.origin) < 2.0 {
             return;
         }
@@ -129,7 +129,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         // No target: hosts that still apply their own policy for a whole-group release get it.
         self.output.group_drop = Some((drag.panel.clone(), pointer));
-        let rect = self.group_ghost(ctx, drag, pointer);
+        let rect = self.group_ghost(drag, pointer);
         let action = group_action(drag, Target::Float { rect: Some([rect.left(), rect.top(), rect.width(), rect.height()]) });
         if self.layout.clone().apply_with_permissions(action.clone(), |p| self.permissions(p)).is_ok() {
             self.output.actions.push(action);
@@ -142,7 +142,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let ctx = ui.ctx();
         let painter = self.preview_painter(ctx);
         if drag.gesture != GroupGesture::Window {
-            let ghost = self.group_ghost(ctx, drag, pointer);
+            let ghost = self.group_ghost(drag, pointer);
             drop_preview(&painter, ghost, self.style.accent, true);
             let strip = Rect::from_min_size(ghost.min, vec2(ghost.width(), self.style.tab_height.min(ghost.height())));
             let labels = painter.with_clip_rect(strip.shrink(2.0));
@@ -207,7 +207,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let float_only = float_only(ctx) || drag.undock;
         let floatable = self.permissions(&drag.panel).floatable
             && (float_only || gone || !drag.source.contains(pointer) || self.layout.floating.iter().any(|g| g.contains(&drag.panel)));
-        let floating_rect = floatable.then(|| self.tab_float_rect(ctx, &drag, pointer));
+        let floating_rect = floatable.then(|| self.tab_float_rect(&drag, pointer));
         if self.host_drop(ctx, &drag.panel, pointer, false, released, floating_rect) {
             if released {
                 cancel_drag::<P>(ctx, self.id);
@@ -357,16 +357,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 
     /// Where a group or column drag floats with the pointer at `pointer`, keeping the grab
     /// offset, inside the window (Z2).
-    fn group_ghost(&self, ctx: &Context, drag: &GroupDrag<P>, pointer: Pos2) -> Rect {
+    fn group_ghost(&self, drag: &GroupDrag<P>, pointer: Pos2) -> Rect {
         let size = if drag.gesture == GroupGesture::Window { drag.source.size() } else { self.group_float_size(&drag.members, drag.source.size()) };
         let grab = (drag.origin - drag.source.min).clamp(Vec2::ZERO, size);
-        clamp_float(Rect::from_min_size(pointer - grab, size), ctx.content_rect())
+        clamp_float(Rect::from_min_size(pointer - grab, size), self.float_bounds)
     }
 
-    fn tab_float_rect(&self, ctx: &Context, drag: &Drag<P>, pointer: Pos2) -> Rect {
+    fn tab_float_rect(&self, drag: &Drag<P>, pointer: Pos2) -> Rect {
         let size = self.float_size(&drag.panel, drag.source.size());
         let grab = drag.grab.min(vec2(size.x, self.style.tab_height));
-        clamp_float(Rect::from_min_size(pointer - grab, size), ctx.content_rect())
+        clamp_float(Rect::from_min_size(pointer - grab, size), self.float_bounds)
     }
 
     /// Offer the gesture to [`crate::docking::DockContent::resolve_drag`]. True when the host
@@ -388,7 +388,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             whole_group,
             released,
             workspace: self.workspace,
-            screen: ctx.content_rect(),
+            screen: self.float_bounds,
         };
         let Some(feedback) = self.content.resolve_drag(ctx, self.style, &request) else { return false };
         if !released {

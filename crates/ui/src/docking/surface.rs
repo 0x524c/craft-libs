@@ -672,11 +672,12 @@ pub struct DockArea<'a, P = ()> {
     maximized: Option<P>,
     hide: HidePanels<'a, P>,
     auto_collapse: bool,
+    float_bounds: Option<Rect>,
 }
 
 impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
     pub fn new(id: Id) -> Self {
-        Self { id, activation: None, blockers: Vec::new(), maximized: None, hide: HidePanels::None, auto_collapse: true }
+        Self { id, activation: None, blockers: Vec::new(), maximized: None, hide: HidePanels::None, auto_collapse: true, float_bounds: None }
     }
 
     /// [D] Auto-Collapse Iconic Panels (default on): a flyout closes on Escape or a press
@@ -717,6 +718,16 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
     /// input: it moves no keyboard focus and is not reported as [`DockOutput::focused`].
     pub fn raise_panel(mut self, panel: P) -> Self {
         self.activation = Some(panel);
+        self
+    }
+
+    /// Where floating windows, flyouts and drag ghosts may go (default: the whole viewport).
+    /// An app whose own title bar sits under a transparent OS title bar (macOS full-size
+    /// content) passes the viewport below that strip: a window drawn there would take presses
+    /// that the OS or the app turns into moving the whole app window. Windows outside the
+    /// bounds, such as ones restored from a saved layout, are drawn moved inside.
+    pub fn float_bounds(mut self, bounds: Rect) -> Self {
+        self.float_bounds = Some(bounds);
         self
     }
 
@@ -801,6 +812,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             blockers: self.blockers,
             layout,
             workspace: rect,
+            float_bounds: self.float_bounds.map_or(ui.ctx().content_rect(), |bounds| bounds.intersect(ui.ctx().content_rect())),
             targets: Vec::new(),
             dock_targets: Vec::new(),
             owned_interactions: Vec::new(),

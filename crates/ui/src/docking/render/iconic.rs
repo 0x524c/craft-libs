@@ -296,8 +296,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             close_flyout::<P>(ctx, self.id);
             return;
         }
-        let screen = ctx.content_rect();
-        let bounds = self.workspace.intersect(screen);
+        let bounds = self.workspace.intersect(self.float_bounds);
         let width = request.width.max(self.style.min_pane).min(bounds.width());
         let max = self
             .content

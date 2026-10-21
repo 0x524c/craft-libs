@@ -133,6 +133,7 @@ Builder options on `DockArea`:
 | `auto_collapse_iconic(on)` | Close a flyout on Escape or a click outside (default on). |
 | `raise_panel(panel)` | Raise a panel's floating window, or open its flyout, this frame. It moves no keyboard focus and does not set `DockOutput::focused`. |
 | `blocked_rects(rects)` | App overlays that docking gestures must ignore. |
+| `float_bounds(rect)` | Where floating windows, flyouts and drag ghosts may go (default: the whole viewport). Pass the viewport below a title bar drawn under a transparent OS title bar, so no floating window sits where a press moves the app window. |
 
 `DockStyle::close_menu_items` and `DockStyle::close_button` hide the built-in Close menu items
 and the floating window ×. They hide controls only: a panel that stays `closable` still closes

@@ -134,7 +134,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             Some(window) => window.rect,
             None => {
                 let size = self.float_size(panel, owner.rect.size());
-                let rect = clamp_float(Rect::from_min_size(owner.rect.min + vec2(24.0, 24.0), size), ctx.content_rect());
+                let rect = clamp_float(Rect::from_min_size(owner.rect.min + vec2(24.0, 24.0), size), self.float_bounds);
                 [rect.left(), rect.top(), rect.width(), rect.height()]
             }
         };

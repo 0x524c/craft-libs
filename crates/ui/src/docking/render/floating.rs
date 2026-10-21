@@ -23,7 +23,7 @@ pub(in crate::docking) struct StackHit<P> {
 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     pub(in crate::docking) fn floating(&mut self, ctx: &Context, windows: &[Floating<P>]) {
-        let screen = ctx.content_rect();
+        let screen = self.float_bounds;
         if !crate::docking::targets::usable(screen) {
             return;
         }
@@ -139,7 +139,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             && !ui.input(|i| i.key_pressed(Key::Escape) || !i.focused)
         {
             // From the press origin, so fractional pointer steps do not accumulate rounding.
-            let moved = clamp_float(drag.source.translate(pointer - drag.origin), ui.ctx().content_rect());
+            let moved = clamp_float(drag.source.translate(pointer - drag.origin), self.float_bounds);
             self.output.actions.push(Action::MoveFloating { panel: first.clone(), rect: [moved.left(), moved.top(), moved.width(), moved.height()] });
         }
         if response.bar.double_clicked() {

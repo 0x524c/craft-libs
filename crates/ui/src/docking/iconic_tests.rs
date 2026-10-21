@@ -388,3 +388,23 @@ fn chrome_has_focus_covers_every_drawn_control() {
         assert!(DockArea::<u32>::new(d.id).chrome_has_focus(&d.ctx, &d.layout), "{hit:?}");
     }
 }
+
+#[test]
+fn floating_windows_stay_inside_the_float_bounds() {
+    // The app's title bar strip (top 30 pt) is outside the bounds: a window saved there is
+    // drawn below it, and a title bar drag towards it stops at its edge. Command keeps the
+    // drag from docking.
+    let mut layout = docked(&[&[1]], false);
+    layout.floating.push(Floating::single(vec![5], 0, [400.0, 0.0, 240.0, 200.0]));
+    let mut d = DockDriver::new(layout, Content);
+    d.float_bounds = Some(Rect::from_min_max(pos2(0.0, 30.0), pos2(800.0, 600.0)));
+    d.settle();
+    let title = hit(&d, Hit::Title(5));
+    assert!(title.top() >= 30.0, "{title:?}");
+    d.modifiers = egui::Modifiers::COMMAND;
+    d.drag(title.center(), pos2(title.center().x, 2.0));
+    d.modifiers = egui::Modifiers::NONE;
+    d.settle();
+    let title = hit(&d, Hit::Title(5));
+    assert!(title.top() >= 30.0, "{title:?}");
+}

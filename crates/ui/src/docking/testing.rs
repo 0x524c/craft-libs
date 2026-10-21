@@ -42,6 +42,8 @@ pub struct DockDriver<P, C> {
     pub maximized: Option<P>,
     /// Passed to [`DockArea::raise_panel`] on the next frame only.
     pub raise: Option<P>,
+    /// Passed to [`DockArea::float_bounds`].
+    pub float_bounds: Option<Rect>,
     style: Option<StyleFn>,
     shapes: Vec<ClippedShape>,
     time: f64,
@@ -63,6 +65,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
             auto_collapse: true,
             maximized: None,
             raise: None,
+            float_bounds: None,
             style: None,
             shapes: Vec::new(),
             time: 0.0,
@@ -97,7 +100,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
             ..Default::default()
         };
         let (layout, content, area, id) = (&self.layout, &mut self.content, self.area, self.id);
-        let (style_fn, maximized, raise, auto) = (&self.style, self.maximized.clone(), self.raise.take(), self.auto_collapse);
+        let (style_fn, maximized, raise, auto, bounds) = (&self.style, self.maximized.clone(), self.raise.take(), self.auto_collapse, self.float_bounds);
         let mut full = self.ctx.run_ui(input, |ui| {
             let mut style = DockStyle::from_ui(ui);
             if let Some(adjust) = style_fn {
@@ -107,6 +110,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
                 let mut dock = DockArea::new(id).maximized(maximized.clone()).auto_collapse_iconic(auto);
                 if let Some(panel) = raise.clone() {
                     dock = dock.raise_panel(panel);
+                }
+                if let Some(bounds) = bounds {
+                    dock = dock.float_bounds(bounds);
                 }
                 output = dock.show_content(ui, layout, &style, content);
             });

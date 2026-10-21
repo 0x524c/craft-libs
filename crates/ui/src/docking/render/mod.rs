@@ -35,6 +35,8 @@ pub(super) struct Renderer<'a, P> {
     pub(super) layout: &'a Layout<P>,
     /// The docked area, for host drop requests.
     pub(super) workspace: Rect,
+    /// Where floating windows, flyouts and drag ghosts go: [`crate::docking::DockArea::float_bounds`].
+    pub(super) float_bounds: Rect,
     pub(super) targets: Vec<DropTarget<P>>,
     /// [D] Seams, group bands, column edges and new-dock bands, see [`crate::docking::targets::DockDrop`].
     pub(super) dock_targets: Vec<crate::docking::targets::DockDrop<P>>,
