@@ -68,6 +68,14 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   `zh-hant`, `pt-PT` → `pt-br` when that is the only Portuguese, `C`/`POSIX` → English. A script
   is never crossed: `sr_RS@latin` and `sr-Latn-RS` pick `sr-latn`, never `sr`, while `sr-Cyrl-RS`
   picks `sr`.
+- **Sizes and units:** `file_size(lang, bytes, style)` writes `1.5 MB` or `512 bytes`; `FileSize`
+  picks steps of 1024 named KB (`BINARY`), 1024 named KiB (`IEC`) or 1000 named KB (`DECIMAL`),
+  the decimals per unit, no decimals from a given value up, the smallest and largest unit (below
+  the smallest, sizes round up), and `B` or words for bytes. `measure(lang, value, decimals,
+  "{n} px")` writes any other measure. Unit names are rows in context `unit`, keyed by the English
+  template (`{n} MB` → `{n} Mo`, `{n}%` → `{n} %`) and read with `get`, so a plain `B` row (bold)
+  is never used; bytes in words are the `@plural` row `{n} byte|{n} bytes`. Numbers are
+  ASCII digits with a decimal point.
 - **Pseudo locale** (`pseudo`, debug builds only, never in `languages()`): every lookup, `get`
   included, comes back as `⟦…⟧`, line by line, so text drawn without the marks never went through
   translation. `looked_up()` lists the source texts looked up so far, for an audit against a
