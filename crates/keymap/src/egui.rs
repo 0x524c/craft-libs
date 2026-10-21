@@ -239,7 +239,9 @@ impl Dispatcher {
     }
 
     /// Starts from what the platform reports about the keyboard layout. The dispatcher also
-    /// learns from what plain presses type ([`Layout::observe`]).
+    /// learns from what plain presses type ([`Layout::observe`]), and takes whether the layout
+    /// is Latin from egui when the integration reports it (egui-winit on Linux, with the suite's
+    /// egui).
     pub fn with_layout(mut self, layout: Layout) -> Dispatcher {
         self.layout = layout;
         self
@@ -276,6 +278,7 @@ impl Dispatcher {
         let mut kept = Vec::with_capacity(input.events.len());
         let events = std::mem::take(&mut input.events);
         let text_of = text_of_press(&events, self.text_first && !active.typing);
+        self.report_latin(input.keyboard_layout_is_latin());
         self.learn(&events, &text_of, platform);
         let mut drop = vec![false; events.len()];
         // The web build sends both a clipboard key press and the clipboard event it causes. The
@@ -350,6 +353,14 @@ impl Dispatcher {
         hits
     }
 
+    /// Takes the platform's answer on whether the layout is Latin. `None` (not reported) leaves
+    /// the layout as it is, so an earlier report or typing decides.
+    fn report_latin(&mut self, reported: Option<bool>) {
+        if reported.is_some() {
+            self.layout.set_latin(reported);
+        }
+    }
+
     /// Teaches the layout what this frame's presses typed.
     fn learn(&mut self, events: &[Event], text_of: &[Option<usize>], platform: Platform) {
         for (event, text) in events.iter().zip(text_of) {
@@ -397,6 +408,19 @@ enum Clip {
 
 /// For each clipboard key press whose clipboard event comes later in the frame, as the web build
 /// sends them: the index of that event, and the text of a Paste event.
+/// The suite's egui fork has an inherent `InputState::keyboard_layout_is_latin`; crates.io egui
+/// has neither the method nor the field. A method call picks an inherent method over a trait
+/// method of the same name, so [`Dispatcher::dispatch`] reaches egui's method on the fork and
+/// this `None` everywhere else.
+#[allow(dead_code, reason = "unused when egui has the inherent method")]
+trait KeyboardLayoutIsLatin {
+    fn keyboard_layout_is_latin(&self) -> Option<bool> {
+        None
+    }
+}
+
+impl KeyboardLayoutIsLatin for InputState {}
+
 fn clipboard_event_follows(events: &[Event], layout: &Layout, platform: Platform) -> Vec<Option<(usize, Option<String>)>> {
     let mut out = vec![None; events.len()];
     let mut ahead: [Option<usize>; 3] = [None; 3];
@@ -510,5 +534,41 @@ mod tests {
         let hits = d.dispatch(&mut input, &km, &Active::NONE);
         assert_eq!(hits.len(), 1);
         assert_eq!(input.events, [Event::Text("q".into()), press(EguiKey::Q)]);
+    }
+
+    #[test]
+    fn the_platforms_latin_report_overrides_typing() {
+        /// Stands in for the fork's `InputState`, whose inherent method wins over the fallback.
+        struct ForkInput(Option<bool>);
+        impl ForkInput {
+            fn keyboard_layout_is_latin(&self) -> Option<bool> {
+                self.0
+            }
+        }
+        impl KeyboardLayoutIsLatin for ForkInput {}
+
+        let km = Keymap::new(vec![], Scopes::new(), Platform::Windows);
+        let typing = |text: &str| {
+            let mut input = InputState::default();
+            let key = Event::Key { key: EguiKey::C, physical_key: Some(EguiKey::C), pressed: true, repeat: false, modifiers: Modifiers::NONE };
+            input.events = vec![key, Event::Text(text.into())];
+            input
+        };
+
+        // crates.io egui reports nothing, so typing decides.
+        let mut d = Dispatcher::new();
+        assert_eq!(InputState::default().keyboard_layout_is_latin(), None);
+        d.dispatch(&mut typing("с"), &km, &Active::NONE);
+        assert!(!d.layout().is_latin());
+
+        // A report wins over typing, and frames without one keep it.
+        d.report_latin(ForkInput(Some(true)).keyboard_layout_is_latin());
+        assert!(d.layout().is_latin());
+        d.report_latin(ForkInput(None).keyboard_layout_is_latin());
+        d.dispatch(&mut typing("с"), &km, &Active::NONE);
+        assert!(d.layout().is_latin());
+        d.report_latin(ForkInput(Some(false)).keyboard_layout_is_latin());
+        d.dispatch(&mut typing("c"), &km, &Active::NONE);
+        assert!(!d.layout().is_latin());
     }
 }
