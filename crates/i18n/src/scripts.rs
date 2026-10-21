@@ -163,18 +163,21 @@ pub fn direction(tag: &str) -> Direction {
 
 /// The forms a language tag's Han characters take: `zh-CN`, `zh-SG`, `zh-Hans` and plain `zh` →
 /// Simplified; `zh-TW`, `zh-Hant` and the other regions CLDR writes in Traditional characters
-/// (`zh-US`, `zh-AU`) → Traditional; `zh-HK`, `zh-MO` and `zh-Hant-HK` → HongKong; `ja` →
+/// (`zh-US`, `zh-AU`) → Traditional; `zh-HK`, `zh-MO`, `zh-Hant-HK` and `yue` → HongKong; `ja` →
 /// Japanese; `ko` → Korean. `None` for a language not written with Han, which leaves the choice
 /// to the font stack.
 pub fn han(tag: &str) -> Option<Han> {
     let tag = Subtags::parse(tag);
     let hong_kong = matches!(tag.region.as_deref(), Some("hk" | "mo"));
-    let script = tag.script.as_deref().or_else(|| region_script(&tag.language, tag.region.as_deref()?));
+    // `Hani` names Han without saying which forms, so the region still decides.
+    let script = tag.script.as_deref().filter(|s| *s != "hani");
+    let script = script.or_else(|| region_script(&tag.language, tag.region.as_deref()?));
     match (tag.language.as_str(), script) {
         ("ja", _) => Some(Han::Japanese),
         ("ko", _) => Some(Han::Korean),
         ("zh" | "yue" | "wuu", Some("hans")) => Some(Han::Simplified),
-        ("zh" | "yue" | "wuu", Some("hant")) => Some(if hong_kong { Han::HongKong } else { Han::Traditional }),
+        ("yue", Some("hant")) => Some(if tag.region.as_deref() == Some("tw") { Han::Traditional } else { Han::HongKong }),
+        ("zh" | "wuu", Some("hant")) => Some(if hong_kong { Han::HongKong } else { Han::Traditional }),
         // Cantonese is written in Traditional characters with Hong Kong forms unless it says otherwise.
         ("yue", _) => Some(Han::HongKong),
         ("zh" | "wuu", _) => Some(Han::Simplified),
@@ -348,6 +351,10 @@ mod tests {
             ("yue-HK", Han::HongKong),
             ("zh-Hans-SG", Han::Simplified),
             ("yue", Han::HongKong),
+            ("yue-Hant", Han::HongKong),
+            ("yue-Hant-TW", Han::Traditional),
+            ("zh-Hani-HK", Han::HongKong),
+            ("zh-Hani", Han::Simplified),
             ("yue-Hans", Han::Simplified),
             ("ja-JP", Han::Japanese),
             ("ko_KR.UTF-8", Han::Korean),
@@ -414,7 +421,7 @@ mod tests {
     /// The usual scripts tag matching relies on agree with the table.
     #[test]
     fn agrees_with_usual_script() {
-        for language in ["be", "mn", "sr", "zh", "az", "bs", "ha", "uz", "ks", "sd", "pa"] {
+        for language in ["be", "kk", "ky", "mn", "sr", "tg", "zh", "az", "bs", "ha", "ku", "ms", "uz", "ks", "sd", "ug", "pa"] {
             let usual = crate::usual_script(language).and_then(subtag_scripts);
             assert_eq!(usual, Some(scripts(language)), "{language}");
         }

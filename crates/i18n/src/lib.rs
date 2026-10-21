@@ -358,10 +358,10 @@ fn marked(text: &str) -> String {
 // ponytail: the multi-script languages a Craft app could plausibly ship; add a row with the locale.
 fn usual_script(language: &str) -> Option<&'static str> {
     Some(match language {
-        "be" | "mn" | "sr" => "cyrl",
+        "be" | "kk" | "ky" | "mn" | "sr" | "tg" => "cyrl",
         "zh" => "hans",
-        "az" | "bs" | "ha" | "uz" => "latn",
-        "ks" | "sd" => "arab",
+        "az" | "bs" | "ha" | "ku" | "ms" | "uz" => "latn",
+        "ks" | "sd" | "ug" => "arab",
         "pa" => "guru",
         _ => return None,
     })
@@ -600,6 +600,9 @@ mod tests {
         assert_eq!(candidates("pa-Guru-PK"), ["pa-guru-pk", "pa-guru", "pa"]);
         assert_eq!(candidates("zh-US"), ["zh-us", "zh-hant", "zh"]);
         assert_eq!(candidates("zh-SG"), ["zh-sg", "zh-hans", "zh"]);
+        assert_eq!(candidates("kk-CN"), ["kk-cn", "kk-arab-cn", "kk-arab"]);
+        assert_eq!(candidates("kk-KZ"), ["kk-kz", "kk"]);
+        assert_eq!(candidates("ug-KZ"), ["ug-kz", "ug-cyrl-kz", "ug-cyrl"]);
     }
 
     #[test]
