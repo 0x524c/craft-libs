@@ -2,9 +2,9 @@
 //! interface language. An English interface in Poland still writes `2,54 cm` on A4.
 //!
 //! The territory lists come from Unicode CLDR's supplemental `measurementData` (Unicode License):
-//! `paperSize` US-Letter and `measurementSystem` US. The separators numbers are written with
-//! follow the number locale's CLDR data ([`crate::Format`]); the region carries them only where
-//! the system sets its own.
+//! `paperSize` US-Letter and `measurementSystem` US. Decimal and grouping separators come from
+//! the number locale's CLDR data ([`crate::Format`]); the region carries its own only where the
+//! system sets them.
 
 use std::sync::OnceLock;
 
