@@ -93,9 +93,10 @@ macOS it folds into `cmd` (`Chord::effective`).
 3. Punctuation: the character typed, without Shift when the layout needs Shift for it: German
    `/` is ⇧7, so ⇧⌘7 runs ⌘/.
 4. Whether a layout is Latin is decided for the layout, not per key.
-5. With Shift held on a Latin layout whose letters are known to be moved (Dvorak), a press that
-   egui reports as the letter at its own position, because the character typed has no key
-   (Dvorak's ⇧, types `<`), runs nothing: Ctrl+Shift+, never runs Ctrl+Shift+W.
+5. With Shift held on a Latin layout, a press that egui reports as the letter at its own
+   position, because the character typed has no key (Dvorak's ⇧, types `<`), runs nothing when
+   that position has been seen typing something other than its letter: once a `,` has been
+   typed, Ctrl+Shift+, never runs Ctrl+Shift+W.
 6. Labels show letters and digits by name, and a punctuation key as the character the layout
    types at its position when that character has no key of its own (`Ctrl+Ü` for Ctrl+[ on
    German).

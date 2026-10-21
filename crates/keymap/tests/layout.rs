@@ -145,16 +145,21 @@ fn dvorak_shift_punctuation_never_runs_its_position() {
     assert_eq!(dvorak.resolve(&ctrl_shift_lt), Some(chord("Cmd+Shift+W")), "nothing known yet");
 
     dvorak.observe(Key::S, Mods::NONE, "o");
-    assert_eq!(dvorak.resolve(&ctrl_shift_lt), None, "letters are known to be moved");
-    assert!(!dvorak.matches(&chord("Ctrl+Shift+W"), &ctrl_shift_lt, Platform::Windows));
+    assert_eq!(dvorak.resolve(&ctrl_shift_lt), Some(chord("Cmd+Shift+W")), "the W position is unseen");
     dvorak.observe(Key::W, Mods::NONE, ",");
     assert_eq!(dvorak.resolve(&ctrl_shift_lt), None);
+    assert!(!dvorak.matches(&chord("Ctrl+Shift+W"), &ctrl_shift_lt, Platform::Windows));
     // Without Shift, and for letters typed where they sit (Dvorak's A) or elsewhere, presses
     // resolve as before.
     assert_eq!(dvorak.resolve(&at("Cmd+W", Key::W)), Some(chord("Cmd+W")));
     dvorak.observe(Key::A, Mods::NONE, "a");
     assert_eq!(dvorak.resolve(&at("Cmd+Shift+A", Key::A)), Some(chord("Cmd+Shift+A")));
     assert_eq!(dvorak.resolve(&at("Cmd+Shift+O", Key::S)), Some(chord("Cmd+Shift+O")));
+
+    // AZERTY: A is moved, but the unseen E position still runs Ctrl+Shift+E.
+    let mut azerty = Layout::new();
+    azerty.observe(Key::Q, Mods::NONE, "a");
+    assert_eq!(azerty.resolve(&at("Cmd+Shift+E", Key::E)), Some(chord("Cmd+Shift+E")));
 
     // QWERTY: a position typing its own letter keeps the position fallback.
     let mut qwerty = Layout::new();

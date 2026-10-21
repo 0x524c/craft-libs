@@ -16,11 +16,11 @@
 //!    each other so zoom keys work with and without Shift.
 //! 4. **Whether a layout is Latin** is decided for the whole layout ([`Layout::is_latin`]), never
 //!    per key: Dvorak's `'` key on the Q position stays `'`.
-//! 5. **No position fallback for unnamed characters on moved layouts:** egui reports a character
+//! 5. **No position fallback for unnamed characters on moved keys:** egui reports a character
 //!    that has no key (Dvorak's ⇧, types `<`) as the key's position, W. With Shift held on a
-//!    Latin layout whose letters are known to sit elsewhere than on QWERTY, such a press at a
-//!    letter position resolves to nothing unless that position is known to type its own letter,
-//!    so Ctrl+Shift+, never runs Ctrl+Shift+W.
+//!    Latin layout, such a press at a letter position that has been seen typing something other
+//!    than its letter resolves to nothing, so Ctrl+Shift+, never runs Ctrl+Shift+W once a `,`
+//!    has been typed.
 //! 6. **Labels** show letters and digits by name, and a punctuation key as the character the
 //!    layout types at its position when that character has no key of its own: Ctrl+[ is `Ctrl+Ü`
 //!    on German and `Ctrl+Х` on Russian.
@@ -214,15 +214,11 @@ impl Layout {
         Some(Chord::new(if drop_shift { without_shift(held) } else { held }, key))
     }
 
-    /// Rule 5: whether a press reported as the letter at its own position can be that letter.
-    /// Yes when the position is known to type it, or nothing is known to sit elsewhere than on
-    /// QWERTY; otherwise the press likely typed a character egui has no key for.
+    /// Rule 5: whether a press reported as the letter at its own position can be that letter:
+    /// no only when the position has been seen typing something else, so the press likely typed
+    /// a character egui has no key for.
     fn types_own_letter(&self, position: Key) -> bool {
-        let own = |key: Key, c: char| Key::from_char(c) == Some(key);
-        match self.letters.get(&position) {
-            Some(&c) => own(position, c),
-            None => self.letters.iter().all(|(&key, &c)| own(key, c)),
-        }
+        self.letters.get(&position).is_none_or(|&c| Key::from_char(c) == Some(position))
     }
 
     /// The chords a press can run, most specific first: [`resolve`](Self::resolve)'s chord, the
