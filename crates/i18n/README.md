@@ -60,8 +60,12 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   `plural_form_counts` holds the same counts.
 - **Names:** a language's name comes from its shared catalog's `@id language.name` row, else its
   code; English is "English".
-- **Right to left:** `rtl` is true for `ar`, `ckb`, `dv`, `fa`, `he`, `ps`, `sd`, `ug`, `ur` and
-  `yi`; putting text into display order is the app's job.
+- **Scripts and direction:** for any language tag, `scripts` lists the ISO 15924 scripts its
+  interface text is written in (`ja` → Hani, Hira, Kana; `sr-latn` → Latn), `direction` is right
+  to left when the main script is (Arabic, Hebrew, Syriac, Thaana), and `han` gives the regional
+  forms of its Han characters for picking a CJK face: `zh-CN`/`zh-SG`/`zh-Hans` → SC, `zh-TW`/
+  `zh-Hant` → TC, `zh-HK`/`zh-MO` → HK, `ja` → JP, `ko` → KR. `I18n::rtl` is `direction` of the
+  language's code; putting text into display order is the app's job.
 - **System locale:** `system_lang` matches the system's list once and caches it: on desktop Unix
   `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` and `LANG`, read raw; elsewhere `sys-locale`'s (macOS and
   Windows preferred languages, the browser's on the web). `fr_CA.UTF-8` → `fr`, `zh-TW` →

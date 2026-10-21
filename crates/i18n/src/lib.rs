@@ -6,12 +6,15 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod catalog;
+mod scripts;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use intl_pluralrules::{PluralCategory, PluralRuleType, PluralRules};
 use unic_langid::LanguageIdentifier;
+
+pub use scripts::{Direction, Han, Script, direction, han, scripts};
 
 /// The catalogs an app embeds, one entry per locale: (locale, shared catalog, the app's catalog).
 /// A missing catalog is `""`.
@@ -199,12 +202,10 @@ impl I18n {
         self.locale(lang).and_then(|l| l.rows.get("@id")?.get("language.name")).map_or_else(|| self.code(lang), String::as_str)
     }
 
-    /// Whether the language is written right to left. Putting text into display order is the
-    /// app's job.
+    /// Whether the language is written right to left ([`direction`]). Putting text into display
+    /// order is the app's job.
     pub fn rtl(&self, lang: Lang) -> bool {
-        let code = self.code(lang);
-        let language = code.split('-').next().unwrap_or(code);
-        matches!(language, "ar" | "ckb" | "dv" | "fa" | "he" | "ps" | "sd" | "ug" | "ur" | "yi")
+        direction(self.code(lang)) == Direction::Rtl
     }
 
     /// The language for a system locale tag (`fr_CA.UTF-8`, `zh-Hant-MO`); `C` and `POSIX` are
