@@ -6,12 +6,15 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod catalog;
+mod number;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use intl_pluralrules::{PluralCategory, PluralRuleType, PluralRules};
 use unic_langid::LanguageIdentifier;
+
+pub use number::{NumberError, parse_number};
 
 /// The catalogs an app embeds, one entry per locale: (locale, shared catalog, the app's catalog).
 /// A missing catalog is `""`.

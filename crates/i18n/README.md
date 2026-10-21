@@ -62,6 +62,12 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   code; English is "English".
 - **Right to left:** `rtl` is true for `ar`, `ckb`, `dv`, `fa`, `he`, `ps`, `sd`, `ug`, `ur` and
   `yi`; putting text into display order is the app's job.
+- **Reading numbers:** `parse_number(text, locale)` reads what people type or paste: any Unicode
+  decimal digits (ASCII, Arabic-Indic, Persian, Devanagari, Bengali, Thai, full-width, …) from one
+  set; the locale's decimal mark (`.` or `,`) and `٫` everywhere; grouping by the locale's other
+  mark, spaces (NBSP, narrow NBSP), `'`, `’` or `٬`, in threes or the Indian 2-2-3; a leading `-`,
+  `−` or `+`; bidi marks ignored. Input that doesn't fit is an error, never a guess: `1,234` is
+  1234 in English, 1.234 in German and an error for a locale whose decimal mark isn't known.
 - **System locale:** `system_lang` matches the system's list once and caches it: on desktop Unix
   `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` and `LANG`, read raw; elsewhere `sys-locale`'s (macOS and
   Windows preferred languages, the browser's on the web). `fr_CA.UTF-8` → `fr`, `zh-TW` →
