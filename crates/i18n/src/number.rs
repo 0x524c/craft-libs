@@ -2,7 +2,9 @@
 
 use std::fmt;
 
-/// Why [`parse_number`] rejected a text.
+use crate::Format;
+
+/// Why [`Format::parse`] rejected a text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NumberError {
     /// No digits: empty, or only spaces and a sign.
@@ -11,8 +13,8 @@ pub enum NumberError {
     Unexpected(char),
     /// Digits from more than one set (`1٢`).
     MixedDigits,
-    /// A decimal or grouping mark where the locale puts none (`1,5` in English, `1.5` in German),
-    /// or one that could be read either way (`1,234` when the locale's decimal mark is unknown).
+    /// A decimal or grouping mark where the locale puts none (`1.234,5` in English, `1,2.5` in
+    /// German).
     Separator,
     /// Too large for an `f64`.
     TooLarge,
@@ -32,68 +34,103 @@ impl fmt::Display for NumberError {
 
 impl std::error::Error for NumberError {}
 
-/// The number in `text`, as someone using `locale` (a language tag, `de-CH`, `ar_EG.UTF-8`) writes
-/// it.
-///
-/// - Digits: any Unicode decimal digits (ASCII, Arabic-Indic, Persian, Devanagari, Bengali, Thai,
-///   full-width, …), all from one set.
-/// - Decimal mark: the locale's `.` or `,`; `٫` in every locale. A locale this crate doesn't know
-///   takes either, when only one reading fits (`1,5`, `1.234,5`).
-/// - Grouping: the locale's other mark of `.` and `,`, spaces (NBSP, narrow NBSP, thin), `'`, `’`
-///   and `٬`, one kind per number, in groups of three or the Indian 2-2-3 (`12,34,567`). Never in
-///   the fraction.
-/// - Sign: a leading `-`, `−` (U+2212), full-width `－` or `+`.
-/// - Bidi marks and isolates (LRM, RLM, ALM, LRI…PDI) around or inside are ignored, so a number
-///   formatted for an RTL interface reads back.
-///
-/// Anything else is an error rather than a guess: `1,234` is 1234 in English, 1.234 in German and
-/// [`NumberError::Separator`] for an unknown locale.
-pub fn parse_number(text: &str, locale: &str) -> Result<f64, NumberError> {
-    let text: String = text.chars().filter(|c| !is_bidi_mark(*c)).collect();
-    let mut rest = text.trim();
-    let negative = match rest.chars().next() {
-        Some(c @ ('-' | '−' | '－' | '+' | '＋')) => {
-            rest = rest.get(c.len_utf8()..).unwrap_or("");
-            matches!(c, '-' | '−' | '－')
-        }
-        _ => false,
-    };
-    let mut tokens = Vec::with_capacity(rest.len());
-    let mut zero = None;
-    for c in rest.chars() {
-        let token = match c {
-            '.' | '．' => Token::Point,
-            ',' | '，' => Token::Comma,
-            '٫' => Token::Decimal,
-            '٬' => Token::Group('٬'),
-            '\'' | '’' => Token::Group('\''),
-            ' ' | '\u{a0}' | '\u{202f}' | '\u{2009}' => Token::Group(' '),
-            _ => {
-                let (z, d) = digit(c).ok_or(NumberError::Unexpected(c))?;
-                if *zero.get_or_insert(z) != z {
-                    return Err(NumberError::MixedDigits);
-                }
-                Token::Digit(d)
-            }
+/// The marks a [`Format`] writes, as [`Format::parse`] reads them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Marks {
+    /// `.` is the decimal mark and `,` grouping; else the other way round. For a format in
+    /// Arabic-Indic digits, as the locale writes Latin ones.
+    pub(crate) point: bool,
+    /// The format's own decimal and grouping marks when they are neither `.` nor `,` (`٫`, `'`, a
+    /// mark the system sets).
+    decimal: Option<char>,
+    group: Option<char>,
+}
+
+impl Default for Marks {
+    fn default() -> Self {
+        Marks { point: true, decimal: None, group: None }
+    }
+}
+
+impl Marks {
+    pub(crate) fn new(decimal: &str, group: &str, point: bool) -> Marks {
+        let own = |s: &str| {
+            let mut chars = s.chars();
+            chars.next().filter(|c| !matches!(c, '.' | ',') && chars.next().is_none())
         };
-        tokens.push(token);
+        Marks { point, decimal: own(decimal), group: own(group) }
     }
-    if zero.is_none() {
-        return Err(if tokens.is_empty() { NumberError::Empty } else { NumberError::Separator });
+}
+
+impl Format {
+    /// The number in `text`: what this format writes, and what people type or paste.
+    ///
+    /// - Digits: any Unicode decimal digits (ASCII, Arabic-Indic, Persian, Devanagari, Bengali,
+    ///   Thai, full-width, …), all from one set.
+    /// - Decimal mark: the format's, `٫` in every format, and the locale's `.` or `,` when Latin
+    ///   digits are typed into an Arabic-Indic format. A lone `.` in a comma locale is the decimal
+    ///   mark when it can't be grouping (`1.5`, `0.250`, `1234.5`, `.5`), but `1.234` and
+    ///   `1.234.567` stay grouped; the same holds for `,` in a point locale.
+    /// - Grouping: the format's, the other of `.` and `,`, spaces (NBSP, narrow NBSP, thin), `'`,
+    ///   `’` and `٬`, one kind per number, in groups of three or the Indian 2-2-3 (`12,34,567`).
+    ///   Never in the fraction.
+    /// - Sign: a leading `-`, `−` (U+2212), full-width `－` or `+`.
+    /// - Bidi marks and isolates (LRM, RLM, ALM, LRI…PDI) around or inside are ignored, so a
+    ///   number formatted for an RTL interface reads back.
+    ///
+    /// Percent signs, units and the space before a unit (`50 %`, `12 px`) are not read; strip them
+    /// first. Anything else is an error rather than a guess.
+    pub fn parse(&self, text: &str) -> Result<f64, NumberError> {
+        let marks = self.marks;
+        let text: String = text.chars().filter(|c| !is_bidi_mark(*c)).collect();
+        let mut rest = text.trim();
+        let negative = match rest.chars().next() {
+            Some(c @ ('-' | '−' | '－' | '+' | '＋')) => {
+                rest = rest.get(c.len_utf8()..).unwrap_or("");
+                matches!(c, '-' | '−' | '－')
+            }
+            _ => false,
+        };
+        let mut tokens = Vec::with_capacity(rest.len());
+        let mut zero = None;
+        for c in rest.chars() {
+            let token = match c {
+                c if Some(c) == marks.decimal => Token::Decimal,
+                c if Some(c) == marks.group => Token::Group(c),
+                '.' | '．' => Token::Point,
+                ',' | '，' => Token::Comma,
+                '٫' => Token::Decimal,
+                '٬' => Token::Group('٬'),
+                '\'' | '’' => Token::Group('\''),
+                ' ' | '\u{a0}' | '\u{202f}' | '\u{2009}' => Token::Group(' '),
+                _ => {
+                    let (z, d) = digit(c).ok_or(NumberError::Unexpected(c))?;
+                    if *zero.get_or_insert(z) != z {
+                        return Err(NumberError::MixedDigits);
+                    }
+                    Token::Digit(d)
+                }
+            };
+            tokens.push(token);
+        }
+        if zero.is_none() {
+            return Err(if tokens.is_empty() { NumberError::Empty } else { NumberError::Separator });
+        }
+        let point = if lone_decimal(&tokens, marks.point) { !marks.point } else { marks.point };
+        let digits = read(&tokens, point).ok_or(NumberError::Separator)?;
+        let value: f64 = digits.parse().map_err(|_| NumberError::Separator)?;
+        if !value.is_finite() {
+            return Err(NumberError::TooLarge);
+        }
+        Ok(if negative { -value } else { value })
     }
-    let digits = match decimal_mark(locale) {
-        Some(point) => read(&tokens, point),
-        None => match (read(&tokens, true), read(&tokens, false)) {
-            (Some(a), Some(b)) if a != b => None,
-            (a, b) => a.or(b),
-        },
-    }
-    .ok_or(NumberError::Separator)?;
-    let value: f64 = digits.parse().map_err(|_| NumberError::Separator)?;
-    if !value.is_finite() {
-        return Err(NumberError::TooLarge);
-    }
-    Ok(if negative { -value } else { value })
+}
+
+/// The number in `text` as `locale` (a language tag, `de-CH`, `ar_EG.UTF-8`) writes it:
+/// [`Format::parse`] for [`Format::from_tag`]. Build the [`Format`] once to read many numbers. A
+/// locale CLDR doesn't know reads as CLDR's root does (`1,234.5`).
+pub fn parse_number(text: &str, locale: &str) -> Result<f64, NumberError> {
+    Format::from_tag(locale).parse(text)
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -101,10 +138,24 @@ enum Token {
     Digit(u8),
     Point,
     Comma,
-    /// `٫`, a decimal mark in every locale.
+    /// A decimal mark in every reading: `٫`, or the format's own.
     Decimal,
-    /// A grouping mark in every locale, by kind (space, apostrophe, `٬`).
+    /// A grouping mark in every reading, by kind (space, apostrophe, `٬`, the format's own).
     Group(char),
+}
+
+/// Whether the locale's grouping mark of `.` and `,` (`.` when `point` is false) is the decimal
+/// mark here because it can't be grouping: it is the only mark of the two, there is one of it, and
+/// the digits before it are none, start with 0 or are more than three, or the digits after it
+/// aren't three.
+fn lone_decimal(tokens: &[Token], point: bool) -> bool {
+    let (group, decimal) = if point { (Token::Comma, Token::Point) } else { (Token::Point, Token::Comma) };
+    if tokens.contains(&decimal) || tokens.contains(&Token::Decimal) || tokens.iter().filter(|t| **t == group).count() != 1 {
+        return false;
+    }
+    let Some(at) = tokens.iter().position(|t| *t == group) else { return false };
+    let (int, frac) = (tokens.get(..at).unwrap_or_default(), tokens.get(at + 1..).unwrap_or_default());
+    int.is_empty() || int.first() == Some(&Token::Digit(0)) || int.len() > 3 || frac.len() != 3
 }
 
 /// The ASCII number `tokens` spell when the decimal mark is `.` (`point`) or `,`; `None` when the
@@ -160,36 +211,6 @@ fn read(tokens: &[Token], point: bool) -> Option<String> {
     Some(format!("{}.{}", if int.is_empty() { "0" } else { &int }, if frac.is_empty() { "0" } else { &frac }))
 }
 
-/// Whether `locale` writes decimals with `.` (`Some(true)`) or `,` (`Some(false)`); `None` for a
-/// language not in the table (CLDR's decimal symbol for its Latin digits).
-// ponytail: the languages a Craft app ships or could plausibly ship; add a row with the locale.
-fn decimal_mark(locale: &str) -> Option<bool> {
-    let locale = locale.trim().to_ascii_lowercase();
-    let base = locale.split(['.', '@']).next().unwrap_or("").replace('_', "-");
-    let mut parts = base.split('-').filter(|p| !p.is_empty());
-    let language = parts.next().unwrap_or("");
-    let region = parts.find(|p| super::is_region(p)).unwrap_or("");
-    Some(match (language, region) {
-        ("de" | "it", "ch" | "li") => true,
-        ("es", "419" | "mx" | "us" | "pr" | "do" | "gt" | "hn" | "ni" | "pa" | "pe" | "sv") => true,
-        ("en", "za" | "150" | "at" | "be" | "de" | "dk" | "fi" | "nl" | "se" | "si") => false,
-        ("ar", "dz" | "eh" | "ly" | "ma" | "tn") => false,
-        (
-            "af" | "az" | "be" | "bg" | "bs" | "ca" | "cs" | "da" | "de" | "el" | "eo" | "es" | "et" | "eu" | "fi" | "fo" | "fr" | "fy" | "gl" | "hr"
-            | "hu" | "hy" | "id" | "is" | "it" | "ka" | "kk" | "km" | "ky" | "lb" | "lo" | "lt" | "lv" | "mk" | "nb" | "nl" | "nn" | "no" | "pl"
-            | "pt" | "ro" | "ru" | "sk" | "sl" | "sq" | "sr" | "sv" | "tg" | "tk" | "tr" | "tt" | "uk" | "uz" | "vi",
-            _,
-        ) => false,
-        (
-            "am" | "ar" | "as" | "bn" | "bo" | "ckb" | "cy" | "dv" | "en" | "fa" | "fil" | "ga" | "gsw" | "gu" | "he" | "hi" | "ja" | "kn" | "ko"
-            | "ks" | "ml" | "mn" | "mr" | "ms" | "mt" | "my" | "ne" | "or" | "pa" | "ps" | "rm" | "sd" | "si" | "sw" | "ta" | "te" | "th" | "tl"
-            | "ug" | "ur" | "yue" | "zh" | "zu",
-            _,
-        ) => true,
-        _ => return None,
-    })
-}
-
 /// The first code point of each run of ten Unicode decimal digits (general category Nd), Unicode
 /// 16.0.
 const ZEROS: [u32; 76] = [
@@ -219,6 +240,7 @@ fn is_bidi_mark(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Digits, Region};
 
     #[test]
     fn every_digit_set() {
@@ -269,11 +291,12 @@ mod tests {
             ("  42  ", "en", 42.0),
             ("\u{2066}-1,5\u{2069}", "de", -1.5),
             ("\u{061c}-١٢", "ar", -12.0),
-            ("1,5", "xx", 1.5),
-            ("1.234,5", "", 1234.5),
             ("1,234.5", "xx", 1234.5),
-            ("1.234.567", "xx", 1_234_567.0),
             ("12", "xx", 12.0),
+            ("1,5", "en-PL", 1.5),
+            ("1.234,5", "en-DE", 1234.5),
+            ("1.234,5", "lo", 1234.5),
+            ("1,234.5", "km", 1234.5),
         ] {
             assert_eq!(parse_number(text, locale), Ok(want), "{text:?} in {locale}");
         }
@@ -286,12 +309,7 @@ mod tests {
             ("  ", "en", NumberError::Empty),
             ("-", "en", NumberError::Empty),
             (",", "en", NumberError::Separator),
-            ("1,234", "xx", NumberError::Separator),
-            ("1,5", "en", NumberError::Separator),
-            ("1.5", "de", NumberError::Separator),
             ("1.2.3", "en", NumberError::Separator),
-            ("12,34", "en", NumberError::Separator),
-            ("1234,567", "en", NumberError::Separator),
             ("1,,234", "en", NumberError::Separator),
             ("1,234,", "en", NumberError::Separator),
             ("1.234,5", "en", NumberError::Separator),
@@ -312,5 +330,54 @@ mod tests {
             assert_eq!(parse_number(text, locale), Err(want), "{text:?} in {locale}");
         }
         assert_eq!(parse_number(&"9".repeat(400), "en"), Err(NumberError::TooLarge));
+        for unit in ["50 %", "50%", "12 px", "1,5 MB"] {
+            assert!(parse_number(unit, "de").is_err(), "{unit}: units are the caller's to strip");
+        }
+    }
+
+    /// A lone mark that can't be grouping is the decimal mark; one that can stays grouping.
+    #[test]
+    fn lone_marks() {
+        for (text, locale, want) in [
+            ("1.5", "de", 1.5),
+            ("0.250", "de", 0.25),
+            ("1234.5", "de", 1234.5),
+            (".5", "de", 0.5),
+            ("-12.34", "ru", -12.34),
+            ("1.234", "de", 1234.0),
+            ("1.234.567", "de", 1_234_567.0),
+            ("1,5", "en", 1.5),
+            ("0,5", "en", 0.5),
+            ("12,34", "en", 12.34),
+            ("1234,567", "en", 1234.567),
+            ("1,234", "en", 1234.0),
+            ("12,345", "en", 12345.0),
+        ] {
+            assert_eq!(parse_number(text, locale), Ok(want), "{text:?} in {locale}");
+        }
+    }
+
+    /// What a format writes reads back, in its digits and with its separators, the system's
+    /// included.
+    #[test]
+    fn reads_what_format_writes() {
+        let mut formats: Vec<Format> = ["en", "de", "de-CH", "fr", "hi", "ar-EG", "fa", "bn-BD", "ar-MA", "en-PL", "nb", "pt-PT", "sv"]
+            .iter()
+            .flat_map(|t| [Format::from_tag(t), Format::new(&Region::from_tag(t), Digits::Latin)])
+            .collect();
+        for (decimal, grouping) in [(Some(','), None), (Some('.'), Some(Some('\u{a0}'))), (None, Some(None)), (Some('·'), Some(Some('_')))] {
+            let mut region = Region::from_tag("en-US");
+            region.decimal = decimal;
+            region.grouping = grouping;
+            formats.push(Format::new(&region, Digits::Locale));
+        }
+        for f in &formats {
+            for value in [0.0, 1.5, -1234.25, 1_234_567.89, 12.0, 1234.0] {
+                let text = f.number(value, 2);
+                assert_eq!(f.parse(&text), Ok(value), "{text:?} ({f:?})");
+            }
+            let text = f.integer(1_234_567);
+            assert_eq!(f.parse(&text), Ok(1_234_567.0), "{text:?}");
+        }
     }
 }
