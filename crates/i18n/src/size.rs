@@ -114,12 +114,17 @@ impl FileSize {
         }
         loop {
             let value = bytes as f64 / self.scale(unit);
-            let mut decimals = self.decimals.get(unit as usize).copied().unwrap_or(0);
-            if unit == SizeUnit::Byte || (self.whole_from > 0 && value >= f64::from(self.whole_from)) {
+            let round = |decimals: u8| {
+                let factor = 10f64.powi(i32::from(decimals));
+                (if unit == smallest && bytes > 0 && value < 1.0 { (value * factor).ceil() } else { (value * factor).round() }) / factor
+            };
+            let mut decimals = if unit == SizeUnit::Byte { 0 } else { self.decimals.get(unit as usize).copied().unwrap_or(0) };
+            let mut rounded = round(decimals);
+            // After rounding, so 9.96 MB, which rounds to 10.0, is written 10 MB.
+            if self.whole_from > 0 && rounded >= f64::from(self.whole_from) {
                 decimals = 0;
+                rounded = round(0);
             }
-            let factor = 10f64.powi(i32::from(decimals));
-            let rounded = if unit == smallest && bytes > 0 && value < 1.0 { (value * factor).ceil() } else { (value * factor).round() } / factor;
             // 1023.96 KB rounds to 1024.0 KB: the next unit writes it as 1.0 MB.
             if rounded >= self.step as f64
                 && let Some(&next) = SizeUnit::ALL.get(unit as usize + 1)
@@ -221,6 +226,8 @@ mod tests {
         assert_eq!(en(640_400, style), "640 KB");
         assert_eq!(en(3_400_000, style), "3.4 MB");
         assert_eq!(en(12_600_000, style), "13 MB");
+        assert_eq!(en(9_960_000, style), "10 MB", "whole once rounded to 10");
+        assert_eq!(en(9_940_000, style), "9.9 MB");
         assert_eq!(en(5_000_000_000, style), "5000 MB");
         // Only sizes below the smallest unit round up.
         assert_eq!(en(1025, FileSize::BINARY.smallest(SizeUnit::Kilo).unit_decimals(SizeUnit::Kilo, 0)), "1 KB");
