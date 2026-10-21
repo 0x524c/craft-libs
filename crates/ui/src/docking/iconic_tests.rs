@@ -76,9 +76,10 @@ fn collapsed_column_shows_one_icon_per_panel_with_group_separators() {
     let (one, two, three) = (hit(&d, Hit::Icon(1)), hit(&d, Hit::Icon(2)), hit(&d, Hit::Icon(3)));
     let (grip1, grip3) = (hit(&d, Hit::IconGrip(1)), hit(&d, Hit::IconGrip(3)));
     assert_eq!(one.width(), 36.0, "the column takes the style's iconic width");
-    assert_eq!((grip1.bottom(), one.bottom()), (one.top(), two.top()), "a group's icons follow its grip and each other");
-    assert_eq!(grip3.top() - two.bottom(), 7.0, "groups are apart by the separator");
-    assert_eq!(three.top(), grip3.bottom());
+    assert_eq!(one.bottom(), two.top(), "a group's icons follow each other");
+    assert_eq!(three.top() - two.bottom(), 7.0, "groups are apart by the separator, with no room for a grip");
+    assert_eq!((grip1.top(), grip1.bottom()), (one.top(), one.top() + 4.0), "the first group's band is its top edge");
+    assert_eq!((grip3.top(), grip3.bottom()), (two.bottom(), three.top() + 4.0), "a later group's band covers the separator");
     assert!(d.hit(&Hit::Tab(1)).is_none(), "an iconic column draws no tabs");
 }
 

@@ -15,8 +15,9 @@ use crate::docking::{
     targets::{DockDrop, DockTarget, horizontal_line, usable},
 };
 
-/// Height of the drag strip above each icon group.
-const GRIP: f32 = 6.0;
+/// How far an icon group's drag band reaches into its first icon. The band also covers the
+/// separator room above the group; it reserves no height of its own.
+const GROUP_BAND: f32 = 4.0;
 /// Room between two icon groups, with the separator line in its middle.
 const SEPARATOR: f32 = 7.0;
 /// Height of a flyout, or of a panel floated from an icon, when nothing else sizes it.
@@ -103,7 +104,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     fn icon_group_height(&self, group: &Group<P>) -> f32 {
-        GRIP + group.panels.len() as f32 * self.row_height()
+        group.panels.len() as f32 * self.row_height()
     }
 
     /// The body of an iconic column: icon groups top to bottom, scrolling when they do not fit.
@@ -146,21 +147,23 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let mut bands = Vec::new();
         for (index, group) in column.groups.iter().enumerate() {
             let Some(first) = group.panels.first() else { continue };
+            let band_top = if index > 0 { top } else { area.top() };
             if index > 0 {
                 let y = top + SEPARATOR * 0.5;
                 ui.painter().with_clip_rect(view).hline(area.x_range().shrink(4.0), y, self.style.border);
                 top += SEPARATOR;
             }
             let rect = Rect::from_min_size(pos2(area.left(), top), vec2(area.width(), self.icon_group_height(group)));
-            let grip = Rect::from_min_size(rect.min, vec2(rect.width(), GRIP));
-            self.icon_grip(ui, group, grip, column.width);
             let showing = open.as_ref().filter(|p| group.panels.contains(p));
-            let mut y = grip.bottom();
+            let mut y = rect.top();
             for panel in &group.panels {
                 let cell = Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), self.row_height()));
                 self.icon(ui, panel, cell, labels, showing);
                 y = cell.bottom();
             }
+            // After the icons, so the band wins the top of the first icon.
+            let band = Rect::from_min_max(pos2(rect.left(), band_top), pos2(rect.right(), (rect.top() + GROUP_BAND).min(rect.bottom())));
+            self.icon_grip(ui, group, band, rect.top(), column.width);
             // The state again: a click above may have opened or closed this group's flyout.
             if flyout::<P>(ui.ctx(), self.id).is_some_and(|p| group.panels.contains(&p)) {
                 self.iconic.request = Some(Request { group: group.clone(), icons: rect.intersect(view), column: view, edge, width: column.width });
@@ -185,15 +188,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
     }
 
-    /// The strip above an icon group drags the whole group (S8).
-    fn icon_grip(&mut self, ui: &mut Ui, group: &Group<P>, grip: Rect, width: f32) {
+    /// The band on an icon group's top edge drags the whole group (S8). `top` is the group's
+    /// first icon's top, where a floated group's source starts.
+    fn icon_grip(&mut self, ui: &mut Ui, group: &Group<P>, grip: Rect, top: f32, width: f32) {
         let Some(first) = group.panels.first() else { return };
         let movable = group.panels.iter().all(|p| self.permissions(p).movable);
         let response = ui.interact(grip, self.id.with(("icon-grip", Some(first))), Sense::drag());
         let response = if movable { response.on_hover_cursor(egui::CursorIcon::Grab) } else { response };
         self.register_interaction(ui.ctx(), response.id);
         let height = group.height.filter(|h| h.is_finite()).unwrap_or(FLYOUT_HEIGHT);
-        let source = Rect::from_min_size(grip.min, vec2(width.max(self.style.min_pane), height.max(self.style.tab_height)));
+        let source = Rect::from_min_size(pos2(grip.left(), top), vec2(width.max(self.style.min_pane), height.max(self.style.tab_height)));
         self.record_float(&group.panels, vec2(grip.width(), self.row_height()), source.size());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.move_group_label));
         if movable && response.drag_started() {
