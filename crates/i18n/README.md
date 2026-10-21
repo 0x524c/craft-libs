@@ -49,6 +49,13 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   (one context along the locale chain, so `pt-br` can return a `pt` row, but never the plain row
   or English: a key cap's name under `key`, or "is there a translation?"), and `fmt` for `{name}`
   placeholders, filled in one pass.
+- **Isolation:** `fmt` wraps each inserted value in a first-strong isolate (FSI…PDI), and `trn`
+  wraps `{n}` in a left-to-right one (LRI…PDI), so a Latin file name in an Arabic sentence, or a
+  Hebrew name in an English one, can't reorder the words around it. Wrap numbers, paths and codes
+  in `ltr` before passing them; a value that already is one isolate goes in as it is, and a stray
+  PDI in a value can't close its isolate early. egui draws the marks as nothing. For text that
+  leaves the interface (file names, logs, terminals, text parsed later), use `fmt_plain` or
+  `strip_isolates`.
 - **Bad rows** (malformed, an unknown `@` context, a wrong plural form count, a row defined twice,
   of which the first is kept) and bad locales (`en`, `pseudo`, a code embedded twice in any case)
   are skipped and returned by `I18n::new` for the app to log; craft-i18n's CI rejects them before
