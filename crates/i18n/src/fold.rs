@@ -21,8 +21,8 @@
 use std::ops::Range;
 
 use icu_normalizer::DecomposingNormalizerBorrowed;
-use icu_properties::CodePointSetData;
-use icu_properties::props::GraphemeExtend;
+use icu_properties::props::{GraphemeExtend, HangulSyllableType};
+use icu_properties::{CodePointMapData, CodePointSetData};
 
 /// Folds text for one locale. Cheap to build and copy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,7 +216,14 @@ impl Folded {
     /// not leave out a mark that follows a letter, so `re` doesn't match `ré` when accents count.
     pub fn matches<'a>(&'a self, needle: &'a Folded) -> impl Iterator<Item = Range<usize>> + 'a {
         let extend = CodePointSetData::new::<GraphemeExtend>();
-        let starts_mark = move |at: usize| self.text[at..].chars().next().is_some_and(|c| extend.contains(c));
+        let hangul = CodePointMapData::<HangulSyllableType>::new();
+        // The vowel and final consonant of a decomposed Hangul syllable continue it, like a mark.
+        let starts_mark = move |at: usize| {
+            self.text[at..]
+                .chars()
+                .next()
+                .is_some_and(|c| extend.contains(c) || matches!(hangul.get(c), HangulSyllableType::VowelJamo | HangulSyllableType::TrailingJamo))
+        };
         let n = needle.text.as_str();
         let mut from = 0;
         let mut done = false;
@@ -350,6 +357,10 @@ mod tests {
         assert!(f.contains("ré", "é"));
         // Kana voicing marks stay even with accents ignored: か doesn't find が.
         assert!(!Folder::new("ja").contains("が", "か"));
+        // Nor does a Hangul syllable without its final consonant: 하 doesn't find 한.
+        let ko = Folder::new("ko");
+        assert!(!ko.contains("한국", "하") && !ko.keep_accents().contains("한국", "하"));
+        assert!(ko.contains("한국", "한") && ko.contains("하늘", "하"));
     }
 
     #[test]
