@@ -19,8 +19,10 @@
 //! println!("cargo::rerun-if-changed=build.rs");
 //! let wasm = craft_fonts_build::target_is_wasm();
 //! let embedded = craft_fonts_build::Embed::new()
+//!     // CJK faces as their UI subsets, cut to the characters the translation catalogs use.
+//!     .for_ui()
 //!     // Web builds have a size budget: embed only the Japanese UI face there.
-//!     .filter(move |face| !wasm || (face.family.as_str(), face.style.as_str()) == ("BIZ UDPGothic", "Regular"))
+//!     .filter(move |face| !wasm || face.has_script("Jpan"))
 //!     .write("craft_fonts.rs");
 //! if let Err(e) = embedded {
 //!     println!("cargo::error={e}");
@@ -38,13 +40,14 @@
 //! The generated file is a slice expression of `EmbeddedFace { .. }` literals, so any struct with
 //! the same fields and that name in scope works too.
 
+mod cmap;
 mod embed;
 mod manifest;
 #[cfg(test)]
 mod tests;
 
 pub use embed::{Embed, Error, embed, target_is_wasm};
-pub use manifest::{ManifestEntry, ParseError, parse_manifest};
+pub use manifest::{CJK_SCRIPTS, ManifestEntry, ParseError, UI_ROLE, parse_manifest};
 
 /// A craft-fonts face embedded by [`embed`]: one line of `fonts/manifest.txt`.
 #[derive(Clone, Copy)]

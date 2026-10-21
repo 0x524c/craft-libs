@@ -1,12 +1,14 @@
-//! craft-fonts' `fonts/manifest.txt`: one font face per line, eight fields separated by `" | "`:
+//! craft-fonts' `fonts/manifest.txt`: one font face per line, eight or nine fields separated by
+//! `" | "`:
 //!
 //! ```text
-//! family | style | file | scripts | licence | licence file | sha256 | source
+//! family | style | file | scripts | licence | licence file | sha256 | source [| role]
 //! ```
 //!
 //! Blank lines and lines starting with `#` are skipped. `file` is relative to the checkout and may
-//! end in `#<index>` to pick one face of a font collection (`.ttc`). Fields after the eighth are
-//! ignored, so a manifest that gains a field still embeds.
+//! end in `#<index>` to pick one face of a font collection (`.ttc`). The optional `role` is `ui` for
+//! a UI subset: a face cut to the characters the apps' translation catalogs use. Fields after the
+//! ninth are ignored, so a manifest that gains a field still embeds.
 
 use std::fmt;
 
@@ -31,6 +33,8 @@ pub struct ManifestEntry {
     pub sha256: String,
     /// Where the file came from.
     pub source: String,
+    /// The optional ninth field: `Some("ui")` for a UI subset, `None` when the line has no role.
+    pub role: Option<String>,
 }
 
 impl ManifestEntry {
@@ -39,7 +43,24 @@ impl ManifestEntry {
     pub fn has_script(&self, tag: &str) -> bool {
         self.scripts.iter().any(|s| script_matches(s, tag))
     }
+
+    /// Whether the face is a UI subset (`role` is `ui`).
+    pub fn is_ui(&self) -> bool {
+        self.role.as_deref() == Some(UI_ROLE)
+    }
+
+    /// Whether the face has a CJK script tag ([`CJK_SCRIPTS`]).
+    pub fn is_cjk(&self) -> bool {
+        CJK_SCRIPTS.iter().any(|tag| self.has_script(tag))
+    }
 }
+
+/// The `role` of a UI subset face.
+pub const UI_ROLE: &str = "ui";
+
+/// Script tags of the CJK faces, which craft-fonts also ships as UI subsets. `Hant` covers
+/// `Hant-HK`.
+pub const CJK_SCRIPTS: &[&str] = &["Hans", "Hant", "Jpan", "Kore", "Hani"];
 
 /// `face_tag` is `wanted` or `wanted` plus a `-` subtag.
 pub(crate) fn script_matches(face_tag: &str, wanted: &str) -> bool {
@@ -72,7 +93,7 @@ pub fn parse_manifest(text: &str) -> Result<Vec<ManifestEntry>, ParseError> {
             continue;
         }
         let fields: Vec<&str> = trimmed.split(" | ").map(str::trim).collect();
-        let [family, style, file, scripts, licence, licence_file, sha256, source, ..] = fields.as_slice() else {
+        let [family, style, file, scripts, licence, licence_file, sha256, source, rest @ ..] = fields.as_slice() else {
             return Err(ParseError { line, reason: format!("expected 8 fields separated by \" | \", found {}", fields.len()) });
         };
         for (name, value) in [("family", family), ("style", style), ("file", file), ("scripts", scripts)] {
@@ -97,6 +118,7 @@ pub fn parse_manifest(text: &str) -> Result<Vec<ManifestEntry>, ParseError> {
             licence_file: (*licence_file).to_owned(),
             sha256: (*sha256).to_owned(),
             source: (*source).to_owned(),
+            role: rest.first().filter(|role| !role.is_empty()).map(|role| (*role).to_owned()),
         });
     }
     Ok(entries)
