@@ -83,6 +83,18 @@ impl Format {
         }
     }
 
+    /// [`Self::number`] without grouping separators, for values such as pixel sizes and years:
+    /// `1920`, `١٩٢٠`, `1234,5`.
+    pub fn number_ungrouped(&self, value: f64, decimals: usize) -> String {
+        match to_decimal(value, decimals) {
+            Some(d) => {
+                let p = self.parts_with(&d, Some(""));
+                p.sign + &p.text
+            }
+            None => non_finite(value).to_owned(),
+        }
+    }
+
     /// `ratio` as a percentage with `decimals` digits after the decimal separator: `0.5` is
     /// `50%`, `50 %` (French, German), `%50` (Turkish), `٥٠٪؜` (Egyptian Arabic).
     pub fn percent(&self, ratio: f64, decimals: usize) -> String {
@@ -100,7 +112,13 @@ impl Format {
     }
 
     fn parts(&self, d: &Decimal) -> Written {
-        let mut sink = Sink { group: self.group.as_deref(), point: self.point.as_deref(), into: Target::Text, w: Written::default() };
+        self.parts_with(d, self.group.as_deref())
+    }
+
+    /// `d` taken apart, with `group` in place of the locale's grouping separator if set (`""`
+    /// drops it).
+    fn parts_with(&self, d: &Decimal, group: Option<&str>) -> Written {
+        let mut sink = Sink { group, point: self.point.as_deref(), into: Target::Text, w: Written::default() };
         let written = match &self.decimal {
             Some(f) => f.format(d).write_to_parts(&mut sink),
             None => fmt::Write::write_str(&mut sink, &d.to_string()),
@@ -245,6 +263,25 @@ mod tests {
         }
         // CLDR writes Arabic without a region in Latin digits.
         assert_eq!(Format::from_tag("ar").number(1234.5, 1), "1,234.5");
+    }
+
+    #[test]
+    fn ungrouped_numbers() {
+        for (tag, want) in [("en", "1920"), ("de", "-1234567,5"), ("hi", "1234567"), ("ar-EG", "١٩٢٠")] {
+            let value = if tag == "de" {
+                -1_234_567.5
+            } else if tag == "hi" {
+                1_234_567.0
+            } else {
+                1920.0
+            };
+            let decimals = usize::from(tag == "de");
+            assert_eq!(Format::from_tag(tag).number_ungrouped(value, decimals), want, "{tag}");
+        }
+        let mut region = Region::from_tag("en-US");
+        region.decimal = Some(',');
+        assert_eq!(Format::new(&region, Digits::Locale).number_ungrouped(1234.5, 1), "1234,5", "the system's decimal mark stays");
+        assert_eq!(Format::from_tag("en").number_ungrouped(f64::INFINITY, 0), "∞");
     }
 
     #[test]
