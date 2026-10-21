@@ -195,7 +195,7 @@ A flyout fits its content the same way, without the title bar.
   `middle_click_closes_tabs` turn either on or off in any profile.
 - A column's »/« button collapses it to icons, one icon per panel with a separator between groups.
   Widen an iconic column to show panel names. Click an icon to open its group as a flyout on the
-  canvas side. Drag an icon to move its panel, or the grip above an icon group to move the group.
+  canvas side. Drag an icon to move its panel, or the strip above an icon group to move the group.
 
 ## Commands
 

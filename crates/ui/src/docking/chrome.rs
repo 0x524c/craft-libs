@@ -1,5 +1,5 @@
-//! Floating window chrome: an opaque frame with anchored resize handles, and a title bar with a
-//! grip, an optional ▾ menu button and ×. [`super::DockArea`] draws its floating windows with
+//! Floating window chrome: an opaque frame with anchored resize handles, and a title bar with an
+//! optional title, ▾ menu button and ×. [`super::DockArea`] draws its floating windows with
 //! these; other hosts (task panes) use them with their own ids and actions. Nothing here changes
 //! a layout: the caller turns the responses into its own commands.
 
@@ -282,7 +282,7 @@ pub(super) fn truncated(ui: &Ui, text: WidgetText, width: f32, font: FontId) -> 
     ui.painter().layout_job(job)
 }
 
-/// A title bar: two grip lines (or a title), an optional ▾ menu button and an optional ×, 10 pt
+/// A title bar: an optional title, an optional ▾ menu button and an optional ×, 10 pt
 /// in from the right edge, mirrored when [`ChromeStyle::right_to_left`] is set. The bar senses
 /// clicks and drags; double-clicks are the caller's.
 pub struct TitleBar<'a> {
@@ -309,7 +309,7 @@ impl<'a> TitleBar<'a> {
         Self { id, move_label, title: None, menu: None, close: None, movable: true }
     }
 
-    /// Text at the leading edge instead of the grip lines, cut with '…' to fit.
+    /// Text at the leading edge, cut with '…' to fit.
     pub fn title(mut self, title: impl Into<WidgetText>) -> Self {
         self.title = Some(title.into());
         self
@@ -358,12 +358,6 @@ impl<'a> TitleBar<'a> {
             let galley = truncated(ui, title, (bar_rect.width() - 12.0).max(0.0), style.font.clone());
             let x = if style.right_to_left { bar_rect.right() - 6.0 - galley.size().x } else { bar_rect.left() + 6.0 };
             painter.galley(pos2(x, rect.center().y - galley.size().y * 0.5), galley, style.text);
-        } else {
-            let grip = Stroke::new(0.6, style.weak_text);
-            for k in 0..2 {
-                let y = rect.center().y - 1.5 + k as f32 * 3.0;
-                painter.line_segment([pos2(rect.center().x - 9.0, y), pos2(rect.center().x + 9.0, y)], grip);
-            }
         }
         if bar.has_focus() {
             painter.rect_stroke(bar_rect.shrink(1.0), 0.0, Stroke::new(1.0, style.accent), StrokeKind::Inside);

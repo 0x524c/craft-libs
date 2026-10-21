@@ -179,20 +179,6 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             self.output.actions.push(Action::SetMinimized { panel: owner.selected.clone(), minimized: !owner.minimized });
         }
         let active = response.has_focus() || response.hovered();
-        if movable {
-            // A grip mark at rest, centered in the bar's reserved width beside the header.
-            let grip = if self.style.right_to_left {
-                Rect::from_min_max(hit.min, pos2((hit.left() + self.style.drag_bar_width).min(hit.right()), hit.bottom()))
-            } else {
-                Rect::from_min_max(pos2((hit.right() - self.style.drag_bar_width).max(hit.left()), hit.top()), hit.max)
-            };
-            let stroke = Stroke::new(1.0, if active { self.style.text } else { self.style.inactive_text });
-            let half = (hit.height() * 0.2).min(4.0);
-            for k in -1..=1 {
-                let x = grip.center().x + k as f32 * 3.0;
-                ui.painter().with_clip_rect(hit).line_segment([pos2(x, grip.center().y - half), pos2(x, grip.center().y + half)], stroke);
-            }
-        }
         if active {
             ui.painter().with_clip_rect(hit).rect_stroke(
                 hit.shrink(1.0),

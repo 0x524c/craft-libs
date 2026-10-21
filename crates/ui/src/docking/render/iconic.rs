@@ -15,7 +15,7 @@ use crate::docking::{
     targets::{DockDrop, DockTarget, horizontal_line, usable},
 };
 
-/// Height of the grip above each icon group.
+/// Height of the drag strip above each icon group.
 const GRIP: f32 = 6.0;
 /// Room between two icon groups, with the separator line in its middle.
 const SEPARATOR: f32 = 7.0;
@@ -185,7 +185,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
     }
 
-    /// The grip above an icon group drags the whole group (S8).
+    /// The strip above an icon group drags the whole group (S8).
     fn icon_grip(&mut self, ui: &mut Ui, group: &Group<P>, grip: Rect, width: f32) {
         let Some(first) = group.panels.first() else { return };
         let movable = group.panels.iter().all(|p| self.permissions(p).movable);
@@ -196,10 +196,6 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let source = Rect::from_min_size(grip.min, vec2(width.max(self.style.min_pane), height.max(self.style.tab_height)));
         self.record_float(&group.panels, vec2(grip.width(), self.row_height()), source.size());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &self.style.move_group_label));
-        let color = if response.hovered() || response.dragged() { self.style.text } else { self.style.inactive_text };
-        let painter = ui.painter().with_clip_rect(grip.intersect(ui.clip_rect()));
-        painter.hline((grip.center().x - 8.0)..=(grip.center().x + 8.0), grip.center().y - 1.0, Stroke::new(1.0, color));
-        painter.hline((grip.center().x - 8.0)..=(grip.center().x + 8.0), grip.center().y + 1.0, Stroke::new(1.0, color));
         if movable && response.drag_started() {
             let origin = ui.input(|i| i.pointer.press_origin()).or_else(|| ui.ctx().pointer_interact_pos()).unwrap_or(grip.center());
             let drag = GroupDrag {

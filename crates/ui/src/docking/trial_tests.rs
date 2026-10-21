@@ -121,17 +121,15 @@ fn galley_labels_stay_whole_and_only_an_over_wide_active_tab_ends_with_an_ellips
 }
 
 #[test]
-fn drag_bar_shows_a_grip_at_rest_and_a_group_drag_paints_a_filled_labeled_ghost() {
+fn drag_bar_draws_no_mark_at_rest_and_a_group_drag_paints_a_filled_labeled_ghost() {
     let mut d = Driver::new(frames());
     let visuals = d.ctx.global_style().visuals.clone();
     let bar = d.rect("drag-bar", 2);
-    let grip = flat(&d.shapes).into_iter().any(|(_, shape)| match shape {
-        egui::Shape::LineSegment { points, stroke } => {
-            bar.contains(points[0]) && bar.contains(points[1]) && stroke.color == visuals.weak_text_color()
-        }
+    let mark = flat(&d.shapes).into_iter().any(|(_, shape)| match shape {
+        egui::Shape::LineSegment { points, .. } => bar.contains(points[0]) && bar.contains(points[1]),
         _ => false,
     });
-    assert!(grip, "no grip mark in the drag bar at rest");
+    assert!(!mark, "a mark in the drag bar at rest");
 
     d.hold(bar.center(), pos2(150.0, 300.0));
     let fill = visuals.selection.stroke.color.gamma_multiply(0.15);

@@ -428,11 +428,6 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if response.double_clicked() {
             self.output.actions.push(Action::SetIconic { panel: first.clone(), iconic: !column.iconic });
         }
-        for k in 0..2 {
-            let y = grip.center().y - 1.5 + k as f32 * 3.0;
-            let x = grip.center().x;
-            ui.painter().with_clip_rect(grip).line_segment([pos2(x - 9.0, y), pos2(x + 9.0, y)], Stroke::new(1.0, self.style.inactive_text));
-        }
         if response.has_focus() || response.hovered() {
             ui.painter().with_clip_rect(grip).rect_stroke(
                 grip.shrink(1.0),
