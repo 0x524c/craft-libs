@@ -4,8 +4,10 @@
 //! [`Folder::fold`] turns text into a search key: compatibility forms decomposed (`ﬁ` → `fi`,
 //! full-width `Ａ` → `a`, `㎏` → `kg`), lower case, `ß` → `ss`, final `ς` → `σ`, and with accents
 //! ignored (the default) combining accents, Hebrew points and Arabic vowel marks dropped and the
-//! few letters with built-in strokes mapped to their base (`ø`, `ł`, `đ`, `ı`, `æ` → `ae`).
-//! Invisible format characters (soft hyphens, zero-width joiners, bidi isolates) are dropped too.
+//! few letters with built-in strokes mapped to their base (`ø`, `ł`, `đ`, `ı`, `æ` → `ae`), and
+//! Persian letter forms mapped to the Arabic ones (`ک` → `ك`, `ی` → `ي`, `ة` → `ه`). Decimal
+//! digits of every script fold to ASCII (`١٢` → `12`). Invisible format characters (soft
+//! hyphens, zero-width joiners, bidi isolates) are dropped too.
 //!
 //! Dotted and dotless i follow the locale when accents count. In Turkish and Azerbaijani, `I`
 //! folds to `ı` and `İ` to `i`; elsewhere both fold to `i` and `ı` stays a letter of its own.
@@ -33,7 +35,7 @@ impl Folder {
     /// Case- and accent-insensitive folding for `locale`, a language code such as `tr`, `pt-br`
     /// or `zh-hant` (any case, `-` or `_`).
     pub fn new(locale: &str) -> Folder {
-        let language = locale.split(['-', '_']).next().unwrap_or_default();
+        let language = locale.split(['-', '_', '.', '@']).next().unwrap_or_default();
         Folder { turkic: language.eq_ignore_ascii_case("tr") || language.eq_ignore_ascii_case("az"), accents: false }
     }
 
@@ -87,7 +89,13 @@ impl Folder {
                     out.push('i');
                 }
                 'I' if self.turkic && self.accents => out.push('ı'),
+                // Persian heh with hamza above (ۀ) decomposes to ae (ە) and hamza.
+                '\u{6D5}' if !self.accents && chars.peek() == Some(&'\u{654}') => {
+                    chars.next();
+                    out.push('ه');
+                }
                 'ß' | 'ẞ' => out.push_str("ss"),
+                c if let Some(d) = ascii_digit(c) => out.push(d),
                 'Σ' | 'σ' | 'ς' => out.push('σ'),
                 c if ignorable(c) || (!self.accents && accent(c)) => {}
                 c => {
@@ -103,9 +111,15 @@ impl Folder {
     }
 }
 
-/// The base of a lower-case letter whose diacritic is built in rather than combining.
+/// The base of a lower-case letter whose diacritic is built in rather than combining, and the
+/// Arabic form of a letter that Persian and Urdu write differently: keheh (ک) is kaf (ك), Farsi
+/// yeh (ی) and alef maksura (ى) are yeh (ي), teh marbuta (ة) is heh (ه), alef wasla (ٱ) is alef.
 fn base_letter(c: char) -> Option<&'static str> {
     Some(match c {
+        'ک' => "ك",
+        'ی' | 'ى' => "ي",
+        'ة' => "ه",
+        'ٱ' => "ا",
         'ı' => "i",
         'ø' => "o",
         'ł' => "l",
@@ -137,6 +151,27 @@ fn accent(c: char) -> bool {
         | '\u{591}'..='\u{5BD}' | '\u{5BF}' | '\u{5C1}' | '\u{5C2}' | '\u{5C4}' | '\u{5C5}' | '\u{5C7}'
         | '\u{610}'..='\u{61A}' | '\u{64B}'..='\u{65F}' | '\u{670}' | '\u{6D6}'..='\u{6DC}'
         | '\u{6DF}'..='\u{6E4}' | '\u{6E7}' | '\u{6E8}' | '\u{6EA}'..='\u{6ED}')
+}
+
+/// The first code point of each run of ten Unicode decimal digits (general category Nd), Unicode
+/// 16.0.
+const ZEROS: [u32; 76] = [
+    0x30, 0x660, 0x6F0, 0x7C0, 0x966, 0x9E6, 0xA66, 0xAE6, 0xB66, 0xBE6, 0xC66, 0xCE6, 0xD66, 0xDE6, 0xE50, 0xED0, 0xF20, 0x1040, 0x1090, 0x17E0,
+    0x1810, 0x1946, 0x19D0, 0x1A80, 0x1A90, 0x1B50, 0x1BB0, 0x1C40, 0x1C50, 0xA620, 0xA8D0, 0xA900, 0xA9D0, 0xA9F0, 0xAA50, 0xABF0, 0xFF10, 0x104A0,
+    0x10D30, 0x10D40, 0x11066, 0x110F0, 0x11136, 0x111D0, 0x112F0, 0x11450, 0x114D0, 0x11650, 0x116C0, 0x116D0, 0x116DA, 0x11730, 0x118E0, 0x11950,
+    0x11BF0, 0x11C50, 0x11D50, 0x11DA0, 0x11F50, 0x16130, 0x16A60, 0x16AC0, 0x16B50, 0x16D70, 0x1CCF0, 0x1D7CE, 0x1D7D8, 0x1D7E2, 0x1D7EC, 0x1D7F6,
+    0x1E140, 0x1E2F0, 0x1E4F0, 0x1E5F1, 0x1E950, 0x1FBF0,
+];
+
+/// A decimal digit of any script as its ASCII digit: `١٢` and `१२` search as `12`.
+fn ascii_digit(c: char) -> Option<char> {
+    let c = u32::from(c);
+    let zero = match ZEROS.binary_search(&c) {
+        Ok(i) => ZEROS.get(i),
+        Err(i) => ZEROS.get(i.checked_sub(1)?),
+    }?;
+    let value = c - zero;
+    if value < 10 { char::from_digit(value, 10) } else { None }
 }
 
 /// Folded text and where each part came from.
@@ -245,6 +280,10 @@ mod tests {
             ("he", "שָׁלוֹם", "שלום".into(), nfd("שָׁלוֹם")),
             ("en", "soft\u{AD}ware \u{2068}name\u{2069}", "software name".into(), "software name".into()),
             ("ru", "Ёлка", "елка".into(), nfd("ёлка")),
+            ("ar", "Layer ١٢ ۳۴ १२", "layer 12 34 12".into(), "layer 12 34 12".into()),
+            ("fa", "کتاب یک", "كتاب يك".into(), "کتاب یک".into()),
+            ("fa", "خانۀ", "خانه".into(), nfd("خانۀ")),
+            ("ar", "مدرسة على إسلام آمن", "مدرسه علي اسلام امن".into(), nfd("مدرسة على إسلام آمن")),
         ];
         for (locale, input, ignoring, keeping) in table {
             assert_eq!(key(locale, input), ignoring, "{locale} {input}");
@@ -285,6 +324,22 @@ mod tests {
 
         let all: Vec<_> = f.fold("Ab ab AB").matches(&f.fold("ab")).collect();
         assert_eq!(all, [0..2, 3..5, 6..8]);
+    }
+
+    #[test]
+    fn persian_and_arabic_letters_match() {
+        let f = Folder::new("fa");
+        // Persian keheh and Farsi yeh against Arabic kaf and yeh, and hamza forms of alef.
+        assert!(f.contains("كتاب عربي", "کتاب عربی"));
+        assert!(f.contains("کتاب عربی", "كتاب عربي"));
+        assert!(f.contains("أحمد إبراهيم", "احمد ابراهیم"));
+        assert!(f.contains("مدرسة", "مدرسه"));
+        assert_eq!(f.fold("Layer ١٢").find(&f.fold("layer 12")), Some(0.."Layer ١٢".len()));
+        assert!(Folder::new("en").keep_accents().contains("Layer ١٢", "layer 12"));
+        let digits = ZEROS.iter().map(|&zero| char::from_u32(zero + 7).unwrap());
+        assert!(digits.clone().all(|d| d.is_numeric() && ascii_digit(d) == Some('7')));
+        assert_eq!(ascii_digit('\u{1D800}'), None);
+        assert_eq!(ascii_digit('/'), None);
     }
 
     #[test]

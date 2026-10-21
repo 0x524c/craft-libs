@@ -28,10 +28,10 @@ pub struct Collator(Option<icu_collator::Collator>);
 
 impl Collator {
     /// Sorting for `locale`, a language code such as `sv`, `pt-br` or `zh-hant` (any case, `-`
-    /// or `_`). A BCP 47 collation type picks another order where there is one:
-    /// `zh-hant-u-co-pinyin`, `zh-hans-u-co-stroke`.
+    /// or `_`, glibc forms such as `sv_SE.UTF-8` and `sr_RS@latin`). A BCP 47 collation type
+    /// picks another order where there is one: `zh-hant-u-co-pinyin`, `zh-hans-u-co-stroke`.
     pub fn new(locale: &str) -> Collator {
-        let mut prefs: CollatorPreferences = Locale::try_from_str(&locale.replace('_', "-")).unwrap_or(Locale::UNKNOWN).into();
+        let mut prefs: CollatorPreferences = Locale::try_from_str(&bcp47(locale)).unwrap_or(Locale::UNKNOWN).into();
         prefs.numeric_ordering = Some(CollationNumericOrdering::True);
         let options = CollatorOptions::default();
         let collator = Data::new().ok().and_then(|data| {
@@ -56,6 +56,25 @@ impl Collator {
     pub fn sort_by_key<T>(&self, items: &mut [T], key: impl Fn(&T) -> &str) {
         items.sort_by(|a, b| self.compare(key(a), key(b)));
     }
+}
+
+/// `locale` as a BCP 47 tag: `_` → `-`, a glibc codeset dropped and its script modifier made a
+/// subtag (`sr_RS.UTF-8@latin` → `sr-latn-RS`).
+fn bcp47(locale: &str) -> String {
+    let locale = locale.trim();
+    let mut parts: Vec<&str> = locale.split(['.', '@']).next().unwrap_or_default().split(['-', '_']).collect();
+    let script = match locale.split_once('@').map(|(_, m)| m.to_ascii_lowercase()).as_deref() {
+        Some("latin") => Some("latn"),
+        Some("cyrillic") => Some("cyrl"),
+        _ => None,
+    };
+    let has_script = parts.get(1).is_some_and(|p| p.len() == 4 && p.bytes().all(|b| b.is_ascii_alphabetic()));
+    if let Some(script) = script
+        && !has_script
+    {
+        parts.insert(1.min(parts.len()), script);
+    }
+    parts.join("-")
 }
 
 /// The embedded collation data, with locale fallback, and the decomposition tables the collator
@@ -123,8 +142,10 @@ mod tests {
             "el",
             "es",
             "et",
+            "fa",
             "fi",
             "fr",
+            "hi",
             "hr",
             "hu",
             "id",
@@ -175,6 +196,23 @@ mod tests {
         assert_eq!(sorted("es", &["ñu", "nube", "oso"]), ["nube", "ñu", "oso"]);
         // Japanese: Latin, then kana in gojūon order (hiragana and katakana together), then kanji.
         assert_eq!(sorted("ja", &["漢字", "カメラ", "あめ", "いぬ", "Zoom"]), ["Zoom", "あめ", "いぬ", "カメラ", "漢字"]);
+    }
+
+    #[test]
+    fn glibc_locale_names() {
+        let words = ["öl", "zebra", "år", "äpple", "apa", "oxe"];
+        assert_eq!(sorted("sv_SE.UTF-8", &words), sorted("sv", &words));
+        assert_ne!(sorted("sv_SE.UTF-8", &words), sorted("en", &words));
+        let cities = ["天津", "北京", "上海"];
+        assert_eq!(sorted("zh_TW.UTF-8", &cities), sorted("zh-hant", &cities));
+        assert_eq!(sorted("zh_CN.UTF-8", &cities), sorted("zh-hans", &cities));
+        // Serbian Cyrillic sorts Cyrillic first; Latin Serbian sorts Latin first, `lj` after `lu`.
+        let mixed = ["ljubav", "lula", "абв"];
+        assert_eq!(sorted("sr_RS.UTF-8", &mixed), ["абв", "ljubav", "lula"]);
+        assert_eq!(sorted("sr_RS.UTF-8@latin", &mixed), ["lula", "ljubav", "абв"]);
+        assert_eq!(bcp47("sr_RS.UTF-8@latin"), "sr-latn-RS");
+        assert_eq!(bcp47("sr_Latn_RS@latin"), "sr-Latn-RS");
+        assert_eq!(bcp47("de_DE@euro"), "de-DE");
     }
 
     #[test]
