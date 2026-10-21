@@ -42,12 +42,13 @@ impl Collator {
         Collator(collator)
     }
 
-    /// `a` against `b`. Text that differs only in case or accents still has an order, so a
-    /// sort is stable across runs. Without collation data (never with the embedded data) this is
-    /// code point order.
+    /// `a` against `b`. Text that differs only in case or accents still has an order, and text
+    /// the collation counts as equal (`Layer 2` and `Layer 02`) is in code point order, so a sort
+    /// doesn't depend on the input order. Without collation data (never with the embedded data)
+    /// this is code point order.
     pub fn compare(&self, a: &str, b: &str) -> Ordering {
         match &self.0 {
-            Some(c) => c.as_borrowed().compare(a, b),
+            Some(c) => c.as_borrowed().compare(a, b).then_with(|| a.cmp(b)),
             None => a.cmp(b),
         }
     }
@@ -178,7 +179,9 @@ mod tests {
     #[test]
     fn digits_sort_by_value() {
         let layers = ["Layer 10", "Layer 2", "layer 1", "Layer 1", "Layer 2b", "Layer 02"];
-        assert_eq!(sorted("en", &layers), ["layer 1", "Layer 1", "Layer 2", "Layer 02", "Layer 2b", "Layer 10"]);
+        assert_eq!(sorted("en", &layers), ["layer 1", "Layer 1", "Layer 02", "Layer 2", "Layer 2b", "Layer 10"]);
+        let reversed: Vec<&str> = layers.iter().rev().copied().collect();
+        assert_eq!(sorted("en", &reversed), sorted("en", &layers));
         assert_eq!(sorted("de", &["Ebene ٣", "Ebene 10", "Ebene ２"]), ["Ebene ２", "Ebene ٣", "Ebene 10"]);
     }
 
