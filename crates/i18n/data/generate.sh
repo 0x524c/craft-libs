@@ -19,4 +19,5 @@ TMPDIR=$CACHE icu4x-datagen --format blob --overwrite \
     --out "$HERE/numbers.postcard"
 
 ZIP=$CACHE/icu4x-source-cache/github.com/unicode-org/cldr-json/releases/download/$CLDR/cldr-$CLDR-json-full.zip
-python3 -I "$HERE/locales.py" "$ZIP" "$CLDR" > "$HERE/locales.rs"
+python3 -I "$HERE/locales.py" "$ZIP" "$CLDR" > "$HERE/locales.rs.tmp"
+mv "$HERE/locales.rs.tmp" "$HERE/locales.rs"
