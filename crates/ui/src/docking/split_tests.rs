@@ -298,49 +298,71 @@ fn every_divider_travels_after_drops() {
     assert_dividers_travel(&mut d);
 }
 
-/// Each split divider moves both ways when dragged, from the layout as it is.
+/// Each split divider, in the docked layout and in floating windows, moves both ways when
+/// dragged, from the layout as it is.
 fn assert_dividers_travel(d: &mut Driver) {
     let start = d.layout.clone();
-    let paths: Vec<Vec<bool>> = d
+    let dividers: Vec<Hit<u32>> = d
         .hits()
         .into_iter()
-        .filter_map(|(hit, _)| match hit {
-            Hit::Divider(Divider::Split(path)) => Some(path),
-            _ => None,
+        .filter_map(|(hit, _)| matches!(hit, Hit::Divider(Divider::Split(_) | Divider::WindowSplit(..))).then_some(hit))
+        .collect();
+    assert!(!dividers.is_empty());
+    // A floating window may cover the dividers of the main area and of other windows.
+    let covers: Vec<(Rect, &Floating<u32>)> = start
+        .floating
+        .iter()
+        .map(|w| {
+            let drawn = w.panels().filter(|p| d.content.bodies.contains_key(p)).map(|p| group(d, *p));
+            let rect = Rect::from_min_size(pos2(w.rect[0], w.rect[1]), vec2(w.rect[2], w.rect[3]));
+            (drawn.fold(rect, |a, b| a.union(b)), w)
         })
         .collect();
-    assert!(!paths.is_empty());
-    for path in paths {
+    for hit in dividers {
+        let own = |w: &Floating<u32>| matches!(&hit, Hit::Divider(Divider::WindowSplit(key, _)) if w.contains(key));
+        if d.hit(&hit).is_some_and(|r| covers.iter().any(|(c, w)| c.intersects(r) && !own(w))) {
+            continue;
+        }
         for step in [12.0, -24.0] {
-            let Some(rect) = d.hit(&divider(&path)) else { continue };
+            let Some(rect) = d.hit(&hit) else { continue };
             let delta = if rect.width() < rect.height() { vec2(step, 0.0) } else { vec2(0.0, step) };
             let before = d.layout.clone();
-            drag_hit(d, divider(&path), delta);
-            assert_ne!(d.layout, before, "divider {path:?} does not move by {step}");
+            drag_hit(d, hit.clone(), delta);
+            assert_ne!(d.layout, before, "divider {hit:?} does not move by {step}");
         }
         d.layout = start.clone();
         d.settle();
     }
 }
 
-/// Every group at or above its minimum, and every divider with room both ways.
+/// Every group at or above its minimum, and every divider with room both ways, in the docked
+/// layout and in each floating window. Reads the bodies drawn last.
 fn assert_sizes(d: &Driver, context: &str) {
     let mut style = DockStyle::default();
     frame_style(&mut style);
-    let Some(root) = &d.layout.root else { return };
     let sizer = Sizer { style: &style, content: &d.content };
-    let mut groups: Vec<Drawn<'_, u32>> = Vec::new();
-    sizer.groups(root, d.area, &mut groups);
-    for g in &groups {
-        let room = g.rect.size() - g.limits.min;
-        assert!(room.x >= -0.01 && room.y >= -0.01, "{context}: {:?} is below its minimum {:?}", g.rect, g.limits.min);
+    let mut trees: Vec<(&Node<u32>, Rect)> = d.layout.root.iter().map(|root| (root, d.area)).collect();
+    for window in d.layout.floating.iter().filter(|w| !w.minimized) {
+        // The window's body is the union of its groups.
+        let drawn = window.panels().filter(|p| d.content.bodies.contains_key(p)).map(|p| group(d, *p));
+        if let Some(rect) = drawn.reduce(|a, b| a.union(b)) {
+            trees.push((&window.root, rect));
+        }
     }
-    let mut nodes = vec![(root, d.area)];
-    while let Some((node, rect)) = nodes.pop() {
-        let Some(children) = sizer.children(node, rect) else { continue };
-        let (lo, hi) = sizer.range(node, rect);
-        assert!(lo < -0.5 && hi > 0.5, "{context}: a divider is stuck ({lo}, {hi}) at {rect:?} in {:?}", d.layout);
-        nodes.extend(children);
+    for (root, area) in trees {
+        let mut groups: Vec<Drawn<'_, u32>> = Vec::new();
+        sizer.groups(root, area, &mut groups);
+        for g in &groups {
+            let room = g.rect.size() - g.limits.min;
+            assert!(room.x >= -0.01 && room.y >= -0.01, "{context}: {:?} is below its minimum {:?}", g.rect, g.limits.min);
+        }
+        let mut nodes = vec![(root, area)];
+        while let Some((node, rect)) = nodes.pop() {
+            let Some(children) = sizer.children(node, rect) else { continue };
+            let (lo, hi) = sizer.range(node, rect);
+            assert!(lo < -0.5 && hi > 0.5, "{context}: a divider is stuck ({lo}, {hi}) at {rect:?} in {:?}", d.layout);
+            nodes.extend(children);
+        }
     }
 }
 
@@ -362,16 +384,25 @@ impl Lcg {
 
 #[test]
 fn random_drops_leave_every_group_its_minimum_and_every_divider_travel() {
+    // Drops land in the docked layout and in two floating windows, one of them split; tabs and
+    // drag bars move panels and groups between all three, and Ctrl/Cmd floats some.
+    let windows = || {
+        let mut layout = editing();
+        layout.floating.push(Floating::new(hsplit(0.5, tabs(&[8]), tabs(&[50, 51])), [80.0, 420.0, 640.0, 380.0]));
+        layout
+    };
     for seed in 1..=6u64 {
         let mut rng = Lcg(seed);
-        let mut d = film();
-        for step in 0..14 {
+        let mut d = driver(windows(), Film::default());
+        let all = panel_set(&d.layout);
+        for step in 0..16 {
             // Only the bodies drawn now.
             d.content.bodies.clear();
             d.settle();
             let panels: Vec<u32> = d.layout.panels().into_iter().copied().collect();
             let panel = panels[rng.below(panels.len())];
-            let Some(from) = d.hit(&Hit::Tab(panel)).map(|r| r.center()) else { continue };
+            let bar = d.hit(&Hit::DragBar(panel)).filter(|_| rng.below(3) == 0);
+            let Some(from) = bar.or_else(|| d.hit(&Hit::Tab(panel))).map(|r| r.center()) else { continue };
             let target = panels[rng.below(panels.len())];
             let Some(rect) = d.content.bodies.get(&target).copied() else { continue };
             let to = match rng.below(8) {
@@ -390,14 +421,17 @@ fn random_drops_leave_every_group_its_minimum_and_every_divider_travel() {
                 // Anywhere in the body: an edge band or the middle.
                 _ => rect.lerp_inside(vec2(0.02 + rng.unit() * 0.96, 0.02 + rng.unit() * 0.96)),
             };
-            d.drag(from, to);
-            d.settle();
-            if d.layout.floating.iter().any(|w| w.contains(&panel)) && panel != INFO {
-                // Back into the tree: this test is about the docked layout.
-                d.layout.apply(Action::Move { panel, anchor: target, placement: Placement::Split(Zone::Center) }).ok();
-                d.settle();
+            if rng.below(12) == 0 {
+                d.modifiers = Modifiers::COMMAND;
             }
-            assert_sizes(&d, &format!("seed {seed}, step {step}"));
+            d.drag(from, to);
+            d.modifiers = Modifiers::NONE;
+            d.content.bodies.clear();
+            d.settle();
+            let context = format!("seed {seed}, step {step}");
+            assert_eq!(d.layout.validate(), Ok(()), "{context}");
+            assert_eq!(panel_set(&d.layout), all, "{context}: a panel was lost");
+            assert_sizes(&d, &context);
         }
         assert_dividers_travel(&mut d);
     }
