@@ -2,6 +2,8 @@
 //! Shared lifecycle mechanics; application state, theme choices and file policy stay in hosts.
 #[cfg(feature = "appearance")]
 pub mod appearance;
+#[cfg(all(feature = "browser", target_arch = "wasm32"))]
+pub mod browser;
 pub mod dialog_outcome;
 #[cfg(all(feature = "dialogs", not(target_arch = "wasm32")))]
 pub mod dialogs;

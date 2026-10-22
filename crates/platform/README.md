@@ -10,6 +10,7 @@ third-party dependencies. Enable only the services a host uses.
 | `dialogs` | Reserve waiting workers before eager UI-thread native picker creation; serial requests, failure delivery and completion wakeups. The backend factory belongs to the app. |
 | `egui` | Combine with `dialogs` for the deferred-close guard or with `appearance` for native theme mapping. |
 | `appearance` | Linux/BSD XDG desktop preference observation, owned cancellable subscriptions, bounded reads/helper capture, legacy compatibility and reconnect. |
+| `browser` | Wasm download link/object URL ownership, cleanup on setup failure or abandonment, and cleanup timer registration before clicking. |
 
 
 ## Native dialogs
@@ -63,8 +64,18 @@ It does not change styles or theme preference. Hosts whose custom palette is man
 native window follows System keep observation active for the native window. Native decoration
 rendering still depends on the window manager and requires visible acceptance testing.
 
+## Browser downloads
+
+`PreparedDownload::{bytes,blob}` owns a detached anchor and URL until click or drop. Call `click`
+with the application's positive URL lifetime; setup/attachment/timer failure releases resources
+without clicking. A successful return means a click was issued, not that the browser saved a file.
+Applications own names, MIME types, pacing, capture hooks and user activation. File System Access
+and print iframe lifetimes remain separate. This service has no native filesystem semantics.
+
 ## Integration
 
 Enable only the services a host uses. Applications retain palettes, settings, document identity,
 close policy, filters, names, MIME types and native command routing. Existing craft-settings,
-craft-atomic, craft-print, craft-docpath and craft-quit remain canonical.
+craft-atomic, craft-print, craft-docpath and craft-quit remain canonical. `craft-window` owns
+decoration selection and window-button layout; appearance observation and native color hints here
+do not choose a frame or draw an application header.

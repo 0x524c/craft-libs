@@ -14,6 +14,7 @@ workspace = true
 default = []
 dialogs = []
 appearance = ["dep:zbus", "dep:futures-lite", "dep:async-channel", "dep:async-io", "dep:async-process"]
+browser = ["dep:wasm-bindgen", "dep:js-sys", "dep:web-sys"]
 egui = ["dep:egui"]
 
 [dependencies]
@@ -25,3 +26,12 @@ futures-lite = { version = "2", optional = true }
 async-channel = { version = "2", optional = true }
 async-io = { version = "2", optional = true }
 async-process = { version = "2", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlElement", "HtmlAnchorElement", "Blob", "BlobPropertyBag", "Url", "Node", "Element"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+wasm-bindgen-futures = "0.4"

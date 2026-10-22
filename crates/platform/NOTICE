@@ -1,7 +1,7 @@
 Platform lifecycle source provenance
 
 The optional crates/platform services adapt the preserved local platform candidate
-9b135779a1e7136438a217c18afe1693ea23f1ab (dialog outcomes and lifecycle),
+9b135779a1e7136438a217c18afe1693ea23f1ab (dialog outcomes and browser resource ownership),
 and current application implementations:
 - PdfCraft crates/platform/src/desktop_theme.rs, a8cd797a917b1007544575c7280c9a0ce6a17e8f.
 - CADCraft apps/cadcraft/src/desktop_theme.rs, 0cc66ad3066e71f2c3d4cacb7de905e79ba1c95b.
