@@ -146,7 +146,7 @@ fn drag_bar_draws_no_mark_at_rest_and_a_group_drag_paints_a_filled_labeled_ghost
 fn double_click_on_a_tab_of_a_minimized_group_ends_expanded() {
     let layout = Layout { root: Some(tabs(&[1], 0)), floating: vec![Floating::single(vec![5, 6], 1, [80.0, 70.0, 300.0, 220.0])] };
     let mut d = Driver::new(layout);
-    let minimized = |d: &Driver| d.layout.floating[0].groups[0].minimized;
+    let minimized = |d: &Driver| d.layout.floating[0].minimized;
     let active = d.tab(6).center();
     d.click(active);
     d.click(active);
@@ -157,7 +157,7 @@ fn double_click_on_a_tab_of_a_minimized_group_ends_expanded() {
     d.click(other);
     d.click(other);
     assert!(!minimized(&d));
-    assert_eq!(d.layout.floating[0].groups[0].active_panel(), Some(&5));
+    assert_eq!(d.layout.floating[0].groups()[0].active_panel(), Some(&5));
 }
 
 #[test]
@@ -364,8 +364,8 @@ fn for_zone_maps_side_zones_onto_columns_groups_and_splits() {
     assert_eq!(zone(2, Zone::Right, true), Ok(Placement::Column { after: false }));
     assert_eq!(zone(4, Zone::Bottom, false), Ok(Placement::Group { below: true, height: None }));
     assert_eq!(zone(2, Zone::Center, false), Ok(Placement::Split(Zone::Center)));
-    assert_eq!(zone(5, Zone::Top, false), Ok(Placement::Group { below: false, height: None }));
-    assert_eq!(zone(5, Zone::Left, false), Err(DockError::InvalidPlacement));
+    assert_eq!(zone(5, Zone::Top, false), Ok(Placement::Split(Zone::Top)));
+    assert_eq!(zone(5, Zone::Left, false), Ok(Placement::Split(Zone::Left)));
     assert_eq!(zone(0, Zone::Left, true), Ok(Placement::Split(Zone::Left)));
     assert_eq!(zone(9, Zone::Left, false), Err(DockError::MissingTarget));
 

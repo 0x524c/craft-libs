@@ -37,8 +37,12 @@ their sides.
 | `Stack` | Accordion entries, each open or closed, with an optional height. |
 | `Dock` | A side and its columns. A `Column` has `Group`s, a width, and `iconic`. |
 
-A `Floating` window has one or more stacked groups, a rect, and an optional native-window rect.
-`Floating::single` makes a window with one group; `panels()` and `contains()` read it.
+A `Floating` window holds a tree like the docked layout's (`root`: splits, tab groups and
+accordions, no docks), a rect, an optional native-window rect and `minimized`.
+`Floating::single` makes a window with one group and `Floating::new` one with a tree; `panels()`
+and `contains()` read it. Saved layouts keep loading: a window stored as one group (v1) or as a
+stack of groups loads as that group or as a vertical split of the stacked groups, sized by their
+heights.
 
 `P` is the app's panel id: stable, not localized, `Clone + Eq + Hash`. The renderer also needs
 `Debug + Send + Sync + 'static`. A panel occurs at most once in a layout.
@@ -68,12 +72,16 @@ layout.apply(Action::Move {
 - Containers take different placements: a dock column takes groups and columns, not splits.
   `Placement::for_zone(layout, anchor, zone, right_to_left)` maps a left, right, top, bottom or
   center zone onto what the anchor's container takes: a split in the frame tree, a new column on
-  that side or a new group above or below in a dock, a group above or below in a floating window.
+  that side or a new group above or below in a dock. A floating window takes splits as the
+  docked layout does; `Placement::Group` on a floating anchor splits its group above or below.
 - A side split zone puts what moves in a new half-size split of the anchor's frame, and no
   other frame changes size. The new split has its own divider, and the drop preview shows the
   half the new frame takes.
-- Other actions select, minimize, collapse to icons, resize splits, columns and groups, and move
-  a floating window to its own OS window (`SetNative`, feature `native-windows`).
+- Other actions select, minimize, collapse to icons, resize splits (`ResizeSplit` in the docked
+  layout, `ResizeWindowSplit` in the floating window holding a panel), columns and groups, and
+  move a floating window to its own OS window (`SetNative`, feature `native-windows`).
+- A move between windows (docked to floating, floating to floating) is one action, checked as a
+  whole like any other.
 
 Every action checks the whole result before it commits. A bad target, a duplicate id, a stale
 split path or invalid geometry returns a `DockError` and leaves the layout unchanged. The source
@@ -188,6 +196,14 @@ A flyout fits its content the same way, without the title bar.
   the whole group. A column bar drags a column. A floating window's title bar drags the window;
   with `title_bar_docks` a release over a target docks the whole window there, else it only
   moves.
+- Inside a floating window, tabs and drag bars drag and dock as they do in the docked layout,
+  into any window. Its groups split, join and resize like frames, with dividers and four-way
+  handles (`Divider::WindowSplit` and `Divider::WindowIntersection`, named by the window's first
+  panel). Double-clicking the title bar minimizes the window to its title bar, or to the tab strip
+  of its only group; so does double-clicking that group's strip. The group menu's float item
+  floats one group of a window that has several. Closing the window closes its panels; each
+  reopens where it was while the window or its neighbour in it is open, else in a window at the
+  window's last rect.
 - A movable floating window resizes from every edge and corner. The top edge and corners are a
   4 pt band above the title bar (`chrome::RESIZE_BAND`), so they take no moves and no clicks on
   the title bar's buttons. A resize keeps the opposite edges in place and stays within the size

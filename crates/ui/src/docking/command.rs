@@ -369,7 +369,7 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
                 let any = given.iter().any(Option::is_some);
                 let unit = Unit::of(*group, *column);
                 let lone = layout.floating.iter().any(|w| w.contains(panel) && w.panels().count() == 1);
-                let whole = layout.floating.iter().any(|w| w.contains(panel) && w.groups.len() == 1);
+                let whole = layout.floating.iter().any(|w| w.contains(panel) && matches!(w.root, super::Node::Tabs { .. } | super::Node::Stack { .. }));
                 // The rect a drag would float the unit at, inside the area.
                 let placed = || {
                     let docked = layout.location(panel).ok().and_then(|l| l.group).and_then(|g| g.column).map(|c| c.width);
@@ -450,6 +450,7 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
                         Some(super::Node::Stack { entries }) => entries.iter().any(|e| &e.panel == panel && !e.open),
                         _ => false,
                     },
+                    Place::Floating { window, .. } => layout.floating.get(*window).is_some_and(|w| w.minimized),
                     place => layout.group(place).is_some_and(|g| g.minimized),
                 };
                 one(Action::SetMinimized { panel: panel.clone(), minimized: minimized.unwrap_or(!current) })
@@ -563,14 +564,14 @@ fn last_column<P: Clone + Eq + Hash>(layout: &Layout<P>, side: Side) -> Option<V
 }
 
 fn group_len<P: Clone + Eq + Hash>(layout: &Layout<P>, panel: &P) -> Option<usize> {
-    layout.place(panel).and_then(|place| layout.group(&place)).map(|g| g.panels.len())
+    layout.members(panel, super::dock_model::Unit::Group).ok().map(|members| members.len())
 }
 
 /// The panels that move with `panel`.
 fn members<P: Clone + Eq + Hash>(layout: &Layout<P>, panel: &P, unit: Unit) -> Vec<P> {
     match unit {
         Unit::Panel => vec![panel.clone()],
-        Unit::Group => layout.place(panel).and_then(|place| layout.group(&place)).map(|g| g.panels.clone()).unwrap_or_default(),
+        Unit::Group => layout.members(panel, super::dock_model::Unit::Group).unwrap_or_default(),
         Unit::Column => match layout.place(panel) {
             Some(Place::Dock { path, column, .. }) => match layout.root.as_ref().and_then(|root| super::dock_model::node_at(root, &path)) {
                 Some(super::Node::Dock { columns, .. }) => {

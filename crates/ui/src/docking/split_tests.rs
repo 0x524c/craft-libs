@@ -506,3 +506,107 @@ fn the_title_bar_moves_a_floating_window_without_docking() {
     assert!(window.rect[0] < 1000.0 && window.rect[1] > 400.0, "moved towards the drop: {:?}", window.rect);
     assert_eq!(d.layout.root, editing().root);
 }
+
+fn panel_set(layout: &Layout<u32>) -> Vec<u32> {
+    let mut panels: Vec<u32> = layout.panels().into_iter().copied().collect();
+    panels.sort_unstable();
+    panels
+}
+
+fn window_of(layout: &Layout<u32>, panel: u32) -> &Floating<u32> {
+    layout.floating.iter().find(|w| w.contains(&panel)).unwrap_or_else(|| panic!("{panel} does not float: {layout:?}"))
+}
+
+#[test]
+fn tabs_and_drag_bars_dock_into_a_floating_window_and_out_of_it() {
+    let mut d = film();
+    let all = panel_set(&d.layout);
+    let info = group(&d, INFO);
+    let out = d.drag(tab(&d, PROGRAM), pos2(info.left() + 10.0, info.center().y + 13.0));
+    assert_eq!(out.actions, vec![Action::Move { panel: PROGRAM, anchor: INFO, placement: Placement::Split(Zone::Left) }]);
+    d.settle();
+    assert!(matches!(window_of(&d.layout, INFO).root, Node::Split { axis: SplitAxis::Horizontal, .. }), "{:?}", d.layout.floating);
+    let (program, info) = (group(&d, PROGRAM), group(&d, INFO));
+    assert!(program.right() < info.left() && (program.width() - info.width()).abs() < 2.0, "{program:?} {info:?}");
+
+    // A drag bar inside the window moves its group to a group of the main area.
+    let timeline = group(&d, TIMELINE);
+    let bar = d.hit(&Hit::DragBar(INFO)).unwrap().center();
+    let out = d.drag(bar, timeline.center() + vec2(0.0, 13.0));
+    assert_eq!(out.actions, vec![Action::MoveGroup { panel: INFO, to: Target::At { anchor: TIMELINE, placement: Placement::Split(Zone::Center) } }]);
+    d.settle();
+    assert_eq!(window_of(&d.layout, PROGRAM).root, tabs(&[PROGRAM]));
+    assert_eq!(panel_set(&d.layout), all);
+}
+
+#[test]
+fn a_floating_window_tree_resizes_by_its_dividers_and_intersections() {
+    let mut layout = editing();
+    let tree = hsplit(0.5, tabs(&[INFO]), split(SplitAxis::Vertical, 0.5, tabs(&[50]), tabs(&[51])));
+    layout.floating = vec![Floating::new(tree, [700.0, 100.0, 600.0, 500.0])];
+    let mut d = driver(layout, Film::default());
+    let ratios = |d: &Driver| match &d.layout.floating[0].root {
+        Node::Split { size: SplitSize::Ratio(outer), second, .. } => match &**second {
+            Node::Split { size: SplitSize::Ratio(inner), .. } => (*outer, *inner),
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    let outer = Hit::Divider(Divider::WindowSplit(INFO, Vec::new()));
+    let inner = Hit::Divider(Divider::WindowSplit(INFO, vec![true]));
+    for (hit, delta) in [(&outer, vec2(30.0, 0.0)), (&outer, vec2(-60.0, 0.0)), (&inner, vec2(0.0, 30.0)), (&inner, vec2(0.0, -60.0))] {
+        let before = ratios(&d);
+        drag_hit(&mut d, hit.clone(), delta);
+        let after = ratios(&d);
+        let moved = if hit == &outer { (after.0 - before.0) * delta.x } else { (after.1 - before.1) * delta.y };
+        assert!(moved > 0.0, "{hit:?} by {delta:?}: {before:?} to {after:?}");
+        assert_eq!(d.layout.root, editing().root, "the main area keeps its sizes");
+    }
+    // The four-way handle where the inner divider meets the outer one moves both.
+    let before = ratios(&d);
+    drag_hit(&mut d, Hit::Divider(Divider::WindowIntersection(INFO, Vec::new(), vec![true])), vec2(25.0, 25.0));
+    let after = ratios(&d);
+    assert!(after.0 > before.0 && after.1 > before.1, "{before:?} to {after:?}");
+}
+
+#[test]
+fn moves_between_windows_are_one_action_and_lose_no_panel() {
+    let mut layout = editing();
+    layout.floating.push(Floating::single(vec![50, 51], 0, [200.0, 520.0, 320.0, 260.0]));
+    let mut d = driver(layout, Film::default());
+    let all = panel_set(&d.layout);
+    // Floating to floating: a whole group, by its drag bar, beside Info.
+    let info = group(&d, INFO);
+    let bar = d.hit(&Hit::DragBar(50)).unwrap().center();
+    let out = d.drag(bar, pos2(info.right() - 10.0, info.center().y + 13.0));
+    assert_eq!(out.actions, vec![Action::MoveGroup { panel: 50, to: Target::At { anchor: INFO, placement: Placement::Split(Zone::Right) } }]);
+    d.settle();
+    assert_eq!(d.layout.floating.len(), 1);
+    assert_eq!(panel_set(&d.layout), all);
+    // Main to floating: a tab joins the window's group.
+    let fifty = group(&d, 50);
+    let out = d.drag(tab(&d, SOURCE[1]), fifty.center() + vec2(0.0, 13.0));
+    assert_eq!(out.actions, vec![Action::Move { panel: SOURCE[1], anchor: 50, placement: Placement::Split(Zone::Center) }]);
+    d.settle();
+    assert!(window_of(&d.layout, 50).contains(&SOURCE[1]));
+    assert_eq!(panel_set(&d.layout), all);
+    assert_eq!(d.layout.validate(), Ok(()));
+}
+
+#[test]
+fn a_closed_floating_window_closes_its_panels_and_each_reopens_where_it_was() {
+    let mut layout = editing();
+    let tree = hsplit(0.4, tabs(&[INFO]), tabs(&[50]));
+    layout.floating = vec![Floating::new(tree.clone(), [700.0, 100.0, 600.0, 400.0])];
+    let mut d = driver(layout, Film::default());
+    let locations: Vec<_> = [INFO, 50].into_iter().map(|p| (p, d.layout.location(&p).unwrap())).collect();
+    let close = d.hit(&Hit::Close(INFO)).unwrap().center();
+    let out = d.click(close);
+    assert_eq!(out.actions, vec![Action::CloseWindow { panel: INFO }]);
+    assert!(d.layout.floating.is_empty() && !d.layout.contains(&50));
+    for (panel, location) in &locations {
+        d.layout.restore(*panel, location).unwrap();
+    }
+    let window = &d.layout.floating[0];
+    assert_eq!((&window.root, window.rect), (&tree, [700.0, 100.0, 600.0, 400.0]));
+}

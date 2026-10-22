@@ -5,7 +5,7 @@ use std::{borrow::Cow, collections::HashMap, fmt::Debug, hash::Hash};
 
 use egui::{Context, Pos2, Rect, pos2, vec2};
 
-use super::{GroupKind, Renderer, floating::StackHit, group::TabGroup};
+use super::{GroupKind, Renderer, floating::WindowHit, group::TabGroup};
 use crate::docking::{
     Action, Column, DockContent, DockEvent, Floating, Group, HidePanels, Layout, Node, Zone,
     dock_model::{Place, node_at},
@@ -18,12 +18,14 @@ const HINT_OFFSET: f32 = 28.0;
 pub(in crate::docking) struct FrameState<P> {
     /// View path to layout path of each split, when the view is not the layout.
     paths: Option<HashMap<Vec<bool>, Vec<bool>>>,
+    /// The same for each floating window's splits, by the window's first shown panel.
+    window_paths: HashMap<P, HashMap<Vec<bool>, Vec<bool>>>,
     /// The view node whose rect is the outer edge area; none while a frame is maximized.
     edge_path: Option<Vec<bool>>,
     pub(super) edge: Option<Rect>,
     pub(super) maximized: Option<P>,
-    /// Floating stacks as drawn, back to front.
-    pub(super) stacks: Vec<StackHit<P>>,
+    /// Floating windows as drawn, back to front.
+    pub(super) windows: Vec<WindowHit<P>>,
 }
 
 /// The layout as shown: a maximized frame alone, and hidden panels left out.
@@ -48,7 +50,7 @@ pub(in crate::docking) fn view<'a, P: Clone + Eq + Hash>(
         }
         Place::Floating { .. } => None,
     });
-    let mut state = FrameState { paths: None, edge_path: None, edge: None, maximized: None, stacks: Vec::new() };
+    let mut state = FrameState { paths: None, window_paths: HashMap::new(), edge_path: None, edge: None, maximized: None, windows: Vec::new() };
     if maximized.is_none() && matches!(hide, HidePanels::None) {
         state.edge_path = Some(layout.edge_path());
         return (Cow::Borrowed(layout), state);
@@ -61,14 +63,16 @@ pub(in crate::docking) fn view<'a, P: Clone + Eq + Hash>(
         }
         None => {
             let root = layout.root.as_ref().and_then(|root| prune(root, Vec::new(), Vec::new(), &hidden, &mut paths));
-            let floating = layout
-                .floating
-                .iter()
-                .filter_map(|window| {
-                    let groups: Vec<_> = window.groups.iter().filter_map(|g| prune_group(g, &hidden)).collect();
-                    (!groups.is_empty()).then(|| Floating { groups, rect: window.rect, native: window.native })
-                })
-                .collect();
+            let mut floating = Vec::new();
+            for window in &layout.floating {
+                let mut paths = HashMap::new();
+                let Some(root) = prune(&window.root, Vec::new(), Vec::new(), &hidden, &mut paths) else { continue };
+                let shown = Floating { root, ..window.clone() };
+                if let Some(key) = shown.panels().next() {
+                    state.window_paths.insert(key.clone(), paths);
+                }
+                floating.push(shown);
+            }
             Layout { root, floating }
         }
     };
@@ -148,14 +152,18 @@ fn prune_group<P: Clone + PartialEq>(group: &Group<P>, hidden: &dyn Fn(&P) -> bo
 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     pub(super) fn note_edge(&mut self, path: &[bool], rect: Rect) {
-        if self.frame.edge_path.as_deref() == Some(path) {
+        if self.tree.is_none() && self.frame.edge_path.as_deref() == Some(path) {
             self.frame.edge = Some(rect);
         }
     }
 
-    /// The layout path of a split drawn at view path `path`.
+    /// The layout path of a split drawn at view path `path`, in the tree being drawn.
     pub(super) fn original_path(&self, path: &[bool]) -> Vec<bool> {
-        self.frame.paths.as_ref().and_then(|paths| paths.get(path).cloned()).unwrap_or_else(|| path.to_vec())
+        let paths = match &self.tree {
+            None => self.frame.paths.as_ref(),
+            Some((key, _)) => self.frame.window_paths.get(key),
+        };
+        paths.and_then(|paths| paths.get(path).cloned()).unwrap_or_else(|| path.to_vec())
     }
 
     /// The outer edge band under the pointer (P8): top and bottom, and left and right with
@@ -202,7 +210,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// Ctrl/Cmd held when a split-tree tab drag starts: the drop floats (S9).
     pub(super) fn latch_undock(&self, ctx: &Context, kind: Option<GroupKind>) {
         let command = ctx.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.mac_cmd);
-        if self.style.command_press_floats && kind == Some(GroupKind::Frame) && command {
+        if self.style.command_press_floats && matches!(kind, Some(GroupKind::Frame | GroupKind::Floating { .. })) && command {
             ctx.data_mut(|d| {
                 if let Some(drag) = d.get_temp::<crate::docking::Drag<P>>(self.id.with("drag")) {
                     d.insert_temp(self.id.with("drag"), crate::docking::Drag { undock: true, ..drag });

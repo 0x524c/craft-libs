@@ -360,7 +360,7 @@ fn column_bar_drag_moves_the_column_and_away_from_a_dock_floats_its_groups() {
     let out = d.step(vec![button(pos2(560.0, 300.0), false)]);
     assert!(matches!(moved(&out.actions), Some((2, Target::Float { .. }))), "{:?}", out.actions);
     assert_eq!(columns(&d.layout, Side::Start), vec![vec![vec![5]]]);
-    assert_eq!(d.layout.floating[0].groups, vec![group(&[2]), group(&[3])]);
+    assert_eq!(d.layout.floating[0].groups(), vec![group(&[2]), group(&[3])]);
 }
 
 #[test]

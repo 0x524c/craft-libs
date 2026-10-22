@@ -71,7 +71,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         // and size, which are read back below.
         let spawn_key = self.id.with(("native-spawn", &first));
         let spawn = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(spawn_key, || sanitized(rect)));
-        let title = window.groups.first().and_then(|g| g.active_panel()).map(|p| self.label_of(p)).unwrap_or_default();
+        let title = crate::docking::dock_model::first_active(&window.root).map(|p| self.label_of(p)).unwrap_or_default();
         let builder = ViewportBuilder::default()
             .with_title(title)
             .with_position([spawn[0], spawn[1]])
@@ -80,11 +80,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if self.activation.as_ref().is_some_and(|panel| window.contains(panel)) {
             ctx.send_viewport_cmd_to(viewport, ViewportCommand::Focus);
         }
-        let (targets, stacks) = (self.targets.len(), self.frame.stacks.len());
+        let (targets, windows) = (self.targets.len(), self.frame.windows.len());
         let (closed, placed) = ctx.show_viewport_immediate(viewport, builder, |ui, class| {
             let rect = ui.max_rect();
             ui.painter().rect_filled(rect, 0.0, self.style.floating_background);
-            self.floating_stack(ui, &window.groups, rect, rect);
+            self.floating_body(ui, window, rect, rect);
             // An embedded fallback reads the main window's input: its close request and place
             // are not this window's.
             if matches!(class, ViewportClass::Immediate | ViewportClass::Deferred) {
@@ -95,7 +95,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         });
         // Targets in another OS window are in its coordinates, and no drag crosses windows.
         self.targets.truncate(targets);
-        self.frame.stacks.truncate(stacks);
+        self.frame.windows.truncate(windows);
         ctx.data_mut(|d| {
             if d.get_temp::<Drag<P>>(self.id.with("drag")).is_some_and(|drag| window.contains(&drag.panel)) {
                 d.remove::<Drag<P>>(self.id.with("drag"));

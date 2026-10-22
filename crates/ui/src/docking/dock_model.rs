@@ -1,4 +1,4 @@
-//! Docks, columns, groups and floating stacks: their types and the structural edits behind
+//! Docks, columns, groups and floating windows: their types and the structural edits behind
 //! group, column and window moves.
 //!
 //! A group, column or floating window is named by a panel it contains. Edits run on a proposed
@@ -6,7 +6,7 @@
 
 use std::{collections::HashMap, hash::Hash};
 
-use super::model::{DockError, Floating, Layout, MAX_DEPTH, MAX_NODES, Node, Placement, Zone, valid_height, valid_rect, valid_width};
+use super::model::{DockError, Floating, Layout, MAX_DEPTH, MAX_NODES, MAX_PANELS, Node, Placement, Zone, valid_height, valid_rect, valid_width};
 use crate::layout::{SplitAxis, SplitSize};
 
 /// Width of a new column when nothing better is known.
@@ -25,7 +25,7 @@ pub enum Side {
     End,
 }
 
-/// Tabs that move, minimize and size together, in a dock column or a floating stack.
+/// Tabs that move, minimize and size together in a dock column.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(bound(deserialize = "P: serde::Deserialize<'de>")))]
@@ -92,9 +92,8 @@ impl<P: Clone + Eq + Hash> Placement<P> {
     ///
     /// | Anchor in | `Center` | `Top`, `Bottom` | `Left`, `Right` |
     /// |---|---|---|---|
-    /// | the split tree | [`Placement::Split`] | `Split` | `Split` |
+    /// | the split tree or a floating window | [`Placement::Split`] | `Split` | `Split` |
     /// | a dock column | `Split(Center)` (join as tabs) | [`Placement::Group`] above or below | [`Placement::Column`] on that side |
-    /// | a floating window | `Split(Center)` | `Group` above or below | [`DockError::InvalidPlacement`] |
     ///
     /// A dock's `Column { after }` counts from its window edge, which depends on the dock's
     /// side and `right_to_left` (see [`Side`]); this picks `after` so the new column lands on
@@ -102,9 +101,8 @@ impl<P: Clone + Eq + Hash> Placement<P> {
     pub fn for_zone(layout: &Layout<P>, anchor: &P, zone: Zone, right_to_left: bool) -> Result<Self, DockError> {
         let place = layout.place(anchor).ok_or(DockError::MissingTarget)?;
         Ok(match (place, zone) {
-            (Place::Node(_), zone) | (_, zone @ Zone::Center) => Placement::Split(zone),
-            (Place::Dock { .. } | Place::Floating { .. }, Zone::Top | Zone::Bottom) => Placement::Group { below: zone == Zone::Bottom, height: None },
-            (Place::Floating { .. }, _) => return Err(DockError::InvalidPlacement),
+            (Place::Node(_) | Place::Floating { .. }, zone) | (_, zone @ Zone::Center) => Placement::Split(zone),
+            (Place::Dock { .. }, Zone::Top | Zone::Bottom) => Placement::Group { below: zone == Zone::Bottom, height: None },
             (Place::Dock { path, .. }, _) => {
                 let side = match layout.root.as_ref().and_then(|root| node_at(root, &path)) {
                     Some(Node::Dock { side, .. }) => *side,
@@ -128,7 +126,7 @@ pub enum PanelState {
     Front,
 }
 
-/// The group a closed panel was in, when that group was in a dock or a floating stack.
+/// The group a closed panel was in, when that group was in a dock.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GroupLocation {
@@ -157,10 +155,23 @@ pub(super) enum Place {
         column: usize,
         group: usize,
     },
+    /// A `Tabs` or `Stack` node of a floating window's tree.
     Floating {
         window: usize,
-        group: usize,
+        path: Vec<bool>,
     },
+}
+
+impl Place {
+    /// The tree (`None` for the docked layout, else a floating window) and the path of a
+    /// `Tabs` or `Stack` node.
+    pub(super) fn tree_path(&self) -> Option<(Option<usize>, &[bool])> {
+        match self {
+            Place::Node(path) => Some((None, path)),
+            Place::Floating { window, path } => Some((Some(*window), path)),
+            Place::Dock { .. } => None,
+        }
+    }
 }
 
 /// Which container a whole-container action names.
@@ -174,6 +185,10 @@ pub(super) enum Unit {
 /// Groups in transit, with the size and state of the container they came from.
 pub(super) struct Moving<P> {
     pub groups: Vec<Group<P>>,
+    /// A floating window's whole tree, whose leaves are `groups`. A split or a new window
+    /// takes the tree; docks take the groups.
+    pub node: Option<Node<P>>,
+    pub minimized: bool,
     pub width: Option<f32>,
     pub iconic: bool,
     pub iconic_width: Option<f32>,
@@ -183,7 +198,7 @@ pub(super) struct Moving<P> {
 
 impl<P> Moving<P> {
     pub fn group(group: Group<P>) -> Self {
-        Self { groups: vec![group], width: None, iconic: false, iconic_width: None, rect: None, native: None }
+        Self { groups: vec![group], node: None, minimized: false, width: None, iconic: false, iconic_width: None, rect: None, native: None }
     }
 
     fn into_column(self, width: f32) -> Column<P> {
@@ -205,6 +220,93 @@ pub(super) fn node_at_mut<'a, P>(mut node: &'a mut Node<P>, path: &[bool]) -> Op
         node = if *second_child { second } else { first };
     }
     Some(node)
+}
+
+/// Every `Tabs`, `Stack` and `Dock` node of a tree with its path, first to last. Stops at
+/// [`MAX_NODES`] for an invalid tree.
+pub(super) fn leaves<P>(root: &Node<P>) -> Vec<(&Node<P>, Vec<bool>)> {
+    let mut out = Vec::new();
+    let mut visit = vec![(root, Vec::new())];
+    let mut visited = 0usize;
+    while let Some((node, path)) = visit.pop() {
+        visited = visited.saturating_add(1);
+        if visited > MAX_NODES {
+            break;
+        }
+        match node {
+            Node::Split { first, second, .. } => {
+                let mut second_path = path.clone();
+                second_path.push(true);
+                let mut first_path = path;
+                first_path.push(false);
+                visit.push((second, second_path));
+                visit.push((first, first_path));
+            }
+            leaf => out.push((leaf, path)),
+        }
+    }
+    out
+}
+
+/// The panels of a tree in order, without recursion; at most [`MAX_PANELS`].
+pub(super) fn tree_panels<P>(root: &Node<P>) -> Vec<&P> {
+    let mut panels = Vec::new();
+    for (leaf, _) in leaves(root) {
+        let room = MAX_PANELS.saturating_sub(panels.len());
+        match leaf {
+            Node::Tabs { panels: group, .. } => panels.extend(group.iter().take(room)),
+            Node::Stack { entries } => panels.extend(entries.iter().map(|e| &e.panel).take(room)),
+            Node::Dock { columns, .. } => panels.extend(columns.iter().flat_map(|c| &c.groups).flat_map(|g| &g.panels).take(room)),
+            Node::Split { .. } => {}
+        }
+    }
+    panels
+}
+
+/// The shown panel of a tree's first group.
+pub(super) fn first_active<P>(root: &Node<P>) -> Option<&P> {
+    match leaves(root).into_iter().next()?.0 {
+        Node::Tabs { panels, active } => panels.get(*active),
+        Node::Stack { entries } => entries.first().map(|e| &e.panel),
+        Node::Split { .. } | Node::Dock { .. } => None,
+    }
+}
+
+/// The groups of a tree, first to last: what a dock column takes from a floating window.
+pub(super) fn tree_groups<P: Clone>(root: &Node<P>) -> Vec<Group<P>> {
+    let mut groups = Vec::new();
+    for (leaf, _) in leaves(root) {
+        match leaf {
+            Node::Tabs { panels, active } => groups.push(Group::new(panels.clone(), *active)),
+            Node::Stack { entries } => groups.push(Group::new(entries.iter().map(|e| e.panel.clone()).collect(), 0)),
+            Node::Dock { columns, .. } => groups.extend(columns.iter().flat_map(|c| c.groups.iter().cloned())),
+            Node::Split { .. } => {}
+        }
+    }
+    groups
+}
+
+/// Groups stacked top to bottom as a tree: each group over a vertical split of the ones below
+/// it, sized by their heights, with an equal share where a group has none.
+pub(super) fn stack_tree<P>(groups: Vec<Group<P>>) -> Option<Node<P>> {
+    let height = |g: &Group<P>| g.height.filter(|h| h.is_finite() && *h > 0.0);
+    let known: Vec<f32> = groups.iter().filter_map(height).collect();
+    let share = if known.is_empty() { 1.0 } else { known.iter().sum::<f32>() / known.len() as f32 };
+    let weights: Vec<f32> = groups.iter().map(|g| height(g).unwrap_or(share)).collect();
+    let mut node = None;
+    let mut below = 0.0;
+    for (group, weight) in groups.into_iter().zip(weights).rev() {
+        let tabs = Node::Tabs { panels: group.panels, active: group.active };
+        node = Some(match node {
+            None => tabs,
+            Some(rest) => {
+                let ratio = (weight / (weight + below)).clamp(0.0, 1.0);
+                Node::Split { axis: SplitAxis::Vertical, size: SplitSize::Ratio(ratio), first: Box::new(tabs), second: Box::new(rest) }
+            }
+        });
+        below += weight;
+    }
+    node
 }
 
 /// Put `new` on the `zone` side of the frame at `path`: the frame splits into two halves and
@@ -230,28 +332,14 @@ fn splice<P>(panels: &mut Vec<P>, active: &mut usize, index: usize, new: Vec<P>,
 impl<P: Clone + Eq + Hash> Layout<P> {
     pub(super) fn place(&self, panel: &P) -> Option<Place> {
         for (w, window) in self.floating.iter().enumerate() {
-            if let Some(g) = window.groups.iter().position(|group| group.panels.contains(panel)) {
-                return Some(Place::Floating { window: w, group: g });
+            for (leaf, path) in leaves(&window.root) {
+                if leaf_holds(leaf, panel) {
+                    return Some(Place::Floating { window: w, path });
+                }
             }
         }
-        let mut visit: Vec<(&Node<P>, Vec<bool>)> = self.root.iter().map(|node| (node, Vec::new())).collect();
-        let mut visited = 0usize;
-        while let Some((node, path)) = visit.pop() {
-            visited = visited.saturating_add(1);
-            if visited > MAX_NODES {
-                return None;
-            }
-            match node {
-                Node::Split { first, second, .. } => {
-                    let mut second_path = path.clone();
-                    second_path.push(true);
-                    let mut first_path = path;
-                    first_path.push(false);
-                    visit.push((second, second_path));
-                    visit.push((first, first_path));
-                }
-                Node::Tabs { panels, .. } if panels.contains(panel) => return Some(Place::Node(path)),
-                Node::Stack { entries } if entries.iter().any(|e| &e.panel == panel) => return Some(Place::Node(path)),
+        for (leaf, path) in self.root.as_ref().map(leaves).unwrap_or_default() {
+            match leaf {
                 Node::Dock { columns, .. } => {
                     for (c, column) in columns.iter().enumerate() {
                         if let Some(g) = column.groups.iter().position(|group| group.panels.contains(panel)) {
@@ -259,7 +347,8 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                         }
                     }
                 }
-                Node::Tabs { .. } | Node::Stack { .. } => {}
+                leaf if leaf_holds(leaf, panel) => return Some(Place::Node(path)),
+                _ => {}
             }
         }
         None
@@ -268,52 +357,72 @@ impl<P: Clone + Eq + Hash> Layout<P> {
     /// [`Self::place`] of every panel, from one traversal: the renderer looks up many panels a
     /// frame.
     pub(super) fn places(&self) -> HashMap<P, Place> {
-        let mut places = HashMap::new();
-        for (w, window) in self.floating.iter().enumerate() {
-            for (g, group) in window.groups.iter().enumerate() {
-                for panel in &group.panels {
-                    places.entry(panel.clone()).or_insert(Place::Floating { window: w, group: g });
-                }
-            }
-        }
-        let mut visit: Vec<(&Node<P>, Vec<bool>)> = self.root.iter().map(|node| (node, Vec::new())).collect();
-        let mut visited = 0usize;
-        while let Some((node, path)) = visit.pop() {
-            visited = visited.saturating_add(1);
-            if visited > MAX_NODES {
-                break;
-            }
-            match node {
-                Node::Split { first, second, .. } => {
-                    let mut second_path = path.clone();
-                    second_path.push(true);
-                    let mut first_path = path;
-                    first_path.push(false);
-                    visit.push((second, second_path));
-                    visit.push((first, first_path));
-                }
+        fn note<P: Clone + Eq + Hash>(places: &mut HashMap<P, Place>, leaf: &Node<P>, place: &dyn Fn() -> Place) {
+            match leaf {
                 Node::Tabs { panels, .. } => {
                     for panel in panels {
-                        places.entry(panel.clone()).or_insert_with(|| Place::Node(path.clone()));
+                        places.entry(panel.clone()).or_insert_with(place);
                     }
                 }
                 Node::Stack { entries } => {
                     for entry in entries {
-                        places.entry(entry.panel.clone()).or_insert_with(|| Place::Node(path.clone()));
+                        places.entry(entry.panel.clone()).or_insert_with(place);
                     }
                 }
-                Node::Dock { columns, .. } => {
-                    for (c, column) in columns.iter().enumerate() {
-                        for (g, group) in column.groups.iter().enumerate() {
-                            for panel in &group.panels {
-                                places.entry(panel.clone()).or_insert_with(|| Place::Dock { path: path.clone(), column: c, group: g });
-                            }
+                _ => {}
+            }
+        }
+        let mut places = HashMap::new();
+        for (w, window) in self.floating.iter().enumerate() {
+            for (leaf, path) in leaves(&window.root) {
+                note(&mut places, leaf, &|| Place::Floating { window: w, path: path.clone() });
+            }
+        }
+        for (leaf, path) in self.root.as_ref().map(leaves).unwrap_or_default() {
+            if let Node::Dock { columns, .. } = leaf {
+                for (c, column) in columns.iter().enumerate() {
+                    for (g, group) in column.groups.iter().enumerate() {
+                        for panel in &group.panels {
+                            places.entry(panel.clone()).or_insert_with(|| Place::Dock { path: path.clone(), column: c, group: g });
                         }
                     }
                 }
+            } else {
+                note(&mut places, leaf, &|| Place::Node(path.clone()));
             }
         }
         places
+    }
+
+    /// The docked layout (`None`) or a floating window's tree.
+    pub(super) fn tree(&self, window: Option<usize>) -> Option<&Node<P>> {
+        match window {
+            None => self.root.as_ref(),
+            Some(window) => self.floating.get(window).map(|w| &w.root),
+        }
+    }
+
+    pub(super) fn tree_mut(&mut self, window: Option<usize>) -> Option<&mut Node<P>> {
+        match window {
+            None => self.root.as_mut(),
+            Some(window) => self.floating.get_mut(window).map(|w| &mut w.root),
+        }
+    }
+
+    /// The docked layout's tree, then each floating window's.
+    pub(super) fn trees_mut(&mut self) -> impl Iterator<Item = &mut Node<P>> {
+        self.root.iter_mut().chain(self.floating.iter_mut().map(|w| &mut w.root))
+    }
+
+    /// The `Tabs` or `Stack` node at a tree place.
+    pub(super) fn node_of(&self, place: &Place) -> Option<&Node<P>> {
+        let (window, path) = place.tree_path()?;
+        node_at(self.tree(window)?, path)
+    }
+
+    fn node_of_mut(&mut self, place: &Place) -> Option<&mut Node<P>> {
+        let (window, path) = place.tree_path()?;
+        node_at_mut(self.tree_mut(window)?, path)
     }
 
     pub(super) fn dock_path(&self, side: Side) -> Option<Vec<bool>> {
@@ -379,27 +488,37 @@ impl<P: Clone + Eq + Hash> Layout<P> {
         self.columns_mut(path)?.get_mut(*column)
     }
 
-    /// The dock or floating group at `place`; `None` for a `Tabs` or `Stack` node.
+    /// The dock group at `place`; `None` for a `Tabs` or `Stack` node.
     pub(super) fn group(&self, place: &Place) -> Option<&Group<P>> {
         match place {
-            Place::Node(_) => None,
             Place::Dock { group, .. } => self.column(place)?.groups.get(*group),
-            Place::Floating { window, group } => self.floating.get(*window)?.groups.get(*group),
+            Place::Node(_) | Place::Floating { .. } => None,
         }
     }
 
     pub(super) fn group_mut(&mut self, place: &Place) -> Option<&mut Group<P>> {
         match place {
-            Place::Node(_) => None,
             Place::Dock { group, .. } => self.column_mut(place)?.groups.get_mut(*group),
-            Place::Floating { window, group } => self.floating.get_mut(*window)?.groups.get_mut(*group),
+            Place::Node(_) | Place::Floating { .. } => None,
         }
     }
 
-    /// Remove the node at `path`; its parent split collapses into the sibling.
+    /// Remove the node at `path` of the docked layout; its parent split collapses into the
+    /// sibling.
     pub(super) fn take_node(&mut self, path: &[bool]) -> Option<Node<P>> {
-        let Some((second_child, parent_path)) = path.split_last() else { return self.root.take() };
-        let parent = self.root.as_mut().and_then(|root| node_at_mut(root, parent_path))?;
+        self.take_node_in(None, path)
+    }
+
+    /// [`Self::take_node`] in the docked layout (`None`) or a floating window, which closes
+    /// when its root goes.
+    fn take_node_in(&mut self, window: Option<usize>, path: &[bool]) -> Option<Node<P>> {
+        let Some((second_child, parent_path)) = path.split_last() else {
+            return match window {
+                None => self.root.take(),
+                Some(window) => (window < self.floating.len()).then(|| self.floating.remove(window).root),
+            };
+        };
+        let parent = self.tree_mut(window).and_then(|root| node_at_mut(root, parent_path))?;
         if !matches!(parent, Node::Split { .. }) {
             return None;
         }
@@ -421,7 +540,7 @@ impl<P: Clone + Eq + Hash> Layout<P> {
     pub(super) fn members(&self, panel: &P, unit: Unit) -> Result<Vec<P>, DockError> {
         let place = self.place(panel).ok_or(DockError::MissingPanel)?;
         match (unit, &place) {
-            (Unit::Group, Place::Node(path)) => match self.root.as_ref().and_then(|root| node_at(root, path)) {
+            (Unit::Group, Place::Node(_) | Place::Floating { .. }) => match self.node_of(&place) {
                 Some(Node::Tabs { panels, .. }) => Ok(panels.clone()),
                 Some(Node::Stack { .. }) => Ok(vec![panel.clone()]),
                 _ => Err(DockError::MissingPanel),
@@ -450,20 +569,32 @@ impl<P: Clone + Eq + Hash> Layout<P> {
     fn take_group(&mut self, panel: &P) -> Result<Moving<P>, DockError> {
         let place = self.place(panel).ok_or(DockError::MissingPanel)?;
         match place {
-            Place::Node(path) => {
-                if let Some(Node::Stack { entries }) = self.root.as_mut().and_then(|root| node_at_mut(root, &path))
+            Place::Node(_) | Place::Floating { .. } => {
+                let (window, path) = place.tree_path().map(|(w, p)| (w, p.to_vec())).ok_or(DockError::MissingPanel)?;
+                // A group leaving a floating window keeps its width; the window's only group
+                // takes the window's rect along.
+                let source = window.and_then(|w| self.floating.get(w)).map(|w| (w.rect, w.native, w.minimized));
+                let whole = |moving: Moving<P>| match source {
+                    Some((rect, native, minimized)) if path.is_empty() => {
+                        Moving { width: rect.get(2).copied(), rect: Some(rect), native, minimized, ..moving }
+                    }
+                    Some((rect, ..)) => Moving { width: rect.get(2).copied(), ..moving },
+                    None => moving,
+                };
+                if let Some(Node::Stack { entries }) = self.node_of_mut(&place)
                     && entries.len() > 1
                     && let Some(index) = entries.iter().position(|e| &e.panel == panel)
                 {
                     let entry = entries.remove(index);
                     let group = Group { panels: vec![entry.panel], active: 0, minimized: !entry.open, height: entry.height };
-                    return Ok(Moving::group(group));
+                    let moving = whole(Moving::group(group));
+                    return Ok(Moving { rect: None, native: None, ..moving });
                 }
-                match self.take_node(&path) {
-                    Some(Node::Tabs { panels, active }) => Ok(Moving::group(Group::new(panels, active))),
+                match self.take_node_in(window, &path) {
+                    Some(Node::Tabs { panels, active }) => Ok(whole(Moving::group(Group::new(panels, active)))),
                     Some(Node::Stack { mut entries }) if entries.len() == 1 => {
                         let entry = entries.remove(0);
-                        Ok(Moving::group(Group { panels: vec![entry.panel], active: 0, minimized: !entry.open, height: entry.height }))
+                        Ok(whole(Moving::group(Group { panels: vec![entry.panel], active: 0, minimized: !entry.open, height: entry.height })))
                     }
                     _ => Err(DockError::MissingPanel),
                 }
@@ -484,21 +615,6 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                 }
                 Ok(Moving { width: Some(width), ..Moving::group(taken) })
             }
-            Place::Floating { window, group } => {
-                let source = self.floating.get_mut(window).ok_or(DockError::MissingPanel)?;
-                if group >= source.groups.len() {
-                    return Err(DockError::MissingPanel);
-                }
-                let taken = source.groups.remove(group);
-                let rect = source.rect;
-                let native = source.native;
-                let whole = source.groups.is_empty();
-                if whole {
-                    self.floating.remove(window);
-                }
-                let width = rect.get(2).copied();
-                Ok(Moving { width, rect: whole.then_some(rect), native: native.filter(|_| whole), ..Moving::group(taken) })
-            }
         }
     }
 
@@ -514,6 +630,8 @@ impl<P: Clone + Eq + Hash> Layout<P> {
         }
         Ok(Moving {
             groups: taken.groups,
+            node: None,
+            minimized: false,
             width: Some(taken.width),
             iconic: taken.iconic,
             iconic_width: taken.iconic_width,
@@ -529,7 +647,9 @@ impl<P: Clone + Eq + Hash> Layout<P> {
         }
         let taken = self.floating.remove(window);
         Ok(Moving {
-            groups: taken.groups,
+            groups: tree_groups(&taken.root),
+            node: Some(taken.root),
+            minimized: taken.minimized,
             width: taken.rect.get(2).copied(),
             iconic: false,
             iconic_width: None,
@@ -553,7 +673,11 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                 if !valid_rect(rect) {
                     return Err(DockError::InvalidGeometry);
                 }
-                self.floating.push(Floating { groups: moving.groups, rect, native });
+                let root = match moving.node {
+                    Some(node) => node,
+                    None => stack_tree(moving.groups).ok_or(DockError::MissingPanel)?,
+                };
+                self.floating.push(Floating { root, rect, native, minimized: moving.minimized });
                 Ok(())
             }
             Target::NewDock { side } => {
@@ -589,10 +713,21 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                         self.merge(&place, index, moving)
                     }
                     Placement::Split(zone) => {
-                        let Place::Node(path) = place else { return Err(DockError::InvalidPlacement) };
-                        let (panels, active) = flatten(moving.groups);
-                        let root = self.root.as_mut().ok_or(DockError::MissingTarget)?;
-                        if split_frame(root, &path, Node::Tabs { panels, active }, zone) { Ok(()) } else { Err(DockError::MissingTarget) }
+                        let (window, path) = place.tree_path().ok_or(DockError::InvalidPlacement)?;
+                        let new = match moving.node {
+                            Some(node) => node,
+                            None => {
+                                let (panels, active) = flatten(moving.groups);
+                                Node::Tabs { panels, active }
+                            }
+                        };
+                        let root = self.tree_mut(window).ok_or(DockError::MissingTarget)?;
+                        if split_frame(root, path, new, zone) { Ok(()) } else { Err(DockError::MissingTarget) }
+                    }
+                    // A floating window is a tree: a group above or below splits the anchor's group.
+                    Placement::Group { below, .. } if matches!(place, Place::Floating { .. }) => {
+                        let zone = if below { Zone::Bottom } else { Zone::Top };
+                        self.insert_moving(moving, Target::At { anchor, placement: Placement::Split(zone) })
                     }
                     Placement::Group { below, height } => {
                         if !valid_height(height) {
@@ -604,10 +739,7 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                         }
                         let (groups, index) = match &place {
                             Place::Dock { group, .. } => (&mut self.column_mut(&place).ok_or(DockError::MissingTarget)?.groups, *group),
-                            Place::Floating { window, group } => {
-                                (&mut self.floating.get_mut(*window).ok_or(DockError::MissingTarget)?.groups, *group)
-                            }
-                            Place::Node(_) => return Err(DockError::InvalidPlacement),
+                            Place::Node(_) | Place::Floating { .. } => return Err(DockError::InvalidPlacement),
                         };
                         let index = (index + usize::from(below)).min(groups.len());
                         groups.splice(index..index, moving.groups);
@@ -662,7 +794,7 @@ impl<P: Clone + Eq + Hash> Layout<P> {
 
     fn index_in(&self, place: &Place, panel: &P) -> Option<usize> {
         match place {
-            Place::Node(path) => match self.root.as_ref().and_then(|root| node_at(root, path))? {
+            Place::Node(_) | Place::Floating { .. } => match self.node_of(place)? {
                 Node::Tabs { panels, .. } => panels.iter().position(|p| p == panel),
                 Node::Stack { entries } => entries.iter().position(|e| &e.panel == panel),
                 _ => None,
@@ -676,7 +808,7 @@ impl<P: Clone + Eq + Hash> Layout<P> {
     fn merge(&mut self, place: &Place, index: Option<usize>, moving: Moving<P>) -> Result<(), DockError> {
         let (panels, selected) = flatten(moving.groups);
         match place {
-            Place::Node(path) => match self.root.as_mut().and_then(|root| node_at_mut(root, path)) {
+            Place::Node(_) | Place::Floating { .. } => match self.node_of_mut(place) {
                 Some(Node::Tabs { panels: target, active }) => {
                     splice(target, active, index.unwrap_or(target.len()), panels, selected);
                     Ok(())
@@ -695,6 +827,14 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                 Ok(())
             }
         }
+    }
+}
+
+fn leaf_holds<P: PartialEq>(leaf: &Node<P>, panel: &P) -> bool {
+    match leaf {
+        Node::Tabs { panels, .. } => panels.contains(panel),
+        Node::Stack { entries } => entries.iter().any(|e| &e.panel == panel),
+        Node::Split { .. } | Node::Dock { .. } => false,
     }
 }
 

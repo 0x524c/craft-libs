@@ -306,8 +306,9 @@ fn side_zones_map_to_the_placement_the_anchor_container_takes_in_either_directio
     assert_eq!(placed("right", "layers", true), Ok(Placement::Column { after: false }));
     assert_eq!(placed("left", "layers", true), Ok(Placement::Column { after: true }));
     assert_eq!(placed("top", "layers", false), Ok(Placement::Group { below: false, height: None }));
-    assert_eq!(placed("bottom", "color", false), Ok(Placement::Group { below: true, height: None }));
-    assert_eq!(placed("left", "color", false), Err(DockError::InvalidPlacement));
+    // A floating window is a tree like the docked layout's.
+    assert_eq!(placed("bottom", "color", false), Ok(Placement::Split(Zone::Bottom)));
+    assert_eq!(placed("left", "color", false), Ok(Placement::Split(Zone::Left)));
     assert_eq!(placed("left", "canvas", true), Ok(Placement::Split(Zone::Left)));
 
     let (workspace, _) = applied(json!({"command": "window.panel.move", "panel": "history", "anchor": "layers", "zone": "right"}));

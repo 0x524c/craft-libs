@@ -29,8 +29,8 @@ fn floating_brush_panel_joins_main_tabs_without_losing_other_panels() {
     let Node::Split { size, second, .. } = layout.root.as_ref().unwrap() else { panic!() };
     assert_eq!(*size, SplitSize::FixedSecond(240.0));
     assert_eq!(**second, tabs(&[2, 3, 5, 4], 2));
-    assert_eq!(layout.floating[0].groups[0].panels, vec![6]);
-    assert_eq!(layout.floating[0].groups[0].active, 0);
+    assert_eq!(layout.floating[0].groups()[0].panels, vec![6]);
+    assert_eq!(layout.floating[0].groups()[0].active, 0);
     layout.validate().unwrap();
     assert_eq!(layout.panels().len(), 6);
 }
@@ -43,8 +43,8 @@ fn detach_redock_merge_and_collapse_empty_source_containers() {
     layout.apply(move_to(1, 2, Zone::Left)).unwrap();
     assert_eq!(layout.floating.len(), 1);
     layout.apply(move_to(5, 6, Zone::Center)).unwrap();
-    assert_eq!(layout.floating[0].groups[0].panels, vec![6, 5]);
-    assert_eq!(layout.floating[0].groups[0].active, 1);
+    assert_eq!(layout.floating[0].groups()[0].panels, vec![6, 5]);
+    assert_eq!(layout.floating[0].groups()[0].active, 1);
     layout.apply(move_to(6, 3, Zone::Center)).unwrap();
     layout.apply(move_to(5, 3, Zone::Center)).unwrap();
     assert!(layout.floating.is_empty());
@@ -82,7 +82,7 @@ fn invalid_moves_are_atomic_including_after_a_source_would_have_been_removed() {
     for action in [
         move_to(5, 99, Zone::Center),
         move_to(99, 2, Zone::Center),
-        move_to(5, 6, Zone::Left),
+        Action::Move { panel: 5, anchor: 6, placement: Placement::Column { after: true } },
         move_to(5, 5, Zone::Center),
         Action::Move { panel: 5, anchor: 2, placement: Placement::Tab { before: Some(6) } },
         Action::Float { panel: 3, rect: [f32::NAN, 0.0, 100.0, 100.0] },
@@ -208,12 +208,18 @@ fn closing_and_reopening_an_entire_accordion_restores_its_kind_and_heights() {
 #[test]
 fn invalid_saved_layouts_reject_duplicates_selection_depth_and_nonfinite_geometry() {
     let mut duplicate = sample();
-    duplicate.floating[0].groups[0].panels.push(1);
+    if let Node::Tabs { panels, .. } = &mut duplicate.floating[0].root {
+        panels.push(1);
+    }
     assert_eq!(duplicate.validate(), Err(DockError::DuplicatePanel));
     let mut invalid = sample();
-    invalid.floating[0].groups[0].active = usize::MAX;
+    if let Node::Tabs { active, .. } = &mut invalid.floating[0].root {
+        *active = usize::MAX;
+    }
     assert_eq!(invalid.validate(), Err(DockError::InvalidSelection));
-    invalid.floating[0].groups[0].active = 0;
+    if let Node::Tabs { active, .. } = &mut invalid.floating[0].root {
+        *active = 0;
+    }
     invalid.floating[0].rect[3] = f32::INFINITY;
     assert_eq!(invalid.validate(), Err(DockError::InvalidGeometry));
     let mut deep = tabs(&[0], 0);
@@ -715,8 +721,8 @@ fn floating_group_grip_moves_every_member_while_tab_drag_detaches_one() {
     step(&ctx, &mut layout, vec![Event::PointerMoved(start), pointer_button(start, true)]);
     let actions = step(&ctx, &mut layout, vec![Event::PointerMoved(start + vec2(50.0, 40.0))]);
     assert!(actions.iter().any(|a| matches!(a, Action::MoveFloating { .. })));
-    assert_eq!(layout.floating[0].groups[0].panels, original.groups[0].panels);
-    assert_eq!(layout.floating[0].groups[0].active, original.groups[0].active);
+    assert_eq!(layout.floating[0].groups()[0].panels, original.groups()[0].panels);
+    assert_eq!(layout.floating[0].groups()[0].active, original.groups()[0].active);
     assert_ne!(layout.floating[0].rect, original.rect);
     step(&ctx, &mut layout, vec![pointer_button(start + vec2(50.0, 40.0), false)]);
     for _ in 0..2 {
@@ -731,7 +737,7 @@ fn floating_group_grip_moves_every_member_while_tab_drag_detaches_one() {
     let detached = step(&ctx, &mut layout, vec![pointer_button(outside, false)]);
     assert!(detached.iter().any(|a| matches!(a, Action::Float { panel: 5, .. })));
     assert_eq!(layout.floating.len(), 2);
-    assert_eq!(layout.floating[0].groups[0].panels, vec![6]);
+    assert_eq!(layout.floating[0].groups()[0].panels, vec![6]);
 }
 
 #[test]

@@ -71,6 +71,9 @@ pub enum Divider<P> {
     /// Where the divider of a split inside another split ends on the outer split's divider,
     /// by the outer and the inner split's paths. Dragging it moves both dividers.
     Intersection(Vec<bool>, Vec<bool>),
+    /// A divider in the floating window holding the panel, by its path from the window's root.
+    WindowSplit(P, Vec<bool>),
+    WindowIntersection(P, Vec<bool>, Vec<bool>),
 }
 
 fn key(area: Id) -> Id {
@@ -105,6 +108,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'_, P> {
             Hit::Divider(Divider::Group(p)) => id.with(("group-resize", Some(p))),
             Hit::Divider(Divider::Split(path)) => id.with(("split", path)),
             Hit::Divider(Divider::Intersection(outer, inner)) => id.with(("intersection", outer, inner)),
+            Hit::Divider(Divider::WindowSplit(p, path)) => id.with(("window-split", p, path)),
+            Hit::Divider(Divider::WindowIntersection(p, outer, inner)) => id.with(("window-intersection", p, outer, inner)),
             Hit::Title(p) => id.with(("move-group", Some(p))),
             Hit::Close(p) => id.with(("move-group", Some(p))).with("close"),
             Hit::Resize(p, edge) => {
@@ -172,13 +177,35 @@ pub(super) fn named<P: Clone + Eq + Hash + Debug + Send + Sync + 'static>(area: 
             name(Hit::Resize(p(), edge));
         }
     }
-    let mut nodes = layout.root.as_ref().map(|root| vec![(root, Vec::<bool>::new())]).unwrap_or_default();
+    if let Some(root) = &layout.root {
+        name_splits(root, &mut |path, outer| match outer {
+            None => name(Hit::Divider(Divider::Split(path))),
+            Some(outer) => name(Hit::Divider(Divider::Intersection(outer, path))),
+        });
+    }
+    for window in &layout.floating {
+        let Some(key) = window.panels().next() else { continue };
+        name_splits(&window.root, &mut |path, outer| match outer {
+            None => name(Hit::Divider(Divider::WindowSplit(key.clone(), path))),
+            Some(outer) => name(Hit::Divider(Divider::WindowIntersection(key.clone(), outer, path))),
+        });
+    }
+    names
+}
+
+/// Every split of a tree by its path (`None`), and every pair of a split and a split inside it
+/// (`Some(outer)`), whose dividers may meet.
+fn name_splits<P>(root: &Node<P>, name: &mut dyn FnMut(Vec<bool>, Option<Vec<bool>>)) {
+    let mut nodes = vec![(root, Vec::<bool>::new())];
     let mut splits: Vec<Vec<bool>> = Vec::new();
     while let Some((node, path)) = nodes.pop() {
+        if splits.len() > super::model::MAX_NODES {
+            break;
+        }
         if let Node::Split { first, second, .. } = node {
-            name(Hit::Divider(Divider::Split(path.clone())));
+            name(path.clone(), None);
             for outer in splits.iter().filter(|outer| path.starts_with(outer)) {
-                name(Hit::Divider(Divider::Intersection(outer.clone(), path.clone())));
+                name(path.clone(), Some(outer.clone()));
             }
             splits.push(path.clone());
             let mut second_path = path.clone();
@@ -189,7 +216,6 @@ pub(super) fn named<P: Clone + Eq + Hash + Debug + Send + Sync + 'static>(area: 
             nodes.push((first, first_path));
         }
     }
-    names
 }
 
 /// The layout of the last frame and the rects of the controls it registered, by widget id.

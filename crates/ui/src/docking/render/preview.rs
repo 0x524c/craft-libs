@@ -6,7 +6,7 @@ use super::{DROP_MARGIN, Drawn, Renderer, clamp_float, dock::group_action};
 use crate::docking::chrome::drop_preview;
 use crate::docking::{
     Action, Drag, DropProposal, DropRequest, DropTarget, GroupDrag, GroupGesture, Layout, Node, Placement, Target, Zone, cancel_drag,
-    dock_model::{Place, node_at},
+    dock_model::Place,
     resolve_drop,
     surface::TAB_PADDING,
 };
@@ -104,7 +104,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             });
         }
         let proposal = self.resolve_roomy(&drag.panel, pointer, std::slice::from_ref(target), |to| group_action(drag, to))?;
-        if window && matches!(proposal.placement, Placement::Split(_)) {
+        // A window moving live splits only groups of other floating windows.
+        let into_window = matches!(self.place(&proposal.anchor), Some(Place::Floating { .. }));
+        if window && !into_window && matches!(proposal.placement, Placement::Split(_)) {
             return None;
         }
         valid(proposal)
@@ -137,6 +139,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let mut out: Vec<Drawn<'_, P>> = Vec::new();
             if let Some(root) = &layout.root {
                 sizer.groups(root, self.workspace, &mut out);
+            }
+            for window in layout.floating.iter().filter(|w| !w.minimized) {
+                sizer.groups(&window.root, self.window_body(window), &mut out);
             }
             out.into_iter().filter_map(|d| Some((lead(d.node)?.clone(), d.rect.size(), d.limits.min))).collect::<Vec<_>>()
         };
@@ -406,7 +411,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// The active panel of the group at `place` when `members` are that whole group.
     fn group_active<'a>(&'a self, members: &[P], place: &Place) -> Option<&'a P> {
         let (panels, active) = match place {
-            Place::Node(path) => match self.layout.root.as_ref().and_then(|root| node_at(root, path)) {
+            Place::Node(_) | Place::Floating { .. } => match self.layout.node_of(place) {
                 Some(Node::Tabs { panels, active }) => (panels, *active),
                 _ => return None,
             },

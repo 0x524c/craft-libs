@@ -23,7 +23,7 @@ pub(super) fn docked() -> Layout<u32> {
         Node::Dock { side: Side::End, columns: vec![Column::new(vec![g(&[2, 3], 1), g(&[4], 0)], 180.0), Column::new(vec![g(&[5], 0)], 120.0)] };
     Layout {
         root: Some(hsplit(SplitSize::FixedSecond(300.0), middle, dock)),
-        floating: vec![Floating { groups: vec![g(&[6, 7], 1), g(&[8], 0)], rect: [100.0, 100.0, 300.0, 400.0], native: None }],
+        floating: vec![Floating::stack(vec![g(&[6, 7], 1), g(&[8], 0)], [100.0, 100.0, 300.0, 400.0])],
     }
 }
 
@@ -38,7 +38,7 @@ fn sorted(layout: &Layout<u32>) -> Vec<u32> {
 /// Members, active panel and minimized state of the group holding `panel`.
 fn group_state(layout: &Layout<u32>, panel: u32) -> (Vec<u32>, u32, bool) {
     match layout.place(&panel).unwrap() {
-        Place::Node(path) => match node_at(layout.root.as_ref().unwrap(), &path).unwrap() {
+        place @ (Place::Node(_) | Place::Floating { .. }) => match layout.node_of(&place).unwrap() {
             Node::Tabs { panels, active } => (panels.clone(), panels[*active], false),
             other => panic!("{other:?}"),
         },
@@ -78,7 +78,13 @@ fn group_moves_keep_order_active_tab_and_minimized_state() {
             }
             let before = group_state(&layout, source);
             layout.apply(Action::MoveGroup { panel: source, to: to.clone() }).unwrap_or_else(|e| panic!("{source} {to:?}: {e}"));
-            assert_eq!(group_state(&layout, source), before, "{source} {to:?}");
+            let after = group_state(&layout, source);
+            assert_eq!((&after.0, after.1), (&before.0, before.1), "{source} {to:?}");
+            // A group keeps its minimized state from dock to dock; a floating window's tree
+            // has no minimized groups.
+            if matches!((source, layout.place(&source)), (2, Some(Place::Dock { .. }))) {
+                assert_eq!(after.2, before.2, "{source} {to:?}");
+            }
             assert_eq!(sorted(&layout), ALL);
         }
     }
@@ -86,7 +92,7 @@ fn group_moves_keep_order_active_tab_and_minimized_state() {
     let mut layout = docked();
     layout.apply(Action::MoveGroup { panel: 6, to: Target::At { anchor: 1, placement: Placement::Split(Zone::Left) } }).unwrap();
     assert_eq!(group_state(&layout, 6), (vec![6, 7], 7, false));
-    assert_eq!(layout.floating[0].groups.len(), 1);
+    assert_eq!(layout.floating[0].groups().len(), 1);
 }
 
 #[test]
@@ -94,7 +100,7 @@ fn group_merge_into_tabs_inserts_every_member_before_the_anchor_tab() {
     let mut layout = docked();
     layout.apply(Action::MoveGroup { panel: 6, to: Target::At { anchor: 2, placement: Placement::Tab { before: Some(3) } } }).unwrap();
     assert_eq!(group_state(&layout, 2), (vec![2, 6, 7, 3], 7, false));
-    assert_eq!(panels_of(&layout.floating[0].groups), [vec![8]]);
+    assert_eq!(panels_of(&layout.floating[0].groups()), [vec![8]]);
 
     let mut layout = docked();
     layout.apply(Action::MoveGroup { panel: 2, to: Target::At { anchor: 11, placement: Placement::Tab { before: Some(12) } } }).unwrap();
@@ -134,7 +140,7 @@ fn column_moves_and_floats_keep_every_group() {
 
     layout.apply(Action::MoveColumn { panel: 3, to: Target::Float { rect: None } }).unwrap();
     let window = layout.floating.last().unwrap();
-    assert_eq!(panels_of(&window.groups), [vec![2, 3], vec![4]]);
+    assert_eq!(panels_of(&window.groups()), [vec![2, 3], vec![4]]);
     assert_eq!(window.rect[2], 180.0);
     assert_eq!(sorted(&layout), ALL);
     assert_eq!(layout.apply(Action::MoveColumn { panel: 11, to: Target::Float { rect: None } }), Err(DockError::InvalidPlacement));
@@ -182,7 +188,7 @@ fn close_group_and_close_window_record_a_restorable_location_per_member() {
         workspace.set_visible(panel, true, None, |_| Permissions::default()).unwrap();
     }
     assert_eq!(workspace.layout.floating.len(), 1);
-    assert_eq!(panels_of(&workspace.layout.floating[0].groups), [vec![6, 7], vec![8]]);
+    assert_eq!(panels_of(&workspace.layout.floating[0].groups()), [vec![6, 7], vec![8]]);
     assert_eq!(workspace.layout.floating[0].rect, [100.0, 100.0, 300.0, 400.0]);
 
     workspace.apply(Action::CloseOthers { panel: 12 }, allow).unwrap();
@@ -207,11 +213,7 @@ fn restore_into_a_column_group_seam_and_new_column_round_trips() {
     let start = Node::Dock { side: Side::Start, columns: vec![Column::new(vec![g(&[10], 0)], 200.0)] };
     let original = Layout {
         root: Some(hsplit(SplitSize::FixedFirst(200.0), start, hsplit(SplitSize::FixedSecond(300.0), tabs(&[1], 0), end))),
-        floating: vec![Floating {
-            groups: vec![g(&[6], 0), Group { height: Some(90.0), ..g(&[7], 0) }],
-            rect: [10.0, 10.0, 200.0, 300.0],
-            native: None,
-        }],
+        floating: vec![Floating::stack(vec![g(&[6], 0), Group { height: Some(90.0), ..g(&[7], 0) }], [10.0, 10.0, 200.0, 300.0])],
     };
     original.validate().unwrap();
     // 4: the seam between [2, 3] and [9]; 9: below [4]; 5: a new column after A; 10: alone in
@@ -262,11 +264,14 @@ fn dock_validation_rejects_two_docks_per_side_nested_docks_empty_columns_and_bad
     }
 
     let mut duplicate = docked();
-    duplicate.floating[0].groups[1].panels.push(2);
+    duplicate.floating[0].root = Node::Tabs { panels: vec![6, 7, 2], active: 0 };
     assert_eq!(duplicate.validate(), Err(DockError::DuplicatePanel));
     let mut empty_window = docked();
-    empty_window.floating[0].groups.clear();
+    empty_window.floating[0].root = Node::Tabs { panels: Vec::new(), active: 0 };
     assert_eq!(empty_window.validate(), Err(DockError::InvalidGeometry));
+    let mut docked_window = docked();
+    docked_window.floating[0].root = Node::Dock { side: Side::End, columns: vec![Column::new(vec![g(&[6, 7], 0)], 100.0)] };
+    assert_eq!(docked_window.validate(), Err(DockError::InvalidPlacement));
     let mut native = docked();
     native.floating[0].native = Some([0.0, 0.0, -1.0, 10.0]);
     assert_eq!(native.validate(), Err(DockError::InvalidGeometry));
@@ -386,16 +391,35 @@ mod serde_tests {
     use serde_json::{Value, json};
 
     #[test]
+    fn a_saved_stack_of_groups_loads_as_a_vertical_split_by_their_heights() {
+        let saved = json!({
+            "groups": [{"panels": [4], "active": 0, "height": 100.0}, {"panels": [5, 6], "active": 1, "height": 300.0}],
+            "rect": [1.0, 2.0, 300.0, 400.0],
+        });
+        let window: Floating<u32> = serde_json::from_value(saved).unwrap();
+        let expected = Node::Split {
+            axis: SplitAxis::Vertical,
+            size: SplitSize::Ratio(0.25),
+            first: Box::new(Node::Tabs { panels: vec![4], active: 0 }),
+            second: Box::new(Node::Tabs { panels: vec![5, 6], active: 1 }),
+        };
+        assert_eq!((window.root, window.minimized), (expected, false));
+        let all_minimized = json!({"groups": [{"panels": [4], "active": 0, "minimized": true}], "rect": [1.0, 2.0, 300.0, 400.0]});
+        let window: Floating<u32> = serde_json::from_value(all_minimized).unwrap();
+        assert_eq!((window.root, window.minimized), (Node::Tabs { panels: vec![4], active: 0 }, true));
+    }
+
+    #[test]
     fn single_plain_floating_window_writes_the_v1_shape() {
         let rect = [1.0, 2.0, 300.0, 200.0];
         let plain = Floating::single(vec![4u32, 5], 1, rect);
         assert_eq!(serde_json::to_value(&plain).unwrap(), json!({"panels": [4, 5], "active": 1, "rect": rect}));
-        let minimized = Floating { groups: vec![Group { minimized: true, ..g(&[4], 0) }], rect, native: None };
-        let stacked = Floating { groups: vec![g(&[4], 0), g(&[5], 0)], rect, native: None };
+        let minimized = Floating { minimized: true, ..Floating::single(vec![4u32], 0, rect) };
+        let stacked = Floating::stack(vec![g(&[4], 0), g(&[5], 0)], rect);
         let native = Floating { native: Some(rect), ..Floating::single(vec![4u32], 0, rect) };
         for window in [minimized, stacked, native] {
             let value = serde_json::to_value(&window).unwrap();
-            assert!(value.get("groups").is_some() && value.get("panels").is_none(), "{value}");
+            assert!(value.get("root").is_some() && value.get("panels").is_none(), "{value}");
             assert_eq!(serde_json::from_value::<Floating<u32>>(value).unwrap(), window);
         }
         assert!(serde_json::from_value::<Floating<u32>>(json!({"rect": rect})).is_err());

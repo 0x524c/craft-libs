@@ -821,6 +821,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             places,
             contents: content_index,
             dividers: Vec::new(),
+            tree: None,
         };
         if let Some(root) = &view.root {
             renderer.node(ui, root, rect, &mut Vec::new());

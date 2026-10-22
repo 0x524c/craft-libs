@@ -55,6 +55,9 @@ pub(super) struct Renderer<'a, P> {
     pub(super) contents: HashMap<P, usize>,
     /// Split dividers drawn so far, by view path, for the intersections of their ancestors.
     pub(super) dividers: Vec<DrawnDivider>,
+    /// The floating window whose tree is being drawn: its first panel, which names it in
+    /// ids and actions, and its rect. `None` while the docked layout draws.
+    pub(super) tree: Option<(P, Rect)>,
 }
 
 pub(super) struct DrawnDivider {
@@ -127,7 +130,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 // Named by its layout path, which `ResizeSplit` takes and hits report.
                 let layout_path = self.original_path(path);
                 let response = ResizeHandle::new(
-                    self.id.with(("split", &layout_path)),
+                    self.split_id(&layout_path),
                     *axis,
                     split.divider,
                     &self.style.resize_label,
@@ -145,7 +148,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     self.dividers.push(DrawnDivider { path: path.clone(), axis: *axis, rect, divider: split.divider });
                 }
             }
-            Node::Tabs { panels, active } => self.group(ui, panels, *active, false, rect, GroupKind::Frame),
+            Node::Tabs { panels, active } => {
+                let kind = match &self.tree {
+                    None => GroupKind::Frame,
+                    Some((_, window)) => GroupKind::Floating { window: *window },
+                };
+                self.group(ui, panels, *active, false, rect, kind);
+            }
             Node::Dock { side, columns } => self.dock(ui, *side, columns, rect, rect.width()),
             Node::Stack { entries } => {
                 let total_header = (entries.len() as f32 * self.style.tab_height).min(rect.height());
@@ -247,7 +256,20 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// `path` in `rect`, by `delta` points.
     fn divider_actions(&self, node: &Node<P>, rect: Rect, path: &[bool], delta: f32) -> Vec<Action<P>> {
         let sizes = self.sizer().drag(node, rect, delta, &mut path.to_vec());
-        sizes.into_iter().map(|(path, size)| Action::ResizeSplit { path: self.original_path(&path), size }).collect()
+        let resize = |path: Vec<bool>, size| match &self.tree {
+            None => Action::ResizeSplit { path, size },
+            Some((panel, _)) => Action::ResizeWindowSplit { panel: panel.clone(), path, size },
+        };
+        sizes.into_iter().map(|(path, size)| resize(self.original_path(&path), size)).collect()
+    }
+
+    /// The id of the divider of the split at `path` in the tree being drawn, as
+    /// [`crate::docking::DockArea::hit_id`] names it.
+    fn split_id(&self, path: &[bool]) -> Id {
+        match &self.tree {
+            None => self.id.with(("split", path)),
+            Some((panel, _)) => self.id.with(("window-split", panel, path)),
+        }
     }
 
     /// Four-way handles where a divider drawn inside the split `node` (since `mark`) ends on
@@ -268,7 +290,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         for (inner_path, inner_rect, hit) in found {
             let Some(inner) = inner_path.get(path.len()..).and_then(|rest| crate::docking::dock_model::node_at(node, rest)) else { continue };
-            let id = self.id.with(("intersection", self.original_path(path), self.original_path(&inner_path)));
+            let (outer, inner_layout) = (self.original_path(path), self.original_path(&inner_path));
+            let id = match &self.tree {
+                None => self.id.with(("intersection", outer, inner_layout)),
+                Some((panel, _)) => self.id.with(("window-intersection", panel, outer, inner_layout)),
+            };
             let response = ui.interact(hit, id, Sense::drag());
             self.register_interaction(ui.ctx(), id);
             if response.hovered() || response.dragged() {

@@ -240,7 +240,7 @@ fn docked_two_tab_group_drags_by_its_bar_and_keeps_order_and_active_tab() {
     assert_eq!((*width, *height), (border.width(), 600.0));
     assert_eq!(out.group_drop, Some((2, pos2(700.0, 200.0))));
     assert_eq!(d.layout.root, Some(tabs(&[1], 0)));
-    assert_eq!(d.layout.floating[0].groups, vec![Group::new(vec![2, 3], 1)]);
+    assert_eq!(d.layout.floating[0].groups(), vec![Group::new(vec![2, 3], 1)]);
 
     // The same group in a dock column joins the group below it.
     let mut d = Driver::new(docked());
@@ -266,7 +266,7 @@ fn drag_bar_survives_a_strip_full_of_tabs() {
     assert!(d.ctx.read_response(Id::new(AREA).with(("overflow", &1u32))).is_some(), "tabs overflow before the bar narrows");
     let out = d.drag(bar.center(), pos2(500.0, 300.0));
     assert!(matches!(moved_group(&out.actions), Some(Target::Float { .. })), "{:?}", out.actions);
-    assert_eq!(d.layout.floating[0].groups[0].panels.len(), 8);
+    assert_eq!(d.layout.floating[0].groups()[0].panels.len(), 8);
 }
 
 #[test]
@@ -412,7 +412,7 @@ fn floating_window_is_opaque_with_a_transparent_host_background() {
 fn double_click_on_a_floating_tab_or_bar_minimizes_and_another_tab_expands() {
     let layout = Layout { root: Some(tabs(&[1], 0)), floating: vec![Floating::single(vec![5, 6], 1, [80.0, 70.0, 300.0, 220.0])] };
     let mut d = Driver::new(layout);
-    let minimized = |d: &Driver| d.layout.floating[0].groups[0].minimized;
+    let minimized = |d: &Driver| d.layout.floating[0].minimized;
     let tab = d.tab(6).center();
     d.click(tab);
     let out = d.click(tab);
@@ -424,7 +424,7 @@ fn double_click_on_a_floating_tab_or_bar_minimizes_and_another_tab_expands() {
     let other = d.tab(5).center();
     d.click(other);
     assert!(!minimized(&d));
-    assert_eq!(d.layout.floating[0].groups[0].active_panel(), Some(&5));
+    assert_eq!(d.layout.floating[0].groups()[0].active_panel(), Some(&5));
 
     d.wait();
     let bar = d.rect("drag-bar", 5).center();
@@ -462,7 +462,7 @@ fn floating_border_and_drag_bar_move_and_cancel_as_a_group() {
         assert!(matches!(moved_group(&out.actions), Some(Target::Float { .. })), "{name}: {:?}", out.actions);
         let [x, y, w, h] = d.layout.floating[0].rect;
         assert_eq!([x, y, w, h], [130.0, 110.0, 300.0, 220.0], "{name}");
-        assert_eq!(d.layout.floating[0].groups[0], Group::new(vec![5, 6], 1));
+        assert_eq!(d.layout.floating[0].groups()[0], Group::new(vec![5, 6], 1));
     }
 }
 
@@ -551,15 +551,15 @@ fn drag_bar_menu_has_the_group_items_and_opens_from_the_keyboard() {
 
 #[test]
 fn a_group_dragged_out_of_a_floating_stack_tears_out_alone() {
-    let stack = Floating { groups: vec![Group::new(vec![5], 0), Group::new(vec![6, 7], 1)], rect: [80.0, 70.0, 300.0, 400.0], native: None };
+    let stack = Floating::stack(vec![Group::new(vec![5], 0), Group::new(vec![6, 7], 1)], [80.0, 70.0, 300.0, 400.0]);
     let layout = Layout { root: Some(tabs(&[1], 0)), floating: vec![stack] };
     let mut d = Driver::new(layout);
     let from = d.rect("drag-bar", 6).center();
     let out = d.drag(from, pos2(700.0, 300.0));
-    assert!(matches!(moved_group(&out.actions), Some(Target::Float { rect: Some([_, _, 300.0, 189.5]) })), "{:?}", out.actions);
+    assert!(matches!(moved_group(&out.actions), Some(Target::Float { rect: Some([_, _, 300.0, 189.0]) })), "{:?}", out.actions);
     assert_eq!(d.layout.floating.len(), 2);
-    assert_eq!(d.layout.floating[0].groups, vec![Group::new(vec![5], 0)]);
-    assert_eq!(d.layout.floating[1].groups, vec![Group::new(vec![6, 7], 1)]);
+    assert_eq!(d.layout.floating[0].groups(), vec![Group::new(vec![5], 0)]);
+    assert_eq!(d.layout.floating[1].groups(), vec![Group::new(vec![6, 7], 1)]);
 }
 
 #[test]
