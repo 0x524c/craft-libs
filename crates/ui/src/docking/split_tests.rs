@@ -133,7 +133,7 @@ fn a_group_is_a_picture_frame_whose_edges_split_it_in_half_and_whose_middle_join
         let at = inset(zone);
         d.hold(tab(&d, INFO), at);
         let half = zone_rect(timeline, zone).unwrap();
-        assert!(d.filled(half.shrink(1.0)), "{zone:?}: the preview is that half of the group");
+        assert!(d.outlined(half.shrink(1.0)), "{zone:?}: the preview outlines that half of the group");
         let out = d.release(at);
         assert_eq!(out.actions, vec![Action::Move { panel: INFO, anchor: TIMELINE, placement: Placement::Split(zone) }], "{zone:?}");
         d.settle();
@@ -275,7 +275,7 @@ fn a_drop_beside_a_narrow_group_splits_that_group_only() {
     assert!(tools.width() > 120.0, "{tools:?}");
     let at = pos2(tools.right() - 8.0, tools.center().y + 13.0);
     d.hold(tab(&d, INFO), at);
-    assert!(d.filled(zone_rect(tools, Zone::Right).unwrap().shrink(1.0)), "the preview is Tools' right half");
+    assert!(d.outlined(zone_rect(tools, Zone::Right).unwrap().shrink(1.0)), "the preview outlines Tools' right half");
     let out = d.release(at);
     assert_eq!(out.actions, vec![Action::Move { panel: INFO, anchor: TOOLS, placement: Placement::Split(Zone::Right) }]);
     d.settle();
@@ -609,4 +609,46 @@ fn a_closed_floating_window_closes_its_panels_and_each_reopens_where_it_was() {
     }
     let window = &d.layout.floating[0];
     assert_eq!((&window.root, window.rect), (&tree, [700.0, 100.0, 600.0, 400.0]));
+}
+
+#[test]
+fn the_preview_fills_the_zone_under_the_pointer_and_outlines_the_result() {
+    let d = film();
+    let timeline = group(&d, TIMELINE);
+    let strip = Rect::from_min_size(timeline.min, vec2(timeline.width(), 26.0));
+    // A side band: its trapezoid, and the half the panel takes.
+    for (zone, at) in [
+        (Zone::Left, pos2(timeline.left() + 8.0, timeline.center().y + 13.0)),
+        (Zone::Bottom, pos2(timeline.center().x, timeline.bottom() - 20.0)),
+    ] {
+        let mut d = film();
+        d.hold(tab(&d, INFO), at);
+        assert!(d.filled_polygon(&zone_shape(timeline, zone).unwrap()), "{zone:?}");
+        assert!(d.outlined(zone_rect(timeline, zone).unwrap().shrink(1.0)), "{zone:?}");
+        d.key(egui::Key::Escape);
+    }
+    // The middle and the tab row: the center rectangle and the strip, and the whole group.
+    for at in [timeline.center() + vec2(0.0, 13.0), strip.center()] {
+        let mut d = film();
+        d.hold(tab(&d, INFO), at);
+        assert!(d.filled_polygon(&zone_shape(timeline, Zone::Center).unwrap()), "{at:?}");
+        assert!(d.filled(strip), "{at:?}");
+        assert!(d.outlined(timeline.shrink(1.0)), "{at:?}");
+        d.key(egui::Key::Escape);
+    }
+    // A group's drag bar shows the same.
+    let mut d = film();
+    let bar = d.hit(&Hit::DragBar(PROJECT[0])).unwrap().center();
+    d.hold(bar, pos2(timeline.left() + 8.0, timeline.center().y + 13.0));
+    assert!(d.filled_polygon(&zone_shape(timeline, Zone::Left).unwrap()));
+    d.key(egui::Key::Escape);
+
+    // The dock-and-canvas arrangement keeps its filled half.
+    let mut d = DockDriver::new(editing(), Film::default());
+    d.screen = Rect::from_min_size(Pos2::ZERO, SCREEN);
+    d.area = d.screen;
+    d.settle();
+    d.hold(tab(&d, INFO), pos2(timeline.left() + 8.0, timeline.center().y + 13.0));
+    assert!(!d.filled_polygon(&zone_shape(timeline, Zone::Left).unwrap()));
+    assert!(d.filled(zone_rect(timeline, Zone::Left).unwrap().shrink(1.0)));
 }

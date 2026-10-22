@@ -215,6 +215,18 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
         })
     }
 
+    /// Whether the last frame filled a polygon with these corners, each within half a point.
+    pub fn filled_polygon(&self, corners: &[Pos2]) -> bool {
+        self.shapes.iter().any(|clipped| match &clipped.shape {
+            egui::Shape::Path(path) => {
+                path.fill != egui::Color32::TRANSPARENT
+                    && path.points.len() == corners.len()
+                    && path.points.iter().zip(corners).all(|(a, b)| a.distance(*b) <= 0.5)
+            }
+            _ => false,
+        })
+    }
+
     /// Whether the last frame outlined `rect` without filling it.
     pub fn outlined(&self, rect: Rect) -> bool {
         self.shapes.iter().any(|clipped| match &clipped.shape {

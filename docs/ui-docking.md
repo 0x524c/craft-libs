@@ -224,7 +224,10 @@ A flyout fits its content the same way, without the title bar.
   for one through `PanelLimits::max`: a panel without a maximum lifts the maximum of the panels it
   joins.
 - Drop previews show the destination: an outline for tabs, a line for a new group, column or dock,
-  a filled half for a split. Escape or losing window focus cancels a drag.
+  a filled half for a split. With `side_edge_zones`, a drop on a group instead fills the zone
+  under the pointer (a side's trapezoid, or the center rectangle and the tab strip; `zone_shape`
+  gives the outline) and outlines the rect the drop gives what moves. Escape or losing window
+  focus cancels a drag.
 - With `float_on_empty_drop`, a release over no target floats what moves at the pointer, such
   as a panel dropped on a protected canvas. Without it, that release cancels the drag and
   nothing moves: the gap between two groups, a menu bar or a status bar is no target. A release

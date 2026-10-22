@@ -1,4 +1,4 @@
-use egui::{Pos2, Rangef, Rect, pos2};
+use egui::{Pos2, Rangef, Rect, Vec2, pos2, vec2};
 
 use super::{Placement, Side, Target, Zone};
 
@@ -45,8 +45,7 @@ pub fn drop_zone(rect: Rect, tab_height: f32, pointer: Pos2) -> Option<Zone> {
     if pointer.y < rect.top() + tab_height.min(rect.height()) {
         return Some(Zone::Center);
     }
-    let depth = |extent: f32| (extent * 0.25).max(MIN_SIDE_ZONE).min(extent * 0.5);
-    let (x, y) = (depth(rect.width()), depth(rect.height()));
+    let Vec2 { x, y } = side_depths(rect);
     let distances = [
         ((pointer.x - rect.left()) / x, Zone::Left),
         ((rect.right() - pointer.x) / x, Zone::Right),
@@ -55,6 +54,30 @@ pub fn drop_zone(rect: Rect, tab_height: f32, pointer: Pos2) -> Option<Zone> {
     ];
     let (distance, zone) = distances.into_iter().min_by(|a, b| a.0.total_cmp(&b.0))?;
     Some(if distance > 1.0 { Zone::Center } else { zone })
+}
+
+/// How deep the side zones of a group drawn at `rect` reach in from its left and right edges
+/// (`x`) and its top and bottom edges (`y`).
+fn side_depths(rect: Rect) -> Vec2 {
+    let depth = |extent: f32| (extent * 0.25).max(MIN_SIDE_ZONE).min(extent * 0.5);
+    vec2(depth(rect.width()), depth(rect.height()))
+}
+
+/// The outline of a drop zone of the group drawn at `rect`, as [`drop_zone`] finds it: a side's
+/// trapezoid (its outer edge the whole side, its inner edge on the center rectangle), or the
+/// center rectangle. The tab strip is a grouping zone too.
+pub fn zone_shape(rect: Rect, zone: Zone) -> Option<Vec<Pos2>> {
+    if !usable(rect) {
+        return None;
+    }
+    let inner = rect.shrink2(side_depths(rect));
+    Some(match zone {
+        Zone::Left => vec![rect.left_top(), inner.left_top(), inner.left_bottom(), rect.left_bottom()],
+        Zone::Right => vec![inner.right_top(), rect.right_top(), rect.right_bottom(), inner.right_bottom()],
+        Zone::Top => vec![rect.left_top(), rect.right_top(), inner.right_top(), inner.left_top()],
+        Zone::Bottom => vec![inner.left_bottom(), inner.right_bottom(), rect.right_bottom(), rect.left_bottom()],
+        Zone::Center => vec![inner.left_top(), inner.right_top(), inner.right_bottom(), inner.left_bottom()],
+    })
 }
 
 /// Preview of the region occupied after a split or group merge.

@@ -30,7 +30,7 @@ pub use surface::{
     DockArea, DockContent, DockEvent, DockOutput, DockStyle, DropFeedback, DropRequest, FloatSpace, HidePanels, PanelLimits, begin_drag, cancel_drag,
     float_space, is_dragging,
 };
-pub use targets::{DropProposal, DropTarget, drop_zone, resolve_drop, tab_insertion_marker, zone_rect};
+pub use targets::{DropProposal, DropTarget, drop_zone, resolve_drop, tab_insertion_marker, zone_rect, zone_shape};
 pub use workspace::Workspace;
 
 use surface::{Drag, GroupDrag, GroupGesture};

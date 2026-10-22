@@ -220,7 +220,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         if let Some(proposal) = self.group_proposal(drag, pointer).filter(|p| !p.noop) {
             let split = matches!(proposal.placement, Placement::Split(zone) | Placement::Edge(zone) if zone != Zone::Center);
-            if crate::docking::targets::usable(proposal.preview) {
+            if crate::docking::targets::usable(proposal.preview) && !self.paint_zone(&painter, &proposal, pointer) {
                 drop_preview(&painter, proposal.preview.shrink(1.0), self.style.accent, split);
             }
             if let Some(marker) = proposal.insertion {
@@ -322,7 +322,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             // Reordering inside the source strip shows only the insertion line.
             let same_group = proposal.insertion.is_some()
                 && self.targets.iter().any(|target| target.rect == proposal.preview && target.tabs.iter().any(|(panel, _)| panel == &drag.panel));
-            if !same_group && !proposal.noop && crate::docking::targets::usable(proposal.preview) {
+            if !same_group && !proposal.noop && crate::docking::targets::usable(proposal.preview) && !self.paint_zone(&painter, &proposal, pointer) {
                 drop_preview(&painter, proposal.preview.shrink(1.0), self.style.accent, true);
             }
             if let Some(marker) = proposal.insertion {
@@ -334,6 +334,29 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         } else if let Some(rect) = floating_rect {
             drop_preview(&painter, rect, self.style.accent, false);
         }
+    }
+
+    /// With [`crate::docking::DockStyle::side_edge_zones`], a drop on a group shows the zone
+    /// under the pointer (a side's trapezoid, or the center rectangle with the tab strip)
+    /// filled, and the rect the drop gives what moves outlined. False when it painted nothing.
+    fn paint_zone(&self, painter: &egui::Painter, proposal: &DropProposal<P>, pointer: Pos2) -> bool {
+        let zone = match proposal.placement {
+            Placement::Split(zone) => zone,
+            Placement::Tab { .. } => Zone::Center,
+            _ => return false,
+        };
+        let target = self.targets.iter().rev().find(|t| crate::docking::targets::usable(t.rect) && t.rect.contains(pointer));
+        let (Some(target), true) = (target, self.style.side_edge_zones) else { return false };
+        let Some(points) = crate::docking::targets::zone_shape(target.rect, zone) else { return false };
+        let fill = self.style.accent.gamma_multiply(0.25);
+        painter.add(egui::Shape::convex_polygon(points, fill, egui::Stroke::NONE));
+        if zone == Zone::Center
+            && let Some(strip) = target.tab_strip.map(|strip| strip.intersect(target.rect)).filter(|r| crate::docking::targets::usable(*r))
+        {
+            painter.rect_filled(strip, 0.0, fill);
+        }
+        drop_preview(painter, proposal.preview.shrink(1.0), self.style.accent, false);
+        true
     }
 
     /// The single drop preview layer, above every floating window.
