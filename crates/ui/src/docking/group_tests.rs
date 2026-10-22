@@ -493,12 +493,12 @@ fn docked_header_drag_reaches_the_host_hook_and_preserves_the_group() {
 }
 
 #[test]
-fn lone_bare_or_protected_panels_draw_no_strip_and_no_bar() {
+fn a_lone_protected_panel_draws_no_strip_and_no_bar() {
     struct Bare;
     impl DockContent<u32> for Bare {
         fn body(&mut self, _: &mut egui::Ui, _: &u32) {}
-        fn bare(&self, panel: &u32) -> bool {
-            *panel == 1
+        fn permissions(&self, panel: &u32) -> Permissions {
+            if *panel == 1 { Permissions::PROTECTED } else { Permissions::default() }
         }
     }
     let ctx = Context::default();
@@ -669,7 +669,7 @@ fn frame_tabs_follow_the_wheel_and_close_on_a_middle_click() {
     let wheel = |unit, y| Event::MouseWheel { unit, delta: vec2(0.0, y), phase: egui::TouchPhase::Move, modifiers: Modifiers::NONE };
     let middle = |pos, pressed| Event::PointerButton { pos, button: PointerButton::Middle, pressed, modifiers: Modifiers::NONE };
 
-    // Off by default in the Dock profile.
+    // Off by default.
     let mut d = Driver::new(frames());
     let over = d.tab(2).center();
     d.step(vec![Event::PointerMoved(over), wheel(egui::MouseWheelUnit::Line, 1.0)]);
@@ -678,7 +678,7 @@ fn frame_tabs_follow_the_wheel_and_close_on_a_middle_click() {
     assert_eq!(second(&d), tabs(&[2, 3], 1));
 
     let mut d = Driver::new(frames());
-    d.tweak = |style| style.profile = Profile::Frame;
+    d.tweak = super::floating_tests::frame_style;
     d.step(vec![]);
     let over = d.tab(2).center();
     d.step(vec![Event::PointerMoved(over), wheel(egui::MouseWheelUnit::Line, 1.0)]);

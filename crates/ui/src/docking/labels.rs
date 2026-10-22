@@ -38,9 +38,6 @@ impl DockStyle {
     /// | `dock.expandColumn` | `expand_column_label` | Expand column |
     /// | `dock.moveWindow` | `move_window_label` | Move panel window |
     /// | `dock.closeWindow` | `close_window_label` | Close panel window |
-    /// | `dock.undock` | `undock_label` | Undock Panel |
-    /// | `dock.undockGroup` | `undock_group_label` | Undock Panel Group |
-    /// | `dock.closePanelGroup` | `close_panel_group_label` | Close Panel Group |
     /// | `dock.closeOthers` | `close_others_label` | Close Other Panels in Group |
     /// | `dock.maximize` | `maximize_label` | Maximize Frame |
     /// | `dock.restoreFrame` | `restore_frame_label` | Restore Frame Size |
@@ -57,7 +54,7 @@ impl DockStyle {
         self
     }
 
-    fn labels_mut(&mut self) -> [(&'static str, &mut String); 28] {
+    fn labels_mut(&mut self) -> [(&'static str, &mut String); 25] {
         [
             ("dock.float", &mut self.float_label),
             ("dock.close", &mut self.close_label),
@@ -78,9 +75,6 @@ impl DockStyle {
             ("dock.expandColumn", &mut self.expand_column_label),
             ("dock.moveWindow", &mut self.move_window_label),
             ("dock.closeWindow", &mut self.close_window_label),
-            ("dock.undock", &mut self.undock_label),
-            ("dock.undockGroup", &mut self.undock_group_label),
-            ("dock.closePanelGroup", &mut self.close_panel_group_label),
             ("dock.closeOthers", &mut self.close_others_label),
             ("dock.maximize", &mut self.maximize_label),
             ("dock.restoreFrame", &mut self.restore_frame_label),

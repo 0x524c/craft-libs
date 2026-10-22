@@ -1,4 +1,4 @@
-//! [D] Dock profile: columns, stacked groups, seams, column bars and their drops.
+//! [D] Docks: columns, stacked groups, seams, column bars and their drops.
 
 use super::*;
 use crate::layout::{SplitAxis, SplitSize};

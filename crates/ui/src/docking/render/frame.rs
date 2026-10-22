@@ -1,4 +1,5 @@
-//! Frame profile: Maximize Frame, the outer edge band, hidden panels and the frame menu items.
+//! What the split tree adds around the groups: Maximize Frame, the outer edge band, hidden
+//! panels, the float hint and the group menu tail.
 
 use std::{borrow::Cow, collections::HashMap, fmt::Debug, hash::Hash};
 
@@ -6,7 +7,7 @@ use egui::{Context, Pos2, Rect, pos2, vec2};
 
 use super::{GroupKind, Renderer, floating::StackHit, group::TabGroup};
 use crate::docking::{
-    Action, Column, DockContent, DockEvent, Floating, Group, HidePanels, Layout, Node, Profile, Zone,
+    Action, Column, DockContent, DockEvent, Floating, Group, HidePanels, Layout, Node, Zone,
     dock_model::{Place, node_at},
 };
 
@@ -157,14 +158,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         self.frame.paths.as_ref().and_then(|paths| paths.get(path).cloned()).unwrap_or_else(|| path.to_vec())
     }
 
-    /// The outer edge band under the pointer (P8): top and bottom in both profiles, left and
-    /// right in the frame profile. Returns a docked anchor that is not moving, the zone and
-    /// the preview of the new frame.
+    /// The outer edge band under the pointer (P8): top and bottom, and left and right with
+    /// [`crate::docking::DockStyle::side_edge_zones`]. Returns a docked anchor that is not
+    /// moving, the zone and the preview of the new frame.
     pub(super) fn edge_proposal(&self, members: &[P], pointer: Pos2) -> Option<(P, Zone, Rect)> {
         let area = self.frame.edge.filter(|area| area.contains(pointer))?;
         let band = self.style.edge_band.min(area.width() / 4.0).min(area.height() / 4.0);
         let mut edges = vec![(pointer.y - area.top(), Zone::Top), (area.bottom() - pointer.y, Zone::Bottom)];
-        if self.style.profile == Profile::Frame {
+        if self.style.side_edge_zones {
             edges.extend([(pointer.x - area.left(), Zone::Left), (area.right() - pointer.x, Zone::Right)]);
         }
         let (distance, zone) = edges.into_iter().min_by(|a, b| a.0.total_cmp(&b.0))?;
@@ -183,10 +184,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         Some((anchor, zone, preview))
     }
 
-    /// Under the pointer while a drag offers a docking target (frame profile): which modifier
-    /// floats the drop instead.
+    /// Under the pointer while a drag offers a docking target: which modifier floats the drop
+    /// instead.
     pub(super) fn paint_float_hint(&self, ctx: &Context, pointer: Pos2) {
-        if self.style.profile != Profile::Frame || self.style.float_hint_label.is_empty() {
+        if !self.style.float_hint || self.style.float_hint_label.is_empty() {
             return;
         }
         let key = if ctx.os() == egui::os::OperatingSystem::Mac { "⌘" } else { "Ctrl" };
@@ -198,22 +199,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         painter.galley(rect.center() - galley.size() * 0.5, galley, self.style.text);
     }
 
-    pub(super) fn float_label(&self) -> String {
-        if self.style.profile == Profile::Frame { self.style.undock_label.clone() } else { self.style.float_label.clone() }
-    }
-
-    pub(super) fn float_group_label(&self) -> String {
-        if self.style.profile == Profile::Frame { self.style.undock_group_label.clone() } else { self.style.float_group_label.clone() }
-    }
-
-    pub(super) fn close_group_label(&self) -> String {
-        if self.style.profile == Profile::Frame { self.style.close_panel_group_label.clone() } else { self.style.close_group_label.clone() }
-    }
-
-    /// Ctrl/Cmd held when a frame-profile tab drag starts: the drop floats (S9).
+    /// Ctrl/Cmd held when a split-tree tab drag starts: the drop floats (S9).
     pub(super) fn latch_undock(&self, ctx: &Context, kind: Option<GroupKind>) {
         let command = ctx.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.mac_cmd);
-        if self.style.profile == Profile::Frame && kind == Some(GroupKind::Frame) && command {
+        if self.style.command_press_floats && kind == Some(GroupKind::Frame) && command {
             ctx.data_mut(|d| {
                 if let Some(drag) = d.get_temp::<crate::docking::Drag<P>>(self.id.with("drag")) {
                     d.insert_temp(self.id.with("drag"), crate::docking::Drag { undock: true, ..drag });
@@ -222,21 +211,24 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
     }
 
-    /// Frame items of the menu tail: Close Other Panels in Group and Maximize Frame (frame
-    /// profile), and Move Panel to New Window where native windows are available.
+    /// The menu tail: Close Other Panels in Group and Maximize Frame when the style shows
+    /// them, and Move Panel to New Window where native windows are available.
     pub(super) fn frame_items(&mut self, ui: &mut egui::Ui, owner: &TabGroup<'_, P>, panel: &P) {
-        if self.style.profile == Profile::Frame {
-            let others = owner.panels.iter().filter(|p| *p != panel).all(|p| self.permissions(p).closable);
-            if owner.panels.len() > 1 && others && self.style.close_menu_items && self.menu_action(ui, &self.style.close_others_label.clone()) {
-                self.output.actions.push(Action::CloseOthers { panel: panel.clone() });
-            }
-            if owner.kind == GroupKind::Frame {
-                let restore = self.frame.maximized.as_ref().is_some_and(|m| owner.panels.contains(m));
-                let label = if restore { self.style.restore_frame_label.clone() } else { self.style.maximize_label.clone() };
-                if self.menu_action(ui, &label) {
-                    let panel = if restore { self.frame.maximized.clone().unwrap_or_else(|| panel.clone()) } else { panel.clone() };
-                    self.output.events.push(DockEvent::ToggleMaximize { panel });
-                }
+        let others = owner.panels.iter().filter(|p| *p != panel).all(|p| self.permissions(p).closable);
+        if self.style.close_others_item
+            && owner.panels.len() > 1
+            && others
+            && self.style.close_menu_items
+            && self.menu_action(ui, &self.style.close_others_label.clone())
+        {
+            self.output.actions.push(Action::CloseOthers { panel: panel.clone() });
+        }
+        if self.style.maximize_item && owner.kind == GroupKind::Frame {
+            let restore = self.frame.maximized.as_ref().is_some_and(|m| owner.panels.contains(m));
+            let label = if restore { self.style.restore_frame_label.clone() } else { self.style.maximize_label.clone() };
+            if self.menu_action(ui, &label) {
+                let panel = if restore { self.frame.maximized.clone().unwrap_or_else(|| panel.clone()) } else { panel.clone() };
+                self.output.events.push(DockEvent::ToggleMaximize { panel });
             }
         }
         #[cfg(feature = "native-windows")]

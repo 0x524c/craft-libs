@@ -207,36 +207,16 @@ pub(super) fn node_at_mut<'a, P>(mut node: &'a mut Node<P>, path: &[bool]) -> Op
     Some(node)
 }
 
-/// Put `new` on the `zone` side of the frame at `path`, in a new half-size split. A frame that
-/// holds the fixed size of its parent split along the same axis keeps that size: on its outer
-/// side the new split wraps the parent, on its inner side it halves the parent's other child.
-/// So a fixed-width tool strip neither halves nor shares its width with the new frame.
+/// Put `new` on the `zone` side of the frame at `path`: the frame splits into two halves and
+/// every other frame keeps its size.
 pub(super) fn split_frame<P>(root: &mut Node<P>, path: &[bool], new: Node<P>, zone: Zone) -> bool {
     let axis = if matches!(zone, Zone::Top | Zone::Bottom) { SplitAxis::Vertical } else { SplitAxis::Horizontal };
-    let before = matches!(zone, Zone::Top | Zone::Left);
-    let (target, new_first) = match fixed_slot(root, path, axis) {
-        Some((parent, anchor_first)) if before == anchor_first => (parent.to_vec(), before),
-        Some((parent, anchor_first)) => ([parent, &[anchor_first]].concat(), !before),
-        None => (path.to_vec(), before),
-    };
-    let Some(node) = node_at_mut(root, &target) else { return false };
+    let new_first = matches!(zone, Zone::Top | Zone::Left);
+    let Some(node) = node_at_mut(root, path) else { return false };
     let old = std::mem::replace(node, Node::Tabs { panels: Vec::new(), active: 0 });
     let (first, second) = if new_first { (new, old) } else { (old, new) };
     *node = Node::Split { axis, size: SplitSize::Ratio(0.5), first: Box::new(first), second: Box::new(second) };
     true
-}
-
-/// The parent path of the frame at `path` and whether the frame is its first child, when the
-/// parent splits along `axis` and the frame holds its fixed size.
-pub(super) fn fixed_slot<'a, P>(root: &Node<P>, path: &'a [bool], axis: SplitAxis) -> Option<(&'a [bool], bool)> {
-    let (second, parent) = path.split_last()?;
-    let Node::Split { axis: parent_axis, size, .. } = node_at(root, parent)? else { return None };
-    let fixed = match size {
-        SplitSize::FixedFirst(_) => !second,
-        SplitSize::FixedSecond(_) => *second,
-        SplitSize::Ratio(_) => false,
-    };
-    (*parent_axis == axis && fixed).then_some((parent, !second))
 }
 
 /// Insert `new` at `index` and select the member at `index + selected`.

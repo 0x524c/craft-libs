@@ -44,13 +44,16 @@ pub struct DockStyle {
     /// Painted under every floating window, so it stays opaque when the panel colors are not.
     pub floating_background: Color32,
     pub floating_stroke: Stroke,
-    /// Dock: docks, columns and stacked groups. Frame: a split tree of tab frames, with
-    /// Maximize, Ctrl/Cmd-drag undock, splits on all four outer edges and frame menu labels.
-    pub profile: Profile,
     /// Height of a floating window's title bar.
     pub title_height: f32,
     /// Width of the band along the layout's outer edge that splits at the root.
     pub edge_band: f32,
+    /// The outer edge band also runs along the left and right edges, where a drop adds a
+    /// full-height column. Off: only the top and bottom edges add a full-width row.
+    pub side_edge_zones: bool,
+    /// [D] The docked area's left and right edges, where no dock is yet, take a drop as a new
+    /// dock (see [`Self::new_dock_band`]).
+    pub new_dock_zones: bool,
     /// [D] Height of the bar above each dock column. It drags the column and holds its »/« button.
     pub column_bar_height: f32,
     /// [D] Height of the band around the seam between two stacked groups, in docks and
@@ -69,7 +72,7 @@ pub struct DockStyle {
     /// [D] Column menu item that toggles Auto-Collapse Iconic Panels.
     pub auto_collapse_label: String,
     /// [D] Lay docks out right to left: `Side::Start` is the right edge. egui has no app-wide
-    /// layout direction, so the host sets this from its locale. Frame splits keep their sides.
+    /// layout direction, so the host sets this from its locale. Splits keep their sides.
     pub right_to_left: bool,
     /// [D] Accessibility label of a column bar.
     pub move_column_label: String,
@@ -81,18 +84,23 @@ pub struct DockStyle {
     pub expand_column_label: String,
     pub move_window_label: String,
     pub close_window_label: String,
-    /// Frame profile menu labels.
-    pub undock_label: String,
-    pub undock_group_label: String,
-    pub close_panel_group_label: String,
+    /// Group menu items Close Other Panels in Group, and Maximize Frame / Restore Frame Size
+    /// for groups of the split tree, each shown when its flag is on.
     pub close_others_label: String,
+    pub close_others_item: bool,
     pub maximize_label: String,
     pub restore_frame_label: String,
+    pub maximize_item: bool,
     /// Shown where native windows are available (feature `native-windows`).
     pub new_window_label: String,
-    /// Frame profile: shown under the pointer while a drag offers a docking target. `{key}`
-    /// stands for the modifier that floats the drop instead: ⌘ on macOS, Ctrl elsewhere.
+    /// Shown under the pointer while a drag offers a docking target, when [`Self::float_hint`]
+    /// is on. `{key}` stands for the modifier that floats the drop instead: ⌘ on macOS, Ctrl
+    /// elsewhere.
     pub float_hint_label: String,
+    pub float_hint: bool,
+    /// Ctrl/Cmd held when a tab drag of a split-tree group starts makes its drop float, even
+    /// when the key is let go during the drag. Off: only the key held at the drop counts.
+    pub command_press_floats: bool,
     /// Show the built-in Close items in tab and group menus (Close Panel, Close Tab Group,
     /// Close Other Panels in Group) for closable panels. A host that draws its own Close items
     /// turns this off and keeps [`Permissions::closable`], so its close actions still apply.
@@ -100,20 +108,9 @@ pub struct DockStyle {
     /// Show × on the title bar of a floating window whose panels are all closable.
     pub close_button: bool,
     /// The mouse wheel over a tab strip selects the next or previous tab, one per notch.
-    /// `None`: on in [`Profile::Frame`], off in [`Profile::Dock`].
-    pub wheel_selects_tabs: Option<bool>,
-    /// A middle click on a tab closes its panel when the panel is closable. `None`: on in
-    /// [`Profile::Frame`], off in [`Profile::Dock`].
-    pub middle_click_closes_tabs: Option<bool>,
-}
-
-/// Which arrangement a [`DockStyle`] renders and labels.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Profile {
-    #[default]
-    Dock,
-    Frame,
+    pub wheel_selects_tabs: bool,
+    /// A middle click on a tab closes its panel when the panel is closable.
+    pub middle_click_closes_tabs: bool,
 }
 
 impl Default for DockStyle {
@@ -157,9 +154,10 @@ impl DockStyle {
             drag_bar_width: 40.0,
             floating_background: visuals.window_fill,
             floating_stroke: visuals.window_stroke,
-            profile: Profile::Dock,
             title_height: super::chrome::TITLE_HEIGHT,
             edge_band: 8.0,
+            side_edge_zones: false,
+            new_dock_zones: true,
             column_bar_height: 14.0,
             seam_band: 8.0,
             new_dock_band: 12.0,
@@ -176,27 +174,20 @@ impl DockStyle {
             expand_column_label: "Expand column".into(),
             move_window_label: "Move panel window".into(),
             close_window_label: "Close panel window".into(),
-            undock_label: "Undock Panel".into(),
-            undock_group_label: "Undock Panel Group".into(),
-            close_panel_group_label: "Close Panel Group".into(),
             close_others_label: "Close Other Panels in Group".into(),
+            close_others_item: false,
             maximize_label: "Maximize Frame".into(),
             restore_frame_label: "Restore Frame Size".into(),
+            maximize_item: false,
             new_window_label: "Move Panel to New Window".into(),
             float_hint_label: "Hold {key} to undock".into(),
+            float_hint: false,
+            command_press_floats: false,
             close_menu_items: true,
             close_button: true,
-            wheel_selects_tabs: None,
-            middle_click_closes_tabs: None,
+            wheel_selects_tabs: false,
+            middle_click_closes_tabs: false,
         }
-    }
-
-    pub(super) fn wheel_selects_tabs(&self) -> bool {
-        self.wheel_selects_tabs.unwrap_or(self.profile == Profile::Frame)
-    }
-
-    pub(super) fn middle_click_closes_tabs(&self) -> bool {
-        self.middle_click_closes_tabs.unwrap_or(self.profile == Profile::Frame)
     }
 
     pub(super) fn valid(&self) -> bool {
@@ -415,7 +406,9 @@ impl<P> Clone for HidePanels<'_, P> {
 impl<P> Copy for HidePanels<'_, P> {}
 
 /// Preferred body bounds. Tiny viewports relax minima proportionally rather than producing
-/// inverted rectangles. Maximums constrain a pane when its sibling can occupy the remainder.
+/// inverted rectangles. Maximums constrain a pane when its sibling can occupy the remainder. A
+/// tab group takes the largest minimum and the largest maximum of its panels, so a panel without
+/// a maximum lifts the maximum of the panels it joins.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PanelLimits {
     pub min: Vec2,
@@ -447,7 +440,7 @@ pub(super) struct Drag<P> {
     pub(super) origin: Pos2,
     pub(super) source: Rect,
     pub(super) grab: Vec2,
-    /// Ctrl/Cmd held at the press of a frame-profile tab drag: the drop always floats.
+    /// Ctrl/Cmd held at the press, with [`DockStyle::command_press_floats`]: the drop floats.
     pub(super) undock: bool,
 }
 
@@ -557,11 +550,6 @@ pub trait DockContent<P> {
     fn allow_native(&self, _panel: &P) -> bool {
         false
     }
-    /// A lone bare panel draws no tab strip and no drag bar, like a lone protected panel. It
-    /// still moves by command and menu.
-    fn bare(&self, _panel: &P) -> bool {
-        false
-    }
     /// Host-owned drop resolution for targets the renderer cannot know about. Returning
     /// feedback consumes the gesture, including no-op targets; the renderer then emits no move.
     fn resolve_drag(&mut self, _ctx: &Context, _style: &DockStyle, _request: &DropRequest<'_, P>) -> Option<DropFeedback> {
@@ -643,9 +631,6 @@ impl<P, C: DockContent<P> + ?Sized> DockContent<P> for Overrides<'_, P, C> {
     }
     fn allow_native(&self, panel: &P) -> bool {
         self.inner.allow_native(panel)
-    }
-    fn bare(&self, panel: &P) -> bool {
-        self.inner.bare(panel)
     }
     fn resolve_drag(&mut self, ctx: &Context, style: &DockStyle, request: &DropRequest<'_, P>) -> Option<DropFeedback> {
         self.inner.resolve_drag(ctx, style, request)
@@ -826,7 +811,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             float_space: FloatSpace { contents, ..FloatSpace::new(rect) },
             places,
             contents: content_index,
-            fixed_slots: Vec::new(),
+            dividers: Vec::new(),
         };
         if let Some(root) = &view.root {
             renderer.node(ui, root, rect, &mut Vec::new());

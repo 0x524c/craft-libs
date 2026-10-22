@@ -1,8 +1,8 @@
 use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
-use egui::{Context, Id, Rect, Sense, Ui, UiBuilder, Vec2, pos2, vec2};
+use egui::{Context, CursorIcon, Id, Rect, Sense, Ui, UiBuilder, Vec2, pos2, vec2};
 
-use crate::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis, SplitSize, split_rect};
+use crate::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis};
 
 use super::{Action, DockContent, DockOutput, DockStyle, DropTarget, Layout, Node, PanelLimits, Permissions, dock_model::Place};
 
@@ -25,6 +25,9 @@ pub(in crate::docking) use dock::fit_widths;
 pub(in crate::docking) use floating::RESIZE_HANDLES;
 mod group;
 mod preview;
+mod sizes;
+
+pub(in crate::docking) use sizes::{DROP_MARGIN, Drawn, Sizer};
 
 pub(super) struct Renderer<'a, P> {
     pub(super) id: Id,
@@ -50,18 +53,16 @@ pub(super) struct Renderer<'a, P> {
     /// Each panel's place in `layout`, and its entry in `float_space.contents`.
     pub(super) places: HashMap<P, Place>,
     pub(super) contents: HashMap<P, usize>,
-    /// Frames drawn as the fixed-size side of their parent split, for split previews.
-    pub(super) fixed_slots: Vec<FixedSlot<P>>,
+    /// Split dividers drawn so far, by view path, for the intersections of their ancestors.
+    pub(super) dividers: Vec<DrawnDivider>,
 }
 
-/// A frame that holds the fixed size of its parent split: the parent's and the other child's
-/// rects, where a side split of the frame goes (see `dock_model::split_frame`).
-pub(super) struct FixedSlot<P> {
-    pub(super) panels: Vec<P>,
-    pub(super) axis: SplitAxis,
-    pub(super) first: bool,
-    pub(super) parent: Rect,
-    pub(super) sibling: Rect,
+pub(super) struct DrawnDivider {
+    path: Vec<bool>,
+    axis: SplitAxis,
+    /// The whole split's rect.
+    rect: Rect,
+    divider: Rect,
 }
 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
@@ -111,25 +112,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         match node {
             Node::Split { axis: SplitAxis::Horizontal, first, second, .. } if self.dock_split(ui, first, second, rect, path) => {}
             Node::Split { axis, size, first, second } => {
-                let Some(wanted) = split_rect(rect, *axis, *size, self.style.gap, 0.0) else { return };
-                let (lo, hi) = split_bounds(wanted.available(), *axis, self.node_limits(first), self.node_limits(second));
-                let first_size = wanted.first_size().clamp(lo, hi);
-                let Some(split) = split_rect(rect, *axis, SplitSize::FixedFirst(first_size), self.style.gap, 0.0) else { return };
-                let fixed = match size {
-                    SplitSize::FixedFirst(_) => Some((first, true, split.second)),
-                    SplitSize::FixedSecond(_) => Some((second, false, split.first)),
-                    SplitSize::Ratio(_) => None,
-                };
-                let panels = |node: &Node<P>| match node {
-                    Node::Tabs { panels, .. } => Some(panels.clone()),
-                    Node::Stack { entries } => Some(entries.iter().map(|e| e.panel.clone()).collect()),
-                    Node::Split { .. } | Node::Dock { .. } => None,
-                };
-                if let Some((node, first, sibling)) = fixed
-                    && let Some(panels) = panels(node)
-                {
-                    self.fixed_slots.push(FixedSlot { panels, axis: *axis, first, parent: rect, sibling });
-                }
+                let sizer = self.sizer();
+                let Some(split) = sizer.split(*axis, *size, first, second, rect) else { return };
+                let (lo, hi) = sizer.range(node, rect);
+                let mark = self.dividers.len();
                 path.push(false);
                 self.node(ui, first, split.first, path);
                 path.pop();
@@ -147,13 +133,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     &self.style.resize_label,
                     ResizeHandleStyle { hovered: self.style.accent, dragged: self.style.accent, focused: self.style.accent },
                 )
-                .value(split.first_size(), lo..=hi)
+                .value(split.first_size(), (split.first_size() + lo)..=(split.first_size() + hi))
                 .show(ui);
                 self.register_interaction(ui.ctx(), response.response.id);
-                if response.delta != 0.0
-                    && let Some(size) = split.resized(*size, (split.first_size() + response.delta).clamp(lo, hi) - split.first_size(), 0.0)
-                {
-                    self.output.actions.push(Action::ResizeSplit { path: layout_path, size });
+                if response.delta != 0.0 {
+                    let actions = self.divider_actions(node, rect, path, response.delta);
+                    self.output.actions.extend(actions);
+                }
+                self.intersections(ui, node, rect, path, split.divider, mark);
+                if self.dividers.len() < crate::docking::model::MAX_NODES {
+                    self.dividers.push(DrawnDivider { path: path.clone(), axis: *axis, rect, divider: split.divider });
                 }
             }
             Node::Tabs { panels, active } => self.group(ui, panels, *active, false, rect, GroupKind::Frame),
@@ -250,8 +239,50 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
     }
 
-    pub(super) fn node_limits(&self, node: &Node<P>) -> PanelLimits {
-        node_limits(node, self.style, &*self.content)
+    pub(super) fn sizer(&self) -> Sizer<'_, P> {
+        Sizer { style: self.style, content: &*self.content }
+    }
+
+    /// `ResizeSplit` actions that move the divider of the split `node`, drawn at view path
+    /// `path` in `rect`, by `delta` points.
+    fn divider_actions(&self, node: &Node<P>, rect: Rect, path: &[bool], delta: f32) -> Vec<Action<P>> {
+        let sizes = self.sizer().drag(node, rect, delta, &mut path.to_vec());
+        sizes.into_iter().map(|(path, size)| Action::ResizeSplit { path: self.original_path(&path), size }).collect()
+    }
+
+    /// Four-way handles where a divider drawn inside the split `node` (since `mark`) ends on
+    /// the split's own divider: dragging one moves both dividers.
+    fn intersections(&mut self, ui: &mut Ui, node: &Node<P>, rect: Rect, path: &[bool], divider: Rect, mark: usize) {
+        let Node::Split { axis, .. } = node else { return };
+        let side = (self.style.gap * 3.0).max(12.0);
+        let mut found = Vec::new();
+        for inner in self.dividers.get(mark..).unwrap_or_default() {
+            if inner.axis == *axis || !inner.divider.expand(1.0).intersects(divider) {
+                continue;
+            }
+            let center = match axis {
+                SplitAxis::Horizontal => pos2(divider.center().x, inner.divider.center().y),
+                SplitAxis::Vertical => pos2(inner.divider.center().x, divider.center().y),
+            };
+            found.push((inner.path.clone(), inner.rect, Rect::from_center_size(center, Vec2::splat(side)).intersect(rect)));
+        }
+        for (inner_path, inner_rect, hit) in found {
+            let Some(inner) = inner_path.get(path.len()..).and_then(|rest| crate::docking::dock_model::node_at(node, rest)) else { continue };
+            let id = self.id.with(("intersection", self.original_path(path), self.original_path(&inner_path)));
+            let response = ui.interact(hit, id, Sense::drag());
+            self.register_interaction(ui.ctx(), id);
+            if response.hovered() || response.dragged() {
+                ui.ctx().set_cursor_icon(CursorIcon::Move);
+            }
+            let delta = response.drag_delta();
+            if delta != Vec2::ZERO && delta.is_finite() {
+                let along = |axis: SplitAxis| if axis == SplitAxis::Horizontal { delta.x } else { delta.y };
+                let Node::Split { axis: inner_axis, .. } = inner else { continue };
+                let mut actions = self.divider_actions(node, rect, path, along(*axis));
+                actions.extend(self.divider_actions(inner, inner_rect, &inner_path, along(*inner_axis)));
+                self.output.actions.extend(actions);
+            }
+        }
     }
 
     pub(super) fn contents(&mut self, ui: &mut Ui, panel: &P, rect: Rect) {
@@ -273,10 +304,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 }
 
-/// A lone protected or bare panel draws no tab strip and no drag bar.
+/// A lone protected panel draws no tab strip and no drag bar.
 pub(in crate::docking) fn stripless<P>(panels: &[P], content: &dyn DockContent<P>) -> bool {
     match panels {
-        [panel] => content.permissions(panel).is_protected() || content.bare(panel),
+        [panel] => content.permissions(panel).is_protected(),
         _ => false,
     }
 }
@@ -288,12 +319,14 @@ pub(in crate::docking) fn node_limits<P>(node: &Node<P>, style: &DockStyle, cont
             let width: f32 = columns.iter().map(|c| dock::column_width(c, style)).sum();
             PanelLimits { min: vec2(width.clamp(style.min_pane, 1_000_000.0), style.min_pane), ..PanelLimits::default() }
         }
+        // A group is as large as its largest panel allows: a panel without a maximum lifts the
+        // maximum of the panels it joins.
         Node::Tabs { panels, .. } => {
-            let mut limits = PanelLimits::default();
+            let mut limits = PanelLimits { min: Vec2::ZERO, max: if panels.is_empty() { PanelLimits::default().max } else { Vec2::ZERO } };
             for panel in panels {
                 let policy = content.limits(panel);
                 limits.min = limits.min.max(policy.min).max(Vec2::splat(style.min_pane));
-                limits.max = limits.max.min(policy.max);
+                limits.max = limits.max.max(policy.max);
             }
             limits.max = limits.max.max(limits.min);
             if !stripless(panels, content) {
@@ -304,11 +337,14 @@ pub(in crate::docking) fn node_limits<P>(node: &Node<P>, style: &DockStyle, cont
         }
         Node::Stack { entries } => {
             let mut limits = PanelLimits::default();
+            if !entries.is_empty() {
+                limits.max.x = 0.0;
+            }
             for entry in entries {
                 let policy = content.limits(&entry.panel);
                 limits.min.x = limits.min.x.max(policy.min.x).max(style.min_pane);
                 limits.min.y += if entry.open { policy.min.y.max(style.min_pane) } else { 0.0 } + style.tab_height;
-                limits.max.x = limits.max.x.min(policy.max.x);
+                limits.max.x = limits.max.x.max(policy.max.x);
             }
             limits.min = limits.min.min(Vec2::splat(1_000_000.0));
             limits.max = limits.max.max(limits.min);

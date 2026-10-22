@@ -1,4 +1,4 @@
-//! [D] The dock profile: side docks of columns, each a column bar above stacked groups.
+//! [D] Docks: side docks of columns, each a column bar above stacked groups.
 //!
 //! Columns run from the window edge inwards. Every column's inner edge resizes it; the last
 //! column's inner edge is the dock's inner edge. Behavior follows VectorCraft `floating.rs`
@@ -10,7 +10,7 @@ use egui::{Context, Key, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, p
 
 use super::{GroupKind, Renderer};
 use crate::docking::{
-    Action, Column, DockEvent, DockStyle, Group, GroupDrag, GroupGesture, Node, Placement, Profile, Side, Target,
+    Action, Column, DockEvent, DockStyle, Group, GroupDrag, GroupGesture, Node, Placement, Side, Target,
     dock_model::Unit,
     targets::{DockDrop, DockTarget, column_edge, horizontal_line, resolve_dock, usable, vertical_line},
 };
@@ -39,6 +39,31 @@ fn side_at(edge: Edge, right_to_left: bool) -> Side {
         (Edge::Left, false) | (Edge::Right, true) => Side::Start,
         (Edge::Left, true) | (Edge::Right, false) => Side::End,
     }
+}
+
+/// The rects of a dock beside `other` in `rect`, and the widest the dock may get.
+pub(in crate::docking) fn dock_rects<P>(
+    side: Side,
+    columns: &[Column<P>],
+    other: &Node<P>,
+    rect: Rect,
+    style: &DockStyle,
+    content: &dyn crate::docking::DockContent<P>,
+) -> (Rect, Rect, f32) {
+    let gap = style.gap;
+    let room = (rect.width() - gap - super::node_limits(other, style, content).min.x).clamp(0.0, rect.width());
+    let width = columns.iter().map(|c| column_width(c, style)).sum::<f32>().clamp(0.0, room);
+    let (dock, rest) = match edge_of(side, style.right_to_left) {
+        Edge::Left => (
+            Rect::from_min_max(rect.min, pos2(rect.left() + width, rect.bottom())),
+            Rect::from_min_max(pos2((rect.left() + width + gap).min(rect.right()), rect.top()), rect.max),
+        ),
+        Edge::Right => (
+            Rect::from_min_max(pos2(rect.right() - width, rect.top()), rect.max),
+            Rect::from_min_max(rect.min, pos2((rect.right() - width - gap).max(rect.left()), rect.bottom())),
+        ),
+    };
+    (dock, rest, room)
 }
 
 pub(in crate::docking) fn column_width<P>(column: &Column<P>, style: &DockStyle) -> f32 {
@@ -125,19 +150,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             (other, Node::Dock { side, columns }) => (false, *side, columns, other),
             _ => return false,
         };
-        let gap = self.style.gap;
-        let room = (rect.width() - gap - self.node_limits(other).min.x).clamp(0.0, rect.width());
-        let width = columns.iter().map(|c| column_width(c, self.style)).sum::<f32>().clamp(0.0, room);
-        let (dock, rest) = match edge_of(side, self.style.right_to_left) {
-            Edge::Left => (
-                Rect::from_min_max(rect.min, pos2(rect.left() + width, rect.bottom())),
-                Rect::from_min_max(pos2((rect.left() + width + gap).min(rect.right()), rect.top()), rect.max),
-            ),
-            Edge::Right => (
-                Rect::from_min_max(pos2(rect.right() - width, rect.top()), rect.max),
-                Rect::from_min_max(rect.min, pos2((rect.right() - width - gap).max(rect.left()), rect.bottom())),
-            ),
-        };
+        let (dock, rest, room) = dock_rects(side, columns, other, rect, self.style, &*self.content);
         self.dock(ui, side, columns, dock, room);
         path.push(dock_first);
         self.node(ui, other, rest, path);
@@ -470,7 +483,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// have no dock yet.
     fn dock_candidates(&self) -> Vec<DockDrop<P>> {
         let mut candidates = self.dock_targets.clone();
-        if self.style.profile != Profile::Dock || !usable(self.workspace) {
+        if !self.style.new_dock_zones || !usable(self.workspace) {
             return candidates;
         }
         let rtl = self.style.right_to_left;

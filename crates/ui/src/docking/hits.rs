@@ -68,6 +68,9 @@ pub enum Divider<P> {
     Column(P),
     /// Below the dock or floating group holding this panel first.
     Group(P),
+    /// Where the divider of a split inside another split ends on the outer split's divider,
+    /// by the outer and the inner split's paths. Dragging it moves both dividers.
+    Intersection(Vec<bool>, Vec<bool>),
 }
 
 fn key(area: Id) -> Id {
@@ -101,6 +104,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'_, P> {
             Hit::Divider(Divider::Column(p)) => id.with(("column-resize", Some(p))),
             Hit::Divider(Divider::Group(p)) => id.with(("group-resize", Some(p))),
             Hit::Divider(Divider::Split(path)) => id.with(("split", path)),
+            Hit::Divider(Divider::Intersection(outer, inner)) => id.with(("intersection", outer, inner)),
             Hit::Title(p) => id.with(("move-group", Some(p))),
             Hit::Close(p) => id.with(("move-group", Some(p))).with("close"),
             Hit::Resize(p, edge) => {
@@ -169,9 +173,14 @@ pub(super) fn named<P: Clone + Eq + Hash + Debug + Send + Sync + 'static>(area: 
         }
     }
     let mut nodes = layout.root.as_ref().map(|root| vec![(root, Vec::<bool>::new())]).unwrap_or_default();
+    let mut splits: Vec<Vec<bool>> = Vec::new();
     while let Some((node, path)) = nodes.pop() {
         if let Node::Split { first, second, .. } = node {
             name(Hit::Divider(Divider::Split(path.clone())));
+            for outer in splits.iter().filter(|outer| path.starts_with(outer)) {
+                name(Hit::Divider(Divider::Intersection(outer.clone(), path.clone())));
+            }
+            splits.push(path.clone());
             let mut second_path = path.clone();
             second_path.push(true);
             let mut first_path = path;

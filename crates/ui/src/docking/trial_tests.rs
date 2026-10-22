@@ -195,7 +195,7 @@ fn localized_covers_every_label_and_contains_takes_a_borrowed_panel() {
     });
     full.textures_delta.clear();
     let values: Vec<&str> = debug.split("_label: \"").skip(1).filter_map(|rest| rest.split('"').next()).collect();
-    assert_eq!(values.len(), 28, "{debug}");
+    assert_eq!(values.len(), 25, "{debug}");
     assert!(values.iter().all(|v| v.starts_with("dock.")), "a label without a key: {values:?}");
     let unique: std::collections::HashSet<_> = values.iter().collect();
     assert_eq!(unique.len(), values.len());

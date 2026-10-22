@@ -240,6 +240,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             return self.stack_proposal(window, members, pointer);
         }
         let (anchor, zone, preview) = self.edge_proposal(members, pointer)?;
+        let lead = members.first()?.clone();
+        let action = match members {
+            [_] => Action::Move { panel: lead, anchor: anchor.clone(), placement: Placement::Edge(zone) },
+            _ => Action::MoveGroup { panel: lead, to: Target::At { anchor: anchor.clone(), placement: Placement::Edge(zone) } },
+        };
+        if !self.leaves_room(action) {
+            return None;
+        }
         Some(DropProposal { anchor, placement: Placement::Edge(zone), preview, insertion: None, noop: false })
     }
 
