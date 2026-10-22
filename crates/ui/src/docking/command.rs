@@ -40,7 +40,7 @@ use crate::layout::SplitSize;
 /// | `ui.dock` | `{action}`, or `{operation, …}`, see [`DockOperation`] |
 ///
 /// `zone` is `tab` (the default for `move` and `dock`), `center`, `left`, `right`, `top`,
-/// `bottom`, `above` or `below` (a new group in a dock column or floating stack). The side
+/// `bottom`, `above` or `below` (a new group in a dock column, or a split in a floating window). The side
 /// zones map onto the anchor's container with [`Placement::for_zone`]. `before`
 /// names the tab to insert before; `null` appends. `group` moves the panel's whole group,
 /// `column` its dock column. `side` is `Start` or `End`.
@@ -369,7 +369,8 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
                 let any = given.iter().any(Option::is_some);
                 let unit = Unit::of(*group, *column);
                 let lone = layout.floating.iter().any(|w| w.contains(panel) && w.panels().count() == 1);
-                let whole = layout.floating.iter().any(|w| w.contains(panel) && matches!(w.root, super::Node::Tabs { .. } | super::Node::Stack { .. }));
+                let whole =
+                    layout.floating.iter().any(|w| w.contains(panel) && matches!(w.root, super::Node::Tabs { .. } | super::Node::Stack { .. }));
                 // The rect a drag would float the unit at, inside the area.
                 let placed = || {
                     let docked = layout.location(panel).ok().and_then(|l| l.group).and_then(|g| g.column).map(|c| c.width);

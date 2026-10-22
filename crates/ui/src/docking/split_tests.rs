@@ -651,10 +651,9 @@ fn the_preview_fills_the_zone_under_the_pointer_and_outlines_the_result() {
     let timeline = group(&d, TIMELINE);
     let strip = Rect::from_min_size(timeline.min, vec2(timeline.width(), 26.0));
     // A side band: its trapezoid, and the half the panel takes.
-    for (zone, at) in [
-        (Zone::Left, pos2(timeline.left() + 8.0, timeline.center().y + 13.0)),
-        (Zone::Bottom, pos2(timeline.center().x, timeline.bottom() - 20.0)),
-    ] {
+    for (zone, at) in
+        [(Zone::Left, pos2(timeline.left() + 8.0, timeline.center().y + 13.0)), (Zone::Bottom, pos2(timeline.center().x, timeline.bottom() - 20.0))]
+    {
         let mut d = film();
         d.hold(tab(&d, INFO), at);
         assert!(d.filled_polygon(&zone_shape(timeline, zone).unwrap()), "{zone:?}");

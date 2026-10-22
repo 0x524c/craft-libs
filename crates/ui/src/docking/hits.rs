@@ -66,7 +66,7 @@ pub enum Divider<P> {
     Stack(P),
     /// [D] The inner edge of the column holding this panel first.
     Column(P),
-    /// Below the dock or floating group holding this panel first.
+    /// Below the dock group holding this panel first.
     Group(P),
     /// Where the divider of a split inside another split ends on the outer split's divider,
     /// by the outer and the inner split's paths. Dragging it moves both dividers.

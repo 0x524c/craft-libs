@@ -6,9 +6,7 @@ use super::{DROP_MARGIN, Drawn, Renderer, clamp_float, dock::group_action};
 use crate::docking::chrome::drop_preview;
 use crate::docking::{
     Action, Drag, DropProposal, DropRequest, DropTarget, GroupDrag, GroupGesture, Layout, Node, Placement, Target, Zone, cancel_drag,
-    dock_model::Place,
-    resolve_drop,
-    surface::TAB_PADDING,
+    dock_model::Place, resolve_drop, surface::TAB_PADDING,
 };
 
 /// Ctrl (Windows, Linux) or Cmd (macOS) held: the drop floats and no target is offered.
@@ -259,8 +257,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         let float_only = float_only(ctx) || drag.undock;
         let outside = gone || !ctx.content_rect().contains(pointer);
-        let empty_drop = self.style.float_on_empty_drop
-            && (!drag.source.contains(pointer) || self.layout.floating.iter().any(|g| g.contains(&drag.panel)));
+        let empty_drop =
+            self.style.float_on_empty_drop && (!drag.source.contains(pointer) || self.layout.floating.iter().any(|g| g.contains(&drag.panel)));
         let floatable = self.permissions(&drag.panel).floatable && (float_only || outside || empty_drop);
         let floating_rect = floatable.then(|| self.tab_float_rect(&drag, pointer));
         if self.host_drop(ctx, &drag.panel, pointer, false, released, floating_rect) {

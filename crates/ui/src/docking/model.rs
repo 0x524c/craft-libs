@@ -1,7 +1,7 @@
 use std::{collections::HashSet, fmt, hash::Hash};
 
 use super::dock_model::{
-    Column, ColumnLocation, Group, GroupLocation, Moving, PanelState, Place, Side, Target, Unit, node_at, split_frame, stack_tree, tree_panels, valid_column,
+    Column, ColumnLocation, Group, GroupLocation, Moving, PanelState, Place, Side, Target, Unit, node_at, split_frame, tree_panels, valid_column,
 };
 use crate::layout::{SplitAxis, SplitSize};
 
@@ -90,7 +90,7 @@ impl<P> Floating<P> {
     /// Groups stacked top to bottom, as a v1 layout stored them.
     #[cfg(test)]
     pub(crate) fn stack(groups: Vec<Group<P>>, rect: [f32; 4]) -> Self {
-        Self::new(stack_tree(groups).expect("a group"), rect)
+        Self::new(super::dock_model::stack_tree(groups).expect("a group"), rect)
     }
 
     /// The window's groups, first to last.
@@ -116,7 +116,8 @@ impl<P> Floating<P> {
 mod floating_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    use super::{Floating, Group, Node, stack_tree};
+    use super::{Floating, Group, Node};
+    use crate::docking::dock_model::stack_tree;
 
     #[derive(Serialize)]
     struct V1<'a, P> {
@@ -204,7 +205,8 @@ pub enum Placement<P> {
     /// along the same axis keeps it: on its outer side the new split wraps the parent, on its
     /// inner side it halves the parent's other child.
     Split(Zone),
-    /// A new group above or below the anchor's group, in a dock column or a floating stack.
+    /// A new group above or below the anchor's group in a dock column. On an anchor in a
+    /// floating window, a split of the anchor's group above or below.
     /// `height` is the inserted group's preferred height ([`super::Group::height`]); `None`
     /// keeps a moved group's own height, or shares the free height for a new group.
     Group {
@@ -236,7 +238,7 @@ pub struct Location<P> {
     /// rather than accidentally inserting beside only its first leaf when restoring.
     #[cfg_attr(feature = "serde", serde(default))]
     pub sibling: Vec<P>,
-    /// Group and column state when the panel was in a dock or a floating stack. Applies when
+    /// Group and column state when the panel was in a dock. Applies when
     /// restoring creates a new group, column or dock for the panel.
     #[cfg_attr(feature = "serde", serde(default))]
     pub group: Option<GroupLocation>,
@@ -273,7 +275,7 @@ pub enum Action<P> {
         anchor: P,
         placement: Placement<P>,
     },
-    /// Reposition/resize a floating group, identified by one of its panels.
+    /// Reposition/resize a floating window, identified by one of its panels.
     MoveFloating {
         panel: P,
         rect: [f32; 4],
@@ -327,7 +329,8 @@ pub enum Action<P> {
     CloseOthers {
         panel: P,
     },
-    /// Minimize a dock or floating group to its tab strip. On an accordion entry, closes it.
+    /// Minimize a dock group to its tab strip, or the floating window holding the panel to its
+    /// title bar (and the strip of its only group). On an accordion entry, closes it.
     SetMinimized {
         panel: P,
         minimized: bool,
@@ -340,7 +343,7 @@ pub enum Action<P> {
         panel: P,
         width: f32,
     },
-    /// Preferred height of a dock or floating group, or of an accordion entry.
+    /// Preferred height of a dock group or of an accordion entry.
     ResizeGroup {
         panel: P,
         height: Option<f32>,

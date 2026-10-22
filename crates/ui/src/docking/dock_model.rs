@@ -264,6 +264,7 @@ pub(super) fn tree_panels<P>(root: &Node<P>) -> Vec<&P> {
 }
 
 /// The shown panel of a tree's first group.
+#[cfg(feature = "native-windows")]
 pub(super) fn first_active<P>(root: &Node<P>) -> Option<&P> {
     match leaves(root).into_iter().next()?.0 {
         Node::Tabs { panels, active } => panels.get(*active),

@@ -56,8 +56,7 @@ pub struct DockStyle {
     pub new_dock_zones: bool,
     /// [D] Height of the bar above each dock column. It drags the column and holds its »/« button.
     pub column_bar_height: f32,
-    /// [D] Height of the band around the seam between two stacked groups, in docks and
-    /// floating windows.
+    /// [D] Height of the band around the seam between two stacked groups in a dock column.
     pub seam_band: f32,
     /// [D] Width of the band along the docked area's left and right edges that makes a new dock.
     pub new_dock_band: f32,

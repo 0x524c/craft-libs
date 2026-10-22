@@ -676,7 +676,10 @@ fn top_edges_resize_from_the_band_above_the_title_bar() {
 #[test]
 fn undock_panel_group_floats_one_group_of_a_floating_window() {
     use egui_kittest::{Harness, kittest::Queryable};
-    let stacked = || Layout { root: Some(tabs(&[1], 0)), floating: vec![Floating::stack(vec![Group::new(vec![5], 0), Group::new(vec![6, 7], 0)], [300.0, 80.0, 300.0, 400.0])] };
+    let stacked = || Layout {
+        root: Some(tabs(&[1], 0)),
+        floating: vec![Floating::stack(vec![Group::new(vec![5], 0), Group::new(vec![6, 7], 0)], [300.0, 80.0, 300.0, 400.0])],
+    };
     type State = (Content, Layout<u32>, Vec<Action<u32>>);
     let mut h = Harness::builder().with_size(vec2(800.0, 600.0)).build_ui_state(
         |ui, (content, layout, actions): &mut State| {
