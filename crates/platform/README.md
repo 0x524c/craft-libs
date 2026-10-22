@@ -8,7 +8,8 @@ third-party dependencies. Enable only the services a host uses.
 | --- | --- |
 | default | Typed dialog outcomes; no backend or toolkit. |
 | `dialogs` | Reserve waiting workers before eager UI-thread native picker creation; serial requests, failure delivery and completion wakeups. The backend factory belongs to the app. |
-| `egui` | Combine with `dialogs` for the deferred-close guard. |
+| `egui` | Combine with `dialogs` for the deferred-close guard or with `appearance` for native theme mapping. |
+| `appearance` | Linux/BSD XDG desktop preference observation, owned cancellable subscriptions, bounded reads/helper capture, legacy compatibility and reconnect. |
 
 
 ## Native dialogs
@@ -34,6 +35,33 @@ Retain the actual parent window through queued requests, preflight, the native p
 unconsumed application continuation. `DeferredClose::update` cancels close during pending work and
 returns a request to retry the application's normal close policy afterward. It never grants
 permission to discard work. Run those guards before `craft_quit::on_close_request` in `App::logic`.
+
+## Desktop appearance
+
+`appearance::Watcher` caches the desktop preference and wakes only on changes. Subscription precedes
+the first read. ReadOne/legacy Read, the standard namespace and GNOME fallback are handled together;
+malformed values retain the last valid answer, and explicit no-preference clears it. Disconnection
+retains the last valid value until a fresh answer. A later service owner triggers a reread; session
+reconnection has bounded backoff. Dropping cancels asynchronous work and waits at most 100 ms
+for acknowledgement, joining only an already-finished worker. A synchronously blocked OS call or caller wake callback can outlive
+the watcher: that exceptional worker is detached and retains its resources until it returns,
+possibly until process exit. Wake callbacks must be nonblocking. No per-helper reader threads
+are created.
+
+App-selected Light/Dark/System, custom palettes, window decorations and unknown-theme fallback remain
+application policy. `set_active(false)` suppresses wake notifications while continuing to cache.
+Four existing custom-palette service hooks retain their current signatures and receive change-only
+notifications even in manual mode; they do not change the chosen palette. Never infer Auto from the
+egui theme preference when an app implements Auto by explicitly applying a Light/Dark palette.
+
+`sync_native_window_theme(ctx, observed)` forwards the cached Linux/BSD desktop answer to native
+decorations when egui's window policy is System, falling back to the current toolkit answer.
+Its output hook runs after egui's automatic
+window synchronization, including child-window output. Concrete Light/Dark preferences retain
+precedence, absence of both answers releases the native pin, and `sync_window_theme = false` opts out.
+It does not change styles or theme preference. Hosts whose custom palette is manual but whose
+native window follows System keep observation active for the native window. Native decoration
+rendering still depends on the window manager and requires visible acceptance testing.
 
 ## Integration
 
