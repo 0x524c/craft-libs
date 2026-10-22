@@ -687,6 +687,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-platform"
+version = "0.1.0"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "craft-print"
 version = "0.1.0"
 dependencies = [

@@ -106,3 +106,10 @@ Compact ICC Profiles by Clinton Ingram (CC0-1.0), and dependency CMaps (BSD-3-Cl
 Their licences and per-file hashes are retained in vendor/hayro-interpret/assets,
 licenses/pdf-backend and ATTRIBUTION.md. These are existing reader dependency assets;
 applications retain their own document-font selection and licensing policy.
+
+Platform dialog lifecycle provenance
+
+The dialog outcomes and lifecycle adapt preserved local platform candidate
+9b135779a1e7136438a217c18afe1693ea23f1ab.
+Copyright (c) 2026 ArtCraft Team and the craft-libs contributors.
+All adapted source is licensed MIT OR Apache-2.0.
