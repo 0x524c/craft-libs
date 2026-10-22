@@ -4,14 +4,27 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
+import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
+class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urllib.parse.urlsplit(newurl).scheme != "https":
+            raise ValueError("refusing to follow a non-HTTPS redirect")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+urllib.request.install_opener(urllib.request.build_opener(_HttpsOnlyRedirectHandler))
+
+
 def fetch(url):
-    if not url.startswith("https://"):
+    if urllib.parse.urlsplit(url).scheme != "https":
         raise ValueError("refusing to fetch a non-HTTPS URL")
     for attempt in range(3):
         try:
@@ -53,7 +66,17 @@ def main():
         data = fetch(url)
         if len(data) > 16 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != digest:
             raise ValueError(f"fixture size or SHA-256 mismatch: {name}")
-        path.write_bytes(data)
+        fd, tmp = tempfile.mkstemp(dir=destination, prefix=f".{name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+            os.replace(tmp, destination / name)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
         print(f"Fetched and verified {name}")
 
 
