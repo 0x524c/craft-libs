@@ -149,12 +149,12 @@ fn a_group_is_a_picture_frame_whose_edges_split_it_in_half_and_whose_middle_join
     let mut d = film();
     let out = d.drag(tab(&d, INFO), pos2(timeline.center().x, timeline.top() + 10.0));
     assert!(matches!(&out.actions[..], [Action::Move { panel: INFO, placement: Placement::Tab { .. }, .. }]), "{:?}", out.actions);
-    // The gap between two groups belongs to neither: the tab floats.
+    // The gap between two groups belongs to neither: the drag cancels.
     let mut d = film();
     let tools = group(&d, TOOLS);
     let gap = pos2(tools.right() + 2.0, tools.center().y);
     let out = d.drag(tab(&d, INFO), gap);
-    assert!(matches!(&out.actions[..], [Action::Float { panel: INFO, .. }]), "{:?}", out.actions);
+    assert!(out.actions.is_empty(), "{:?}", out.actions);
 }
 
 #[test]
@@ -442,4 +442,67 @@ fn ctrl_or_cmd_floats_from_a_tab_or_a_drag_bar_and_the_preview_says_so() {
         let out = d.release(over);
         assert!(floated(&out.actions, PROJECT[0]), "{from:?}: {:?}", out.actions);
     }
+}
+
+/// The Editing workspace under a 24 pt menu bar and above a 20 pt status bar.
+fn film_in_window() -> Driver {
+    let mut d = DockDriver::new(editing(), Film::default()).with_style(frame_style);
+    d.screen = Rect::from_min_size(Pos2::ZERO, SCREEN);
+    d.area = Rect::from_min_max(pos2(0.0, 24.0), pos2(SCREEN.x, SCREEN.y - 20.0));
+    d.settle();
+    d
+}
+
+#[test]
+fn a_release_over_no_target_inside_the_window_cancels_the_drag() {
+    let d = film_in_window();
+    let (source, program) = (group(&d, SOURCE[0]), group(&d, PROGRAM));
+    let gap = pos2((source.right() + program.left()) * 0.5, source.center().y);
+    let from_tab = tab(&d, PROJECT[0]);
+    let from_bar = d.hit(&Hit::DragBar(PROJECT[0])).unwrap().center();
+    for from in [from_tab, from_bar] {
+        for to in [pos2(600.0, 10.0), pos2(600.0, SCREEN.y - 8.0), gap] {
+            let mut d = film_in_window();
+            let before = d.layout.clone();
+            let out = d.drag(from, to);
+            d.settle();
+            assert!(out.actions.is_empty(), "{from:?} to {to:?}: {:?}", out.actions);
+            assert_eq!(d.layout, before, "{from:?} to {to:?}");
+        }
+        // Ctrl/Cmd held floats it there.
+        let mut d = film_in_window();
+        d.modifiers = Modifiers::COMMAND;
+        d.drag(from, pos2(600.0, 10.0));
+        d.settle();
+        assert!(d.layout.floating.iter().any(|w| w.contains(&PROJECT[0])), "{from:?}: {:?}", d.layout.floating);
+    }
+}
+
+#[test]
+fn a_release_outside_the_window_floats() {
+    let d = film_in_window();
+    let from_tab = tab(&d, PROJECT[0]);
+    let from_bar = d.hit(&Hit::DragBar(PROJECT[0])).unwrap().center();
+    for from in [from_tab, from_bar] {
+        let mut d = film_in_window();
+        d.hold(from, pos2(600.0, 10.0));
+        d.leave();
+        d.settle();
+        let window = d.layout.floating.iter().find(|w| w.contains(&PROJECT[0]));
+        assert!(window.is_some(), "{from:?}: {:?}", d.layout);
+        // A tab takes one panel; a drag bar takes the group.
+        assert_eq!(window.unwrap().contains(&PROJECT[1]), from == from_bar, "{from:?}");
+    }
+}
+
+#[test]
+fn the_title_bar_moves_a_floating_window_without_docking() {
+    let mut d = film();
+    let title = d.hit(&Hit::Title(INFO)).unwrap().center();
+    let timeline = group(&d, TIMELINE);
+    d.drag(title, timeline.center());
+    d.settle();
+    let window = d.layout.floating.iter().find(|w| w.contains(&INFO)).expect("still floating");
+    assert!(window.rect[0] < 1000.0 && window.rect[1] > 400.0, "moved towards the drop: {:?}", window.rect);
+    assert_eq!(d.layout.root, editing().root);
 }

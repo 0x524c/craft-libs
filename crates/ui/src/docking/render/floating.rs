@@ -323,6 +323,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// group target docks or merges every group in it, else hosts get the release in
     /// `group_drop`.
     pub(super) fn drop_window(&mut self, drag: &GroupDrag<P>, pointer: Pos2, float_only: bool) {
+        let float_only = float_only || !self.style.title_bar_docks;
         if !float_only && let Some((action, _)) = self.dock_group_proposal(drag, pointer) {
             self.output.actions.extend(action);
             return;

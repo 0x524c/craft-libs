@@ -101,6 +101,13 @@ pub struct DockStyle {
     /// Ctrl/Cmd held when a tab drag of a split-tree group starts makes its drop float, even
     /// when the key is let go during the drag. Off: only the key held at the drop counts.
     pub command_press_floats: bool,
+    /// A drag released over no drop target inside the window floats what it carries, such as
+    /// a panel dropped on a protected canvas. Off: that release cancels the drag; only
+    /// Ctrl/Cmd or a release outside the window floats.
+    pub float_on_empty_drop: bool,
+    /// Dragging a floating window's title bar onto a drop target docks the whole window there.
+    /// Off: the title bar only moves the window; tabs and drag bars dock.
+    pub title_bar_docks: bool,
     /// Show the built-in Close items in tab and group menus (Close Panel, Close Tab Group,
     /// Close Other Panels in Group) for closable panels. A host that draws its own Close items
     /// turns this off and keeps [`Permissions::closable`], so its close actions still apply.
@@ -183,6 +190,8 @@ impl DockStyle {
             float_hint_label: "Hold {key} to undock".into(),
             float_hint: false,
             command_press_floats: false,
+            float_on_empty_drop: true,
+            title_bar_docks: true,
             close_menu_items: true,
             close_button: true,
             wheel_selects_tabs: false,

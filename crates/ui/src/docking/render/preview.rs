@@ -60,14 +60,18 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 }
                 return;
             }
-            // Leaving the window ends a group drag where it is, with no drop.
-            if !released || !(has_pointer || touch_ended) {
+            // Leaving the window ends a group drag where it is, with no drop, unless only a
+            // release outside the window floats.
+            let gone = !has_pointer && !touch_ended;
+            let floats_outside = !self.style.float_on_empty_drop && drag.gesture != GroupGesture::Window;
+            if !(released && !gone) && !(gone && floats_outside) {
                 return;
             }
             let Some(pointer) = pointer.filter(|p| !self.blockers.iter().any(|r| r.contains(*p))) else { return };
+            let outside = gone || !ctx.content_rect().contains(pointer);
             match drag.gesture {
                 GroupGesture::Window => self.drop_window(&drag, pointer, float_only),
-                GroupGesture::Group | GroupGesture::Column => self.drop_group(&drag, pointer, float_only),
+                GroupGesture::Group | GroupGesture::Column => self.drop_group(&drag, pointer, float_only || outside),
             }
         } else if let Some(pointer) = pointer.filter(|p| !self.blockers.iter().any(|r| r.contains(*p))) {
             self.output.group_drag = Some(drag.panel.clone());
@@ -164,6 +168,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if proposal.is_some() && !floating {
             return;
         }
+        if !float_only && !self.style.float_on_empty_drop {
+            return;
+        }
         // No target: hosts that still apply their own policy for a whole-group release get it.
         self.output.group_drop = Some((drag.panel.clone(), pointer));
         let rect = self.group_ghost(drag, pointer);
@@ -196,7 +203,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 x += advance;
             }
         }
-        if float_only {
+        if float_only || (drag.gesture == GroupGesture::Window && !self.style.title_bar_docks) {
             return;
         }
         if let Some((action, line)) = self.dock_group_proposal(drag, pointer) {
@@ -246,8 +253,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             return;
         }
         let float_only = float_only(ctx) || drag.undock;
-        let floatable = self.permissions(&drag.panel).floatable
-            && (float_only || gone || !drag.source.contains(pointer) || self.layout.floating.iter().any(|g| g.contains(&drag.panel)));
+        let outside = gone || !ctx.content_rect().contains(pointer);
+        let empty_drop = self.style.float_on_empty_drop
+            && (!drag.source.contains(pointer) || self.layout.floating.iter().any(|g| g.contains(&drag.panel)));
+        let floatable = self.permissions(&drag.panel).floatable && (float_only || outside || empty_drop);
         let floating_rect = floatable.then(|| self.tab_float_rect(&drag, pointer));
         if self.host_drop(ctx, &drag.panel, pointer, false, released, floating_rect) {
             if released {
@@ -255,7 +264,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             return;
         }
-        let dock = if float_only || gone { None } else { self.dock_tab_proposal(&drag.panel, pointer) };
+        let dock = if float_only || outside { None } else { self.dock_tab_proposal(&drag.panel, pointer) };
         if let Some((action, line)) = dock {
             if released {
                 cancel_drag::<P>(ctx, self.id);
@@ -282,10 +291,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         };
         if released {
             cancel_drag::<P>(ctx, self.id);
-            if pointer.distance(drag.origin) < 2.0 || proposal.as_ref().is_some_and(|proposal| proposal.noop && !gone) {
+            if pointer.distance(drag.origin) < 2.0 || proposal.as_ref().is_some_and(|proposal| proposal.noop && !outside) {
                 return;
             }
-            let action = if let Some(proposal) = proposal.filter(|_| !gone) {
+            let action = if let Some(proposal) = proposal.filter(|_| !outside) {
                 Some(Action::Move { panel: drag.panel.clone(), anchor: proposal.anchor, placement: proposal.placement })
             } else if let Some(rect) = floating_rect {
                 Some(Action::Float { panel: drag.panel.clone(), rect: [rect.left(), rect.top(), rect.width(), rect.height()] })

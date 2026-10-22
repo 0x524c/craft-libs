@@ -87,6 +87,8 @@ pub(super) fn frame_style(style: &mut DockStyle) {
     style.close_others_item = true;
     style.maximize_item = true;
     style.command_press_floats = true;
+    style.float_on_empty_drop = false;
+    style.title_bar_docks = false;
     style.float_hint = true;
     style.wheel_selects_tabs = true;
     style.middle_click_closes_tabs = true;
