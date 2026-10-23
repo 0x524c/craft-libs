@@ -61,22 +61,69 @@ pub struct StackEntry<P> {
 /// Serde reads the v1 shape `{panels, active, rect}` as one group, and a stack of groups
 /// `{groups, rect}` as a vertical split of them, sized by their heights. A window with one
 /// group (not minimized, no native rect) writes the v1 shape, so older builds can read files
-/// that use no newer feature.
-#[derive(Clone, Debug, PartialEq)]
+/// that use no newer feature. A native window also writes its `id`; any other window gets a
+/// fresh one on load.
+///
+/// Equality ignores `id`: two windows with the same contents and place are the same layout.
+#[derive(Clone, Debug)]
 pub struct Floating<P> {
+    /// Names the window across panel moves, and its OS window with feature `native-windows`.
+    /// Unique within a layout: [`Self::new`] and loading draw fresh ids, and merging windows
+    /// keeps the receiving window's.
+    pub id: u64,
     /// `Split`, `Tabs` and `Stack` nodes; a `Dock` is invalid here.
     pub root: Node<P>,
     /// `[x, y, width, height]` in logical points, in the application's egui viewport.
     pub rect: [f32; 4],
     /// Desktop rect while the window is in its own OS window.
     pub native: Option<[f32; 4]>,
+    /// The monitor holding the center of `native`, from [`super::DockArea::monitors`].
+    pub monitor: Option<Monitor>,
+    /// Without a monitor list: the size of the monitor egui reported for the native window.
+    pub monitor_size: Option<[f32; 2]>,
     /// Only the title bar shows.
     pub minimized: bool,
 }
 
+impl<P: PartialEq> PartialEq for Floating<P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root
+            && self.rect == other.rect
+            && self.native == other.native
+            && self.monitor == other.monitor
+            && self.monitor_size == other.monitor_size
+            && self.minimized == other.minimized
+    }
+}
+
+/// A display, in desktop logical points. Applications on an egui with monitor reports fill
+/// [`super::DockArea::monitors`] with these; native floating windows store the one they are on.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Monitor {
+    pub name: Option<String>,
+    /// `[x, y, width, height]` on the desktop.
+    pub rect: [f32; 4],
+    /// Physical pixels per logical point.
+    pub scale: f32,
+}
+
+/// A window id no other window of this process has drawn, from a random start so ids saved
+/// by earlier runs are unlikely to repeat.
+pub(super) fn fresh_window_id() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::{
+        OnceLock,
+        atomic::{AtomicU64, Ordering},
+    };
+    static NEXT: OnceLock<AtomicU64> = OnceLock::new();
+    let next = NEXT.get_or_init(|| AtomicU64::new(std::collections::hash_map::RandomState::new().build_hasher().finish() >> 1));
+    next.fetch_add(1, Ordering::Relaxed)
+}
+
 impl<P> Floating<P> {
     pub fn new(root: Node<P>, rect: [f32; 4]) -> Self {
-        Self { root, rect, native: None, minimized: false }
+        Self { id: fresh_window_id(), root, rect, native: None, monitor: None, monitor_size: None, minimized: false }
     }
 
     pub fn single(panels: Vec<P>, active: usize, rect: [f32; 4]) -> Self {
@@ -116,7 +163,7 @@ impl<P> Floating<P> {
 mod floating_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    use super::{Floating, Group, Node};
+    use super::{Floating, Group, Monitor, Node, fresh_window_id};
     use crate::docking::dock_model::stack_tree;
 
     #[derive(Serialize)]
@@ -128,10 +175,16 @@ mod floating_serde {
 
     #[derive(Serialize)]
     struct Tree<'a, P> {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<u64>,
         root: &'a Node<P>,
         rect: [f32; 4],
         #[serde(skip_serializing_if = "Option::is_none")]
         native: Option<[f32; 4]>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        monitor: Option<&'a Monitor>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        monitor_size: Option<[f32; 2]>,
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         minimized: bool,
     }
@@ -142,7 +195,16 @@ mod floating_serde {
                 Node::Tabs { panels, active } if !self.minimized && self.native.is_none() => {
                     V1 { panels, active: *active, rect: self.rect }.serialize(serializer)
                 }
-                root => Tree { root, rect: self.rect, native: self.native, minimized: self.minimized }.serialize(serializer),
+                root => Tree {
+                    id: self.native.map(|_| self.id),
+                    root,
+                    rect: self.rect,
+                    native: self.native,
+                    monitor: self.monitor.as_ref(),
+                    monitor_size: self.monitor_size,
+                    minimized: self.minimized,
+                }
+                .serialize(serializer),
             }
         }
     }
@@ -150,6 +212,8 @@ mod floating_serde {
     #[derive(Deserialize)]
     #[serde(bound(deserialize = "P: Deserialize<'de>"))]
     struct Repr<P> {
+        #[serde(default)]
+        id: Option<u64>,
         root: Option<Node<P>>,
         groups: Option<Vec<Group<P>>>,
         panels: Option<Vec<P>>,
@@ -159,7 +223,23 @@ mod floating_serde {
         #[serde(default)]
         native: Option<[f32; 4]>,
         #[serde(default)]
+        monitor: Option<Monitor>,
+        #[serde(default)]
+        monitor_size: Option<[f32; 2]>,
+        #[serde(default)]
         minimized: bool,
+    }
+
+    /// Floating windows with a fresh id for each one whose id an earlier window took.
+    pub(super) fn unique_ids<'de, D: Deserializer<'de>, P: Deserialize<'de>>(deserializer: D) -> Result<Vec<Floating<P>>, D::Error> {
+        let mut windows = Vec::<Floating<P>>::deserialize(deserializer)?;
+        let mut seen = std::collections::HashSet::new();
+        for window in &mut windows {
+            while !seen.insert(window.id) {
+                window.id = fresh_window_id();
+            }
+        }
+        Ok(windows)
     }
 
     impl<'de, P: Deserialize<'de>> Deserialize<'de> for Floating<P> {
@@ -176,7 +256,15 @@ mod floating_serde {
                 (None, None, None) => return Err(serde::de::Error::missing_field("root")),
                 _ => return Err(serde::de::Error::duplicate_field("root")),
             };
-            Ok(Floating { root, rect: repr.rect, native: repr.native, minimized })
+            Ok(Floating {
+                id: repr.id.unwrap_or_else(fresh_window_id),
+                root,
+                rect: repr.rect,
+                native: repr.native,
+                monitor: repr.monitor,
+                monitor_size: repr.monitor_size,
+                minimized,
+            })
         }
     }
 }
@@ -185,6 +273,7 @@ mod floating_serde {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Layout<P> {
     pub root: Option<Node<P>>,
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "floating_serde::unique_ids"))]
     pub floating: Vec<Floating<P>>,
 }
 
@@ -356,6 +445,13 @@ pub enum Action<P> {
     SetNative {
         panel: P,
         rect: Option<[f32; 4]>,
+    },
+    /// Record the monitor of the native window holding `panel`: from the application's
+    /// monitor list, or else only the size egui reported.
+    SetMonitor {
+        panel: P,
+        monitor: Option<Monitor>,
+        monitor_size: Option<[f32; 2]>,
     },
     /// Move one panel, without the rest of its group. `Target::At` is [`Action::Move`];
     /// `NewDock` and `Float` give the panel a group of its own.
@@ -908,8 +1004,11 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                 if !valid_rect(rect) {
                     return Err(DockError::InvalidGeometry);
                 }
+                // A window's only panel keeps the window's id.
+                let lone = self.floating.iter().find(|w| w.contains(&panel)).filter(|w| w.panels().count() == 1).map(|w| w.id);
                 let entry = self.take(&panel).ok_or(DockError::MissingPanel)?;
-                self.floating.push(Floating::single(vec![entry.panel], 0, rect));
+                let window = Floating::single(vec![entry.panel], 0, rect);
+                self.floating.push(Floating { id: lone.unwrap_or(window.id), ..window });
                 Ok(())
             }
             Action::Close { panel } => self.take(&panel).map(|_| ()).ok_or(DockError::MissingPanel),
@@ -1074,6 +1173,21 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                 }
                 let window = self.floating.iter_mut().find(|g| g.contains(&panel)).ok_or(DockError::InvalidPlacement)?;
                 window.native = rect;
+                if rect.is_none() {
+                    window.monitor = None;
+                    window.monitor_size = None;
+                }
+                Ok(())
+            }
+            Action::SetMonitor { panel, monitor, monitor_size } => {
+                let valid = monitor.as_ref().is_none_or(|m| valid_rect(m.rect) && m.scale.is_finite() && m.scale > 0.0)
+                    && monitor_size.is_none_or(|[w, h]| valid_rect([0.0, 0.0, w, h]));
+                if !valid {
+                    return Err(DockError::InvalidGeometry);
+                }
+                let window = self.floating.iter_mut().find(|g| g.contains(&panel)).ok_or(DockError::InvalidPlacement)?;
+                window.monitor = monitor;
+                window.monitor_size = monitor_size;
                 Ok(())
             }
         }
