@@ -47,7 +47,8 @@ fn clamp_onto(rect: [f32; 4], area: [f32; 4]) -> [f32; 4] {
     let [x, y, w, h] = rect;
     let [ax, ay, aw, ah] = area;
     let (w, h) = (w.min(aw), h.min(ah));
-    sanitized([x.clamp(ax, ax + aw - w), y.clamp(ay, ay + ah - h), w, h])
+    // `ax + aw - w` can round below `ax` when `w == aw`, so no `clamp`, which panics then.
+    sanitized([x.min(ax + aw - w).max(ax), y.min(ay + ah - h).max(ay), w, h])
 }
 
 /// Where a native window from a saved layout opens.
@@ -175,6 +176,16 @@ mod tests {
         assert_eq!(restore(saved, None, &[], main_at(-1500.0, 100.0), size), [-400.0, 300.0, 400.0, 500.0]);
         // Nothing known: the saved rect, made safe.
         assert_eq!(restore([f32::NAN, 1e9, 10.0, 400.0], None, &[], None, None), [0.0, 100_000.0, 160.0, 400.0]);
+    }
+
+    #[test]
+    fn clamping_onto_a_fractional_origin_does_not_panic() {
+        let area = [910.6667, 0.333_33, 1280.0, 720.0];
+        let [x, y, w, h] = clamp_onto([0.0, 2000.0, 1280.0, 900.0], area);
+        assert_eq!([w, h], [1280.0, 720.0]);
+        assert!((x - area[0]).abs() < 0.01 && (y - area[1]).abs() < 0.01, "{x} {y}");
+        let [x, ..] = clamp_onto([5000.0, 0.0, 2000.0, 100.0], area);
+        assert!((x - area[0]).abs() < 0.01, "{x}");
     }
 
     #[test]
