@@ -49,6 +49,8 @@ mod group_tests;
 mod iconic_tests;
 #[cfg(test)]
 mod model_tests;
+#[cfg(all(test, feature = "native-windows"))]
+mod native_tests;
 #[cfg(test)]
 mod split_tests;
 #[cfg(test)]
