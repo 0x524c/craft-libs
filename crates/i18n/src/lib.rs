@@ -68,7 +68,7 @@ impl Locale {
                     rows.entry(e.context).or_default().insert(e.source, e.translation);
                 }
             }
-            problems.iter().for_each(|p| log::warn!("translation catalog: {p}; that string shows in English"));
+            problems.iter().for_each(|p| log::warn!("translation catalog: {p}; row skipped"));
             Parsed { rows, problems }
         })
     }

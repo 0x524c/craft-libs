@@ -60,8 +60,8 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   last form. CLDR's `pt` is Brazilian, so `pt` uses `pt-PT`'s rules (0 is plural) and `pt-br`
   `pt`'s. `intl_pluralrules` is pinned to the version craft-i18n's checker uses, and
   `plural_form_counts` holds the same counts.
-- **Names:** a language's name comes from its shared catalog's `@id language.name` row, else its
-  code; English is "English".
+- **Names:** a language's name comes from the app catalog's `@id language.name` row, else the
+  shared catalog's, else its code; English is "English".
 - **Right to left:** `rtl` is true for `ar`, `ckb`, `dv`, `fa`, `he`, `ps`, `sd`, `ug`, `ur` and
   `yi`; putting text into display order is the app's job.
 - **System locale:** `system_lang` matches the system's list once and caches it: on desktop Unix
