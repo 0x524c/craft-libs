@@ -439,7 +439,9 @@ fn random_drops_leave_every_group_its_minimum_and_every_divider_travel() {
 
 #[test]
 fn ctrl_or_cmd_floats_from_a_tab_or_a_drag_bar_and_the_preview_says_so() {
-    const HINT: &str = "Hold Ctrl to undock";
+    // The hint names the platform's key, as `ctx.os()` reports it in tests.
+    let key = if egui::os::OperatingSystem::from_target_os() == egui::os::OperatingSystem::Mac { "⌘" } else { "Ctrl" };
+    let hint = format!("Hold {key} to undock");
     let floated = |actions: &[Action<u32>], panel: u32| match actions {
         [Action::Float { panel: p, .. }] => *p == panel,
         [Action::MoveGroup { panel: p, to: Target::Float { .. } }] => *p == panel,
@@ -465,14 +467,14 @@ fn ctrl_or_cmd_floats_from_a_tab_or_a_drag_bar_and_the_preview_says_so() {
         // Without the modifier, a release over a group docks there; the preview names the modifier.
         let mut d = film();
         d.hold(from, over);
-        assert!(texts(&d).iter().any(|t| t == HINT), "{from:?}: {:?}", texts(&d));
+        assert!(texts(&d).iter().any(|t| *t == hint), "{from:?}: {:?}", texts(&d));
         let out = d.release(over);
         assert!(!out.actions.is_empty() && !floated(&out.actions, PROJECT[0]), "{from:?}: {:?}", out.actions);
         // Held, it floats, and the hint is gone.
         let mut d = film();
         d.modifiers = Modifiers::COMMAND;
         d.hold(from, over);
-        assert!(!texts(&d).iter().any(|t| t == HINT), "{from:?}");
+        assert!(!texts(&d).iter().any(|t| *t == hint), "{from:?}");
         let out = d.release(over);
         assert!(floated(&out.actions, PROJECT[0]), "{from:?}: {:?}", out.actions);
     }
