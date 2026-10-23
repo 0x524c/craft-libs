@@ -82,17 +82,25 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// moving live looks through itself and does not split frames or join a body's center.
     pub(super) fn group_proposal(&self, drag: &GroupDrag<P>, pointer: Pos2) -> Option<DropProposal<P>> {
         let window = drag.gesture == GroupGesture::Window;
-        let valid = |proposal: DropProposal<P>| {
-            let to = Target::At { anchor: proposal.anchor.clone(), placement: proposal.placement.clone() };
-            (proposal.noop || self.layout.clone().apply_with_permissions(group_action(drag, to), |p| self.permissions(p)).is_ok()).then_some(proposal)
-        };
         if let Some(proposal) = self.extra_proposal(&drag.members, pointer, window) {
-            return valid(proposal);
+            return self.valid_group(drag, proposal);
         }
-        let own = |t: &crate::docking::DropTarget<P>| t.tabs.iter().any(|(p, _)| drag.members.contains(p));
-        let target =
-            self.targets.iter().rev().find(|t| crate::docking::targets::usable(t.rect) && t.rect.contains(pointer) && !(window && own(t)))?;
-        if own(target) {
+        let target = self.group_target(drag, pointer)?;
+        self.group_proposal_at(drag, pointer, target)
+    }
+
+    /// The group under the pointer that a group drag addresses. A window moving live looks
+    /// through itself.
+    fn group_target(&self, drag: &GroupDrag<P>, pointer: Pos2) -> Option<&DropTarget<P>> {
+        let window = drag.gesture == GroupGesture::Window;
+        let own = |t: &DropTarget<P>| t.tabs.iter().any(|(p, _)| drag.members.contains(p));
+        self.targets.iter().rev().find(|t| crate::docking::targets::usable(t.rect) && t.rect.contains(pointer) && !(window && own(t)))
+    }
+
+    /// [`Self::group_proposal`] on `target` alone.
+    fn group_proposal_at(&self, drag: &GroupDrag<P>, pointer: Pos2, target: &DropTarget<P>) -> Option<DropProposal<P>> {
+        let window = drag.gesture == GroupGesture::Window;
+        if target.tabs.iter().any(|(p, _)| drag.members.contains(p)) {
             return Some(DropProposal {
                 anchor: drag.panel.clone(),
                 placement: Placement::Tab { before: None },
@@ -107,13 +115,19 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if window && !into_window && matches!(proposal.placement, Placement::Split(_)) {
             return None;
         }
-        valid(proposal)
+        self.valid_group(drag, proposal)
+    }
+
+    /// `proposal` when it is a no-op or the model takes it for the whole group.
+    fn valid_group(&self, drag: &GroupDrag<P>, proposal: DropProposal<P>) -> Option<DropProposal<P>> {
+        let to = Target::At { anchor: proposal.anchor.clone(), placement: proposal.placement.clone() };
+        (proposal.noop || self.layout.clone().apply_with_permissions(group_action(drag, to), |p| self.permissions(p)).is_ok()).then_some(proposal)
     }
 
     /// [`resolve_drop`], where a split that would leave a group without room becomes a join
     /// of the target group.
     fn resolve_roomy(&self, panel: &P, pointer: Pos2, targets: &[DropTarget<P>], action: impl Fn(Target<P>) -> Action<P>) -> Option<DropProposal<P>> {
-        let proposal = resolve_drop(panel, pointer, targets)?;
+        let proposal = resolve_drop(panel, pointer, targets, self.style.zone_depth)?;
         if !matches!(proposal.placement, Placement::Split(zone) if zone != Zone::Center) {
             return Some(proposal);
         }
@@ -121,7 +135,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             return Some(proposal);
         }
         let target = targets.iter().rev().find(|t| crate::docking::targets::usable(t.rect) && t.rect.contains(pointer))?;
-        resolve_drop(panel, pointer, std::slice::from_ref(&DropTarget { allow_splits: false, ..target.clone() }))
+        resolve_drop(panel, pointer, std::slice::from_ref(&DropTarget { allow_splits: false, ..target.clone() }), self.style.zone_depth)
     }
 
     /// Whether `action`, a drop that splits a group or the outer edge, leaves room: every group
@@ -216,9 +230,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             return;
         }
-        if let Some(proposal) = self.group_proposal(drag, pointer).filter(|p| !p.noop) {
+        let proposal = self.group_proposal(drag, pointer).filter(|p| !p.noop);
+        let zones = self.paint_group_zones(&painter, drag, pointer, proposal.as_ref());
+        if let Some(proposal) = proposal {
             let split = matches!(proposal.placement, Placement::Split(zone) | Placement::Edge(zone) if zone != Zone::Center);
-            if crate::docking::targets::usable(proposal.preview) && !self.paint_zone(&painter, &proposal, pointer) {
+            if crate::docking::targets::usable(proposal.preview) && !zones {
                 drop_preview(&painter, proposal.preview.shrink(1.0), self.style.accent, split);
             }
             if let Some(marker) = proposal.insertion {
@@ -281,17 +297,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             return;
         }
-        let proposal = if float_only {
-            None
-        } else {
-            self.extra_proposal(std::slice::from_ref(&drag.panel), pointer, false).or_else(|| {
-                let panel = &drag.panel;
-                self.resolve_roomy(panel, pointer, &self.targets, |to| match to {
-                    Target::At { anchor, placement } => Action::Move { panel: panel.clone(), anchor, placement },
-                    to => Action::MovePanel { panel: panel.clone(), to },
-                })
-            })
-        };
+        let proposal = if float_only { None } else { self.tab_proposal(&drag.panel, pointer) };
         if released {
             cancel_drag::<P>(ctx, self.id);
             if pointer.distance(drag.origin) < 2.0 || proposal.as_ref().is_some_and(|proposal| proposal.noop && !outside) {
@@ -316,11 +322,12 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             return;
         }
         let painter = self.preview_painter(ctx);
+        let zones = !float_only && self.paint_tab_zones(&painter, &drag.panel, pointer, proposal.as_ref());
         if let Some(proposal) = proposal {
             // Reordering inside the source strip shows only the insertion line.
             let same_group = proposal.insertion.is_some()
                 && self.targets.iter().any(|target| target.rect == proposal.preview && target.tabs.iter().any(|(panel, _)| panel == &drag.panel));
-            if !same_group && !proposal.noop && crate::docking::targets::usable(proposal.preview) && !self.paint_zone(&painter, &proposal, pointer) {
+            if !same_group && !proposal.noop && crate::docking::targets::usable(proposal.preview) && !zones {
                 drop_preview(&painter, proposal.preview.shrink(1.0), self.style.accent, true);
             }
             if let Some(marker) = proposal.insertion {
@@ -334,26 +341,92 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
     }
 
-    /// With [`crate::docking::DockStyle::side_edge_zones`], a drop on a group shows the zone
-    /// under the pointer (a side's trapezoid, or the center rectangle with the tab strip)
-    /// filled, and the rect the drop gives what moves outlined. False when it painted nothing.
-    fn paint_zone(&self, painter: &egui::Painter, proposal: &DropProposal<P>, pointer: Pos2) -> bool {
-        let zone = match proposal.placement {
-            Placement::Split(zone) => zone,
-            Placement::Tab { .. } => Zone::Center,
-            _ => return false,
-        };
-        let target = self.targets.iter().rev().find(|t| crate::docking::targets::usable(t.rect) && t.rect.contains(pointer));
-        let (Some(target), true) = (target, self.style.side_edge_zones) else { return false };
-        let Some(points) = crate::docking::targets::zone_shape(target.rect, zone) else { return false };
-        let fill = self.style.accent.gamma_multiply(0.25);
-        painter.add(egui::Shape::convex_polygon(points, fill, egui::Stroke::NONE));
-        if zone == Zone::Center
-            && let Some(strip) = target.tab_strip.map(|strip| strip.intersect(target.rect)).filter(|r| crate::docking::targets::usable(*r))
-        {
-            painter.rect_filled(strip, 0.0, fill);
+    /// The group target a single tab drag would take at `pointer`.
+    pub(super) fn tab_proposal(&self, panel: &P, pointer: Pos2) -> Option<DropProposal<P>> {
+        self.extra_proposal(std::slice::from_ref(panel), pointer, false).or_else(|| {
+            self.resolve_roomy(panel, pointer, &self.targets, |to| match to {
+                Target::At { anchor, placement } => Action::Move { panel: panel.clone(), anchor, placement },
+                to => Action::MovePanel { panel: panel.clone(), to },
+            })
+        })
+    }
+
+    /// [`Self::paint_zones`] for a tab drag of `panel`. The center of the group holding the panel
+    /// is not a target: a drop there reorders or changes nothing.
+    pub(super) fn paint_tab_zones(&self, painter: &egui::Painter, panel: &P, pointer: Pos2, proposal: Option<&DropProposal<P>>) -> bool {
+        if !self.style.side_edge_zones || self.extra_proposal(std::slice::from_ref(panel), pointer, false).is_some() {
+            return false;
         }
-        drop_preview(painter, proposal.preview.shrink(1.0), self.style.accent, false);
+        let Some(target) = self.targets.iter().rev().find(|t| crate::docking::targets::usable(t.rect) && t.rect.contains(pointer)) else {
+            return false;
+        };
+        let own = target.tabs.iter().any(|(p, _)| p == panel);
+        let at = |at: Pos2| {
+            let move_to = |to| match to {
+                Target::At { anchor, placement } => Action::Move { panel: panel.clone(), anchor, placement },
+                to => Action::MovePanel { panel: panel.clone(), to },
+            };
+            let proposal = self.resolve_roomy(panel, at, std::slice::from_ref(target), move_to)?;
+            let to = Target::At { anchor: proposal.anchor.clone(), placement: proposal.placement.clone() };
+            let joins = matches!(proposal.placement, Placement::Tab { .. } | Placement::Split(Zone::Center));
+            (!(own && joins) && self.layout.clone().apply_with_permissions(move_to(to), |p| self.permissions(p)).is_ok()).then_some(proposal)
+        };
+        self.paint_zones(painter, target, proposal, at)
+    }
+
+    /// [`Self::paint_zones`] for a group drag.
+    pub(super) fn paint_group_zones(&self, painter: &egui::Painter, drag: &GroupDrag<P>, pointer: Pos2, proposal: Option<&DropProposal<P>>) -> bool {
+        let window = drag.gesture == GroupGesture::Window;
+        if !self.style.side_edge_zones || self.extra_proposal(&drag.members, pointer, window).is_some() {
+            return false;
+        }
+        let Some(target) = self.group_target(drag, pointer) else { return false };
+        self.paint_zones(painter, target, proposal, |at| self.group_proposal_at(drag, at, target))
+    }
+
+    /// With [`crate::docking::DockStyle::side_edge_zones`], a drag over a group outlines each
+    /// of its drop zones that a drop would change something in (a side's trapezoid, the center
+    /// rectangle, the tab strip as part of the center) and fills the zone of `proposal`, the
+    /// drop under the pointer. `at` is the drop a point of `target` would get. False when it
+    /// painted nothing.
+    fn paint_zones(
+        &self,
+        painter: &egui::Painter,
+        target: &DropTarget<P>,
+        proposal: Option<&DropProposal<P>>,
+        at: impl Fn(Pos2) -> Option<DropProposal<P>>,
+    ) -> bool {
+        use crate::docking::targets::{header_height, usable, zone_shape};
+        let zone_of = |proposal: &DropProposal<P>| match proposal.placement {
+            _ if proposal.noop => None,
+            Placement::Split(zone) => Some(zone),
+            Placement::Tab { .. } => Some(Zone::Center),
+            _ => None,
+        };
+        let header = header_height(target);
+        let centroid = |points: &[Pos2]| points.iter().fold(Vec2::ZERO, |sum, p| sum + p.to_vec2()) / points.len() as f32;
+        let takes = |zone: Zone, point: Pos2| at(point).as_ref().and_then(zone_of) == Some(zone);
+        let mut shapes: Vec<(Zone, Vec<Pos2>)> = [Zone::Left, Zone::Right, Zone::Top, Zone::Bottom, Zone::Center]
+            .into_iter()
+            .filter_map(|zone| Some((zone, zone_shape(target.rect, header, self.style.zone_depth, zone)?)))
+            .filter(|(zone, points)| takes(*zone, centroid(points).to_pos2()))
+            .collect();
+        let strip = target.tab_strip.map(|strip| strip.intersect(target.rect)).filter(|strip| usable(*strip) && takes(Zone::Center, strip.center()));
+        if let Some(strip) = strip {
+            shapes.push((Zone::Center, vec![strip.left_top(), strip.right_top(), strip.right_bottom(), strip.left_bottom()]));
+        }
+        if shapes.is_empty() {
+            return false;
+        }
+        let hovered = proposal.and_then(zone_of);
+        let fill = self.style.accent.gamma_multiply(0.3);
+        for (_, points) in shapes.iter().filter(|(zone, _)| Some(*zone) == hovered) {
+            painter.add(egui::Shape::convex_polygon(points.clone(), fill, egui::Stroke::NONE));
+        }
+        let stroke = egui::Stroke::new(1.0, self.style.accent.gamma_multiply(0.6));
+        for (_, points) in shapes {
+            painter.add(egui::Shape::closed_line(points, stroke));
+        }
         true
     }
 

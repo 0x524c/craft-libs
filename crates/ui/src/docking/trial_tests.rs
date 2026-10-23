@@ -260,7 +260,7 @@ fn right_to_left_mirrors_the_tab_strip_and_its_insertion_slots() {
         accepts_tabs: true,
         right_to_left: true,
     };
-    let drop = |x: f32| resolve_drop(&9, pos2(x, 10.0), std::slice::from_ref(&target)).unwrap();
+    let drop = |x: f32| resolve_drop(&9, pos2(x, 10.0), std::slice::from_ref(&target), 40.0).unwrap();
     assert_eq!((drop(90.0).placement, drop(90.0).insertion.unwrap().center().x), (Placement::Tab { before: Some(1) }, 99.0));
     assert_eq!((drop(70.0).placement, drop(70.0).insertion.unwrap().center().x), (Placement::Tab { before: Some(2) }, 60.0));
     assert_eq!((drop(10.0).placement, drop(10.0).insertion.unwrap().center().x), (Placement::Tab { before: None }, 20.0));

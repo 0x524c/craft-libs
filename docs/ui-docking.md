@@ -210,8 +210,9 @@ A flyout fits its content the same way, without the title bar.
   the title bar's buttons. A resize keeps the opposite edges in place and stays within the size
   limits and the screen. A focused resize handle moves its edge 8 pt per arrow key.
 - Over a frame, the tab strip and the middle join its tabs, and the nearest side splits it. The
-  side zones are trapezoids along the four edges, like a picture frame: a quarter of the frame
-  deep, at least 32 pt and at most half the frame. A split that would leave either half without
+  side zones are trapezoids along the four edges of the body below the tab strip, like a picture
+  frame: `DockStyle::zone_depth` (40 pt) deep, or a third of the body's width or height when that
+  is less, so every frame keeps a center. A split that would leave either half without
   `DockStyle::min_pane` joins the frame's tabs instead. The gap between two frames is no target.
 - The outer edge band (`DockStyle::edge_band`) takes a drop as a new frame across the whole
   window side: top and bottom, and left and right with `side_edge_zones`. It takes a quarter of
@@ -225,10 +226,12 @@ A flyout fits its content the same way, without the title bar.
   for one through `PanelLimits::max`: a panel without a maximum lifts the maximum of the panels it
   joins.
 - Drop previews show the destination: an outline for tabs, a line for a new group, column or dock,
-  a filled half for a split. With `side_edge_zones`, a drop on a group instead fills the zone
-  under the pointer (a side's trapezoid, or the center rectangle and the tab strip; `zone_shape`
-  gives the outline) and outlines the rect the drop gives what moves. Escape or losing window
-  focus cancels a drag.
+  a filled half for a split. With `side_edge_zones`, a drag over a group instead outlines each of
+  its zones that a drop would change something in (the side trapezoids, the center rectangle and
+  the tab strip; `zone_shape` gives the outlines) and fills the zone under the pointer. Sides the
+  group does not take, by its permissions or because a split leaves no room, are not drawn; nor is
+  the center of the group a tab comes from. Escape or losing window focus cancels
+  a drag.
 - With `float_on_empty_drop`, a release over no target floats what moves at the pointer, such
   as a panel dropped on a protected canvas. Without it, that release cancels the drag and
   nothing moves: the gap between two groups, a menu bar or a status bar is no target. A release
