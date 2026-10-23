@@ -8,6 +8,8 @@
 pub mod chrome;
 #[cfg(feature = "serde")]
 mod command;
+#[cfg(feature = "native-windows")]
+mod desktop;
 mod dock_model;
 mod hits;
 mod labels;
