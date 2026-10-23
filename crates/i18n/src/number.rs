@@ -377,6 +377,12 @@ mod tests {
             region.grouping = grouping;
             formats.push(Format::new(&region, Digits::Locale));
         }
+        // Windows sets both marks: a decimal comma the user picks arrives beside a grouping comma.
+        let reg = |pairs: &'static [(&'static str, &'static str)]| move |n: &str| pairs.iter().find(|(k, _)| *k == n).map(|(_, v)| v.to_string());
+        let windows = crate::region::from_windows(reg(&[("LocaleName", "en-US"), ("sDecimal", ","), ("sThousand", ",")]), || None);
+        formats.push(Format::new(&windows, Digits::Locale));
+        formats.push(Format::new(&Region::from_tag("ar-EG-u-nu-latn"), Digits::Locale));
+        formats.push(Format::new(&Region::from_tag("C"), Digits::Locale));
         for f in &formats {
             for value in [0.0, 1.5, -1234.25, 1_234_567.89, 12.0, 1234.0] {
                 let text = f.number(value, 2);
