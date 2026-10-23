@@ -867,6 +867,48 @@ fn protected_group_member_blocks_whole_group_gesture_and_host_drop() {
     }
 }
 
+/// Drags the floating group's resize grip in `sample()` and returns every action emitted.
+fn resize_floating_group(permissions: impl Fn(&u32) -> Permissions + Copy) -> Vec<Action<u32>> {
+    let ctx = Context::default();
+    let layout = sample();
+    // sample() floats 5 and 6 at [80, 70, 300, 220]; the grip is its bottom-right corner.
+    let (start, end) = (pos2(374.0, 284.0), pos2(398.0, 308.0));
+    let mut actions = Vec::new();
+    for events in [
+        vec![],
+        vec![],
+        vec![Event::PointerMoved(start), pointer_button(start, true)],
+        vec![Event::PointerMoved(end)],
+        vec![pointer_button(end, false)],
+    ] {
+        let mut out = DockOutput::default();
+        ctx.run_ui(RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), events, ..Default::default() }, |ui| {
+            let style = DockStyle::from_ui(ui);
+            out = DockArea::new(Id::new("resize-area")).show(
+                ui,
+                &layout,
+                &style,
+                |p| format!("Panel {p}"),
+                permissions,
+                |ui, _| {
+                    ui.label("Body");
+                },
+            );
+        })
+        .textures_delta
+        .clear();
+        actions.extend(out.actions);
+    }
+    actions
+}
+
+#[test]
+fn protected_group_member_blocks_floating_group_resize() {
+    let moved = |actions: &[Action<u32>]| actions.iter().any(|a| matches!(a, Action::MoveFloating { .. }));
+    assert!(moved(&resize_floating_group(|_| Permissions::default())), "the grip resizes a movable group");
+    assert!(!moved(&resize_floating_group(|p| if *p == 6 { Permissions::PROTECTED } else { Permissions::default() })));
+}
+
 #[test]
 fn chrome_focus_classifies_rendered_tab_but_excludes_body_text_field_and_invalid_layout() {
     let ctx = Context::default();
