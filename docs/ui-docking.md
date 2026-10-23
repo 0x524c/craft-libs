@@ -372,9 +372,11 @@ viewport's `inner_rect.min` plus its rect). A window with a panel whose
     Ctrl/Cmd-drag floats there wherever it is released.
   - *Moving a window.* Dragging the bar, the only tab of a window, or the drag area of its only
     group moves the window. Released over a target in another window, the whole window docks or
-    joins there (`Action::MoveWindow`, as for the in-window title bar with
-    `DockStyle::title_bar_docks`); over the desktop, or with Ctrl/Cmd held, it stays where it was
-    moved. Escape puts it back.
+    joins there as its groups (`Action::MoveWindow`, with `DockStyle::title_bar_docks`): in the
+    main window a dock line, a frame's tab row or edge zone, or the layout's outer edge; in a
+    floating window a frame zone or tab row. A frame body's center takes no whole window. Over
+    the desktop, or with Ctrl/Cmd held, it stays where it was moved. Escape puts it back. An
+    in-window floating window's title bar still splits only groups of other floating windows.
   - *Wayland.* Where `outer_rect` is `None`, desktop positions are unknown, so drops across
     windows cannot be resolved. A drag works inside its own window, and a release outside it
     floats a new window that the compositor places. Moving a window hands the move to the
