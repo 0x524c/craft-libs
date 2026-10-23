@@ -49,16 +49,22 @@ impl Folder {
     pub fn fold(&self, s: &str) -> Folded {
         let nfkd = DecomposingNormalizerBorrowed::new_nfkd();
         let extend = CodePointSetData::new::<GraphemeExtend>();
+        let hangul = CodePointMapData::<HangulSyllableType>::new();
         let mut text = String::with_capacity(s.len());
         let mut starts = Vec::new();
-        // A cluster is a character and the combining marks after it, folded and mapped as one.
+        // A cluster is a character and the combining marks after it, folded and mapped as one;
+        // conjoining jamo that spell one syllable are one cluster too.
         let mut cluster_start = 0;
-        for (i, c) in s.char_indices().skip(1) {
-            if !extend.contains(c) {
+        let mut chars = s.char_indices();
+        let mut prev = chars.next().map(|(_, c)| hangul.get(c));
+        for (i, c) in chars {
+            let kind = hangul.get(c);
+            if !extend.contains(c) && !prev.is_some_and(|p| continues_syllable(p, kind)) {
                 starts.push((text.len(), cluster_start));
                 self.fold_cluster(&nfkd.normalize(&s[cluster_start..i]), &mut text);
                 cluster_start = i;
             }
+            prev = Some(kind);
         }
         if !s.is_empty() {
             starts.push((text.len(), cluster_start));
@@ -174,6 +180,17 @@ fn ascii_digit(c: char) -> Option<char> {
     if value < 10 { char::from_digit(value, 10) } else { None }
 }
 
+/// Whether a conjoining jamo of kind `next` continues the syllable a character of kind `prev`
+/// ends: a vowel after a leading consonant, a final consonant after a vowel or an open syllable
+/// (`가` and `ᆨ` spell `각`).
+fn continues_syllable(prev: HangulSyllableType, next: HangulSyllableType) -> bool {
+    matches!(
+        (prev, next),
+        (HangulSyllableType::LeadingJamo, HangulSyllableType::VowelJamo)
+            | (HangulSyllableType::VowelJamo | HangulSyllableType::LVSyllable, HangulSyllableType::TrailingJamo)
+    )
+}
+
 /// Folded text and where each part came from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Folded {
@@ -217,12 +234,15 @@ impl Folded {
     pub fn matches<'a>(&'a self, needle: &'a Folded) -> impl Iterator<Item = Range<usize>> + 'a {
         let extend = CodePointSetData::new::<GraphemeExtend>();
         let hangul = CodePointMapData::<HangulSyllableType>::new();
-        // The vowel and final consonant of a decomposed Hangul syllable continue it, like a mark.
+        // The vowel and final consonant of a decomposed Hangul syllable continue it, like a mark,
+        // but only inside one source cluster: standalone jamo (`ㅋㅠ`, `ㅠㅠ`) are letters.
         let starts_mark = move |at: usize| {
-            self.text[at..]
-                .chars()
-                .next()
-                .is_some_and(|c| extend.contains(c) || matches!(hangul.get(c), HangulSyllableType::VowelJamo | HangulSyllableType::TrailingJamo))
+            let Some(c) = self.text[at..].chars().next() else { return false };
+            if extend.contains(c) {
+                return true;
+            }
+            let inside = self.starts.binary_search_by_key(&at, |&(f, _)| f).is_err();
+            inside && self.text[..at].chars().next_back().is_some_and(|p| continues_syllable(hangul.get(p), hangul.get(c)))
         };
         let n = needle.text.as_str();
         let mut from = 0;
@@ -361,6 +381,14 @@ mod tests {
         let ko = Folder::new("ko");
         assert!(!ko.contains("한국", "하") && !ko.keep_accents().contains("한국", "하"));
         assert!(ko.contains("한국", "한") && ko.contains("하늘", "하"));
+        // Conjoining jamo spell the same syllable; compatibility jamo stand alone.
+        assert!(!ko.contains("\u{1112}\u{1161}\u{11AB}", "하") && ko.contains("\u{1112}\u{1161}\u{11AB}", "한"));
+        assert!(!ko.contains("하\u{11AB}", "하"));
+        for (haystack, needle) in [("ㅠㅠ", "ㅠ"), ("ㅠㅠ", "ㅠㅠ"), ("ㅋㅠ", "ㅋ"), ("ㅋㅠ", "ㅠ"), ("ㅋㅋㅋ", "ㅋㅋ"), ("ㄳ", "ㄳ"), ("값ㄳ", "ㄳ")]
+        {
+            assert!(ko.contains(haystack, needle), "{haystack} {needle}");
+        }
+        assert_eq!(ko.fold("ㅋㅠㅠ").find(&ko.fold("ㅠ")).map(|r| r.start), Some("ㅋ".len()));
     }
 
     #[test]
