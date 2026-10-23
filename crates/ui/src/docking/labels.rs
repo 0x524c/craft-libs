@@ -41,7 +41,6 @@ impl DockStyle {
     /// | `dock.closeOthers` | `close_others_label` | Close Other Panels in Group |
     /// | `dock.maximize` | `maximize_label` | Maximize Frame |
     /// | `dock.restoreFrame` | `restore_frame_label` | Restore Frame Size |
-    /// | `dock.newWindow` | `new_window_label` | Move Panel to New Window |
     /// | `dock.autoCollapse` | `auto_collapse_label` | Auto-Collapse Iconic Panels |
     /// | `dock.floatHint` | `float_hint_label` | Hold {key} to undock |
     #[must_use]
@@ -54,7 +53,7 @@ impl DockStyle {
         self
     }
 
-    fn labels_mut(&mut self) -> [(&'static str, &mut String); 25] {
+    fn labels_mut(&mut self) -> [(&'static str, &mut String); 24] {
         [
             ("dock.float", &mut self.float_label),
             ("dock.close", &mut self.close_label),
@@ -78,7 +77,6 @@ impl DockStyle {
             ("dock.closeOthers", &mut self.close_others_label),
             ("dock.maximize", &mut self.maximize_label),
             ("dock.restoreFrame", &mut self.restore_frame_label),
-            ("dock.newWindow", &mut self.new_window_label),
             ("dock.autoCollapse", &mut self.auto_collapse_label),
             ("dock.floatHint", &mut self.float_hint_label),
         ]

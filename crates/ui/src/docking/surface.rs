@@ -2,7 +2,7 @@ use std::{fmt::Debug, hash::Hash};
 
 use egui::{Color32, Context, FontId, Id, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-use super::{Action, DockError, DropTarget, Layout, Permissions, render::Renderer, resize::AnchoredResize};
+use super::{Action, DockError, DropTarget, Layout, Monitor, Permissions, render::Renderer, resize::AnchoredResize};
 
 /// Horizontal room around a tab's label, both when measuring its natural width and when cutting it.
 pub(super) const TAB_PADDING: f32 = 24.0;
@@ -90,8 +90,6 @@ pub struct DockStyle {
     pub maximize_label: String,
     pub restore_frame_label: String,
     pub maximize_item: bool,
-    /// Shown where native windows are available (feature `native-windows`).
-    pub new_window_label: String,
     /// Shown under the pointer while a drag offers a docking target, when [`Self::float_hint`]
     /// is on. `{key}` stands for the modifier that floats the drop instead: ⌘ on macOS, Ctrl
     /// elsewhere.
@@ -185,7 +183,6 @@ impl DockStyle {
             maximize_label: "Maximize Frame".into(),
             restore_frame_label: "Restore Frame Size".into(),
             maximize_item: false,
-            new_window_label: "Move Panel to New Window".into(),
             float_hint_label: "Hold {key} to undock".into(),
             float_hint: false,
             command_press_floats: false,
@@ -240,11 +237,17 @@ pub struct DockOutput<P> {
     pub group_drop: Option<(P, Pos2)>,
     /// Requests that are not layout actions.
     pub events: Vec<DockEvent<P>>,
+    /// Key, text and clipboard events (`Key`, `Text`, `Copy`, `Cut`, `Paste`) that reached a
+    /// floating window in its own OS window and that none of its widgets used (feature
+    /// `native-windows`). egui hands each OS window only its own input, so an application
+    /// passes these to the shortcut handling it runs on the main window's input. A window
+    /// whose text field has focus forwards nothing.
+    pub forwarded_events: Vec<egui::Event>,
 }
 
 impl<P> Default for DockOutput<P> {
     fn default() -> Self {
-        Self { actions: Vec::new(), error: None, focused: None, group_drag: None, group_drop: None, events: Vec::new() }
+        Self { actions: Vec::new(), error: None, focused: None, group_drag: None, group_drop: None, events: Vec::new(), forwarded_events: Vec::new() }
     }
 }
 
@@ -670,11 +673,37 @@ pub struct DockArea<'a, P = ()> {
     hide: HidePanels<'a, P>,
     auto_collapse: bool,
     float_bounds: Option<Rect>,
+    monitors: Vec<Monitor>,
 }
 
 impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
     pub fn new(id: Id) -> Self {
-        Self { id, activation: None, blockers: Vec::new(), maximized: None, hide: HidePanels::None, auto_collapse: true, float_bounds: None }
+        Self {
+            id,
+            activation: None,
+            blockers: Vec::new(),
+            maximized: None,
+            hide: HidePanels::None,
+            auto_collapse: true,
+            float_bounds: None,
+            monitors: Vec::new(),
+        }
+    }
+
+    /// The connected monitors (feature `native-windows`). A native floating window stores the
+    /// one it is on, and a restored layout puts each window back on its monitor, or on the
+    /// main window's when that monitor is gone. egui 0.36 reports no monitors; without a list
+    /// windows store the monitor size egui reports and restore onto the main window's monitor.
+    pub fn monitors(mut self, monitors: Vec<Monitor>) -> Self {
+        self.monitors = monitors;
+        self
+    }
+
+    /// The egui viewport of the native window of the floating window with [`super::Floating::id`]
+    /// `window`, in the dock area `id` (feature `native-windows`).
+    #[cfg(feature = "native-windows")]
+    pub fn window_viewport(id: Id, window: u64) -> egui::ViewportId {
+        super::render::native_viewport(id, window)
     }
 
     /// [D] Auto-Collapse Iconic Panels (default on): a flyout closes on Escape or a press
@@ -736,8 +765,8 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
 
     /// Render a validated snapshot and return requested actions for the app's command handler.
     /// No action is applied here. Panel contents get a global stable egui ID across moves.
-    /// Floating windows are egui areas inside this viewport; with feature `native-windows`, a
-    /// window with a native rect gets its own OS window where the backend has viewports.
+    /// Floating windows are egui areas inside this viewport; with feature `native-windows`, each
+    /// gets its own OS window where the backend has viewports (see docs/ui-docking.md).
     pub fn show(
         self,
         ui: &mut Ui,
@@ -821,6 +850,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             contents: content_index,
             dividers: Vec::new(),
             tree: None,
+            monitors: self.monitors,
         };
         if let Some(root) = &view.root {
             renderer.node(ui, root, rect, &mut Vec::new());
