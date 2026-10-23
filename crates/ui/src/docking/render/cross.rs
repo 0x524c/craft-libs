@@ -89,6 +89,8 @@ pub(in crate::docking) struct Cross<P> {
     pub release: Option<(WindowDrag, DragPointer)>,
     /// Drawing for a window other than the drag's source: the undock hint is the source's.
     pub quiet: bool,
+    /// Resolving a native window's bar drag over the main window: frame edge zones count.
+    pub bar: bool,
     /// A target was offered while `quiet`.
     pub offered: Cell<bool>,
 }
@@ -104,6 +106,7 @@ impl<P> Default for Cross<P> {
             pointer: None,
             release: None,
             quiet: false,
+            bar: false,
             offered: Cell::new(false),
         }
     }
@@ -287,9 +290,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let Some(pointer) = self.cross.pointer.filter(|p| p.window.is_some() && !p.released) else { return };
         let Some(drag) = pointer.window.and_then(|w| self.window_group_drag(w)) else { return };
         if let Some(Dest::Main(local)) = self.destination(&pointer, None) {
-            self.cross.quiet = true;
+            (self.cross.quiet, self.cross.bar) = (true, true);
             self.paint_group_drag(ui, &drag, local, pointer.command);
-            self.cross.quiet = false;
+            (self.cross.quiet, self.cross.bar) = (false, false);
         }
     }
 
@@ -298,7 +301,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     fn drop_native_window(&mut self, window: u64, pointer: &DragPointer) {
         let Some(drag) = self.window_group_drag(window).filter(|_| !pointer.command && self.style.title_bar_docks) else { return };
         match self.destination(pointer, None) {
-            Some(Dest::Main(local)) => self.drop_window(&drag, local, false),
+            Some(Dest::Main(local)) => {
+                self.cross.bar = true;
+                self.drop_window(&drag, local, false);
+                self.cross.bar = false;
+            }
             Some(Dest::Window(target, local)) => {
                 let action = self.within_window(target, true, |r| {
                     let proposal = r.group_proposal(&drag, local).filter(|p| !p.noop)?;

@@ -136,9 +136,19 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             });
         }
         let proposal = self.resolve_roomy(&drag.panel, pointer, std::slice::from_ref(target), |to| group_action(drag, to))?;
-        // A window moving live splits only groups of other floating windows.
+        // A window moving live splits only groups of other floating windows. A native
+        // window's bar also takes the main window's frame edges, but not a body's center.
         let into_window = matches!(self.place(&proposal.anchor), Some(Place::Floating { .. }));
-        if window && !into_window && matches!(proposal.placement, Placement::Split(_)) {
+        #[cfg(feature = "native-windows")]
+        let edges = self.cross.bar;
+        #[cfg(not(feature = "native-windows"))]
+        let edges = false;
+        let split = match proposal.placement {
+            Placement::Split(Zone::Center) => true,
+            Placement::Split(_) => !edges,
+            _ => false,
+        };
+        if window && !into_window && split {
             return None;
         }
         valid(proposal)

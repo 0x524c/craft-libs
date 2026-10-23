@@ -550,3 +550,92 @@ fn without_window_positions_a_drag_out_of_a_native_window_floats() {
     let out = d.window_release(id, pos2(120.0, 200.0));
     assert!(!out.actions.iter().any(|a| matches!(a, Action::Float { .. } | Action::Move { .. })), "{:?}", out.actions);
 }
+
+/// Drag window `panel`'s bar until the pointer is at `to` in the main window, and release.
+fn drag_bar_to(d: &mut DockDriver<u32, Content>, panel: u32, to: Pos2) -> super::DockOutput<u32> {
+    let id = window(d, panel).id;
+    d.window_step(id, vec![Event::PointerMoved(pos2(40.0, 9.0)), button(pos2(40.0, 9.0), true)]);
+    d.window_step(id, vec![Event::PointerMoved(pos2(60.0, 19.0))]);
+    let Some(local) = d.window_local(id, ORIGIN + to.to_vec2()) else { return Default::default() };
+    d.window_step(id, vec![Event::PointerMoved(local)]);
+    d.window_step(id, vec![button(pos2(40.0, 9.0), false)])
+}
+
+fn window_move(out: &super::DockOutput<u32>) -> Option<&Target<u32>> {
+    out.actions.iter().find_map(|a| match a {
+        Action::MoveWindow { to, .. } => Some(to),
+        _ => None,
+    })
+}
+
+#[test]
+fn a_native_windows_bar_docks_it_at_frame_edges_and_dock_lines_but_not_a_body_center() {
+    // The right edge zone of frame [3, 4], clear of the new-dock band along the window's edge.
+    let mut d = driver(layout(true));
+    let out = drag_bar_to(&mut d, 5, pos2(740.0, 300.0));
+    assert!(matches!(window_move(&out), Some(Target::At { anchor: 3 | 4, placement: Placement::Split(super::Zone::Right) })), "{:?}", out.actions);
+    assert!(d.layout.floating.is_empty());
+    assert!(in_root(&d, 5) && in_root(&d, 6));
+
+    // The middle of the frame is no target for a whole window.
+    let mut d = driver(layout(true));
+    let out = drag_bar_to(&mut d, 5, pos2(600.0, 300.0));
+    assert_eq!(window_move(&out), None, "{:?}", out.actions);
+    assert!(window(&d, 5).contains(&6));
+
+    // The seam between the dock's two groups, which meet at y = 307.
+    let dock = Node::Dock {
+        side: super::Side::Start,
+        columns: vec![super::Column::new(vec![super::Group::new(vec![2], 0), super::Group::new(vec![3], 0)], 240.0)],
+    };
+    let mut docked = layout(true);
+    docked.root =
+        Some(Node::Split { axis: SplitAxis::Horizontal, size: SplitSize::FixedFirst(240.0), first: Box::new(dock), second: Box::new(tabs(&[1])) });
+    let mut d = driver(docked);
+    let out = drag_bar_to(&mut d, 5, pos2(120.0, 309.0));
+    assert_eq!(window_move(&out), Some(&Target::At { anchor: 2, placement: Placement::Group { below: true, height: None } }), "{:?}", out.actions);
+    assert!(d.layout.floating.is_empty());
+    assert!(in_root(&d, 5) && in_root(&d, 6));
+}
+
+#[test]
+fn escape_during_a_bar_drag_puts_the_window_back() {
+    let mut d = driver(layout(true));
+    let id = window(&d, 5).id;
+    let viewport = d.viewport(id);
+    d.window_step(id, vec![Event::PointerMoved(pos2(40.0, 9.0)), button(pos2(40.0, 9.0), true)]);
+    d.window_step(id, vec![Event::PointerMoved(pos2(60.0, 19.0))]);
+    d.window_step(id, vec![Event::PointerMoved(pos2(140.0, 59.0))]);
+    assert_ne!(d.host().windows[&viewport].rect.min, pos2(400.0, 130.0), "moved");
+    let escape = Event::Key { key: Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
+    d.window_step(id, vec![escape]);
+    assert_eq!(d.host().windows[&viewport].rect.min, pos2(400.0, 130.0));
+    // The release that follows docks nothing, wherever it is.
+    let out = d.window_step(id, vec![button(pos2(40.0, 9.0), false)]);
+    assert_eq!(window_move(&out), None, "{:?}", out.actions);
+    d.step(vec![]);
+    assert_eq!(window(&d, 5).native.map(|r| [r[0], r[1]]), Some([400.0, 130.0]));
+}
+
+#[test]
+fn the_window_focused_last_is_in_front_where_windows_overlap() {
+    // Window [7] overlaps window [5, 6] on the desktop, at (550, 280) among others.
+    let mut layout = layout(true);
+    layout.floating.push(Floating::single(vec![7], 0, [350.0, 150.0, 240.0, 150.0]));
+    let overlap = pos2(550.0, 280.0) - ORIGIN.to_vec2();
+    for (front, anchors) in [(7, vec![7]), (5, vec![5, 6]), (7, vec![7])] {
+        let mut d = driver(layout.clone());
+        let viewport = d.viewport(window(&d, front).id);
+        d.host().focus = Some(viewport);
+        d.step(vec![]);
+        d.host().focus = Some(egui::ViewportId::ROOT);
+        d.step(vec![]);
+        let tab = d.hit(&Hit::Tab(1)).unwrap().center();
+        let out = d.drag(tab, overlap);
+        let anchor = out.actions.iter().find_map(|a| match a {
+            Action::Move { panel: 1, anchor, .. } => Some(*anchor),
+            _ => None,
+        });
+        assert!(anchor.is_some_and(|a| anchors.contains(&a)), "front {front}: {:?}", out.actions);
+    }
+}
