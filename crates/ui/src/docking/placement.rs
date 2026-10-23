@@ -9,6 +9,11 @@ use super::Monitor;
 const MAX_SIZE: f32 = 16_384.0;
 const MAX_POSITION: f32 = 100_000.0;
 const MIN_SIZE: [f32; 2] = [160.0, 100.0];
+/// Height of the bar at the top of a native window.
+pub(super) const BAR_HEIGHT: f32 = 18.0;
+/// How much of a window's bar must lie on one monitor for the window to be reachable: wide
+/// enough to grab, and half its height.
+const REACHABLE: [f32; 2] = [40.0, BAR_HEIGHT / 2.0];
 
 /// A rect safe to hand to the windowing system: finite, its size and position bounded.
 /// Hostile workspace files and bad monitor reports included.
@@ -42,6 +47,26 @@ pub(super) fn monitor_of(monitors: &[Monitor], rect: [f32; 4]) -> Option<&Monito
         .or_else(|| monitors().min_by(|a, b| to_rect(a.rect).distance_sq_to_pos(center).total_cmp(&to_rect(b.rect).distance_sq_to_pos(center))))
 }
 
+/// Whether enough of the bar along the top of `rect` lies on one of `monitors` to grab it.
+fn reachable(rect: [f32; 4], monitors: &[Monitor]) -> bool {
+    let [x, y, w, _] = rect;
+    let bar = to_rect([x, y, w, BAR_HEIGHT]);
+    monitors.iter().filter(|m| usable(m)).any(|m| {
+        let on = bar.intersect(to_rect(m.rect));
+        on.width() >= REACHABLE[0].min(w) && on.height() >= REACHABLE[1]
+    })
+}
+
+/// `rect` made safe, and moved wholly onto the nearest of `monitors` when too little of its
+/// bar lies on any to grab it. Without a monitor list, only made safe.
+pub(super) fn kept_reachable(rect: [f32; 4], monitors: &[Monitor]) -> [f32; 4] {
+    let rect = sanitized(rect);
+    if !monitors.iter().any(usable) || reachable(rect, monitors) {
+        return rect;
+    }
+    monitor_of(monitors, rect).map_or(rect, |m| clamp_onto(rect, m.rect))
+}
+
 /// `rect` moved, and shrunk if it must be, to lie wholly on `area`.
 fn clamp_onto(rect: [f32; 4], area: [f32; 4]) -> [f32; 4] {
     let [x, y, w, h] = rect;
@@ -54,7 +79,8 @@ fn clamp_onto(rect: [f32; 4], area: [f32; 4]) -> [f32; 4] {
 /// Where a native window from a saved layout opens.
 ///
 /// - Its saved monitor (`monitor`), found in `monitors` by name or else by rect, is connected:
-///   the saved rect, moved in proportion if that monitor's rect changed.
+///   the saved rect, moved in proportion if that monitor's rect changed, and onto it if too
+///   little of its bar lies on a monitor to grab it.
 /// - It is not: the main window's monitor, at the same offset from its origin.
 /// - No monitor list: the main window's monitor as egui reports it, by its size alone. Its
 ///   origin is taken as the multiple of that size nearest below the main window's center,
@@ -77,7 +103,13 @@ pub(super) fn restore(saved: [f32; 4], monitor: Option<&Monitor>, monitors: &[Mo
     });
     let [x, y, w, h] = saved;
     match (connected, monitor) {
-        (Some((old, now)), _) if old.rect == now.rect => saved,
+        (Some((old, now)), _) if old.rect == now.rect => {
+            if reachable(saved, monitors) {
+                saved
+            } else {
+                clamp_onto(saved, now.rect)
+            }
+        }
         (Some((old, now)), _) => {
             let [ox, oy, ow, oh] = old.rect;
             let [nx, ny, nw, nh] = now.rect;
@@ -91,10 +123,9 @@ pub(super) fn restore(saved: [f32; 4], monitor: Option<&Monitor>, monitors: &[Mo
             let (dx, dy) = if usable(old) { (x - ox, y - oy) } else { (0.0, 0.0) };
             clamp_onto([tx + dx, ty + dy, w, h], target.rect)
         }
-        // No saved monitor: the window stays where its center is on a monitor.
+        // No saved monitor: the window stays where its bar can be grabbed.
         (None, None) => {
-            let center = to_rect(saved).center();
-            if monitors.iter().any(|m| usable(m) && to_rect(m.rect).contains(center)) {
+            if reachable(saved, monitors) {
                 return saved;
             }
             main_monitor.map_or(saved, |target| clamp_onto(saved, target.rect))
@@ -129,6 +160,25 @@ mod tests {
         // Partly off its monitor, as the user left it.
         let edge = [4300.0, 300.0, 400.0, 500.0];
         assert_eq!(restore(edge, Some(&monitors[1]), &monitors, main_at(100.0, 100.0), None), edge);
+        // Wholly off it, or with only its body on it: back onto it.
+        let off = [5000.0, 300.0, 400.0, 500.0];
+        assert_eq!(restore(off, Some(&monitors[1]), &monitors, main_at(100.0, 100.0), None), [4080.0, 300.0, 400.0, 500.0]);
+        let above = [2400.0, -10.0, 400.0, 500.0];
+        assert_eq!(restore(above, Some(&monitors[1]), &monitors, main_at(100.0, 100.0), None), [2400.0, 0.0, 400.0, 500.0]);
+    }
+
+    #[test]
+    fn a_window_is_kept_where_its_bar_can_be_grabbed() {
+        let monitors = [monitor("left", LEFT, 1.0), monitor("right", RIGHT, 2.0)];
+        // Across the seam, or mostly off screen with enough of its bar on one.
+        for rect in [[1800.0, 100.0, 400.0, 300.0], [-360.0, 1071.0, 400.0, 300.0]] {
+            assert_eq!(kept_reachable(rect, &monitors), rect);
+        }
+        assert_eq!(kept_reachable([-370.0, 100.0, 400.0, 300.0], &monitors), [0.0, 100.0, 400.0, 300.0]);
+        assert_eq!(kept_reachable([500.0, 1075.0, 400.0, 300.0], &monitors), [500.0, 780.0, 400.0, 300.0]);
+        assert_eq!(kept_reachable([9000.0, 100.0, 400.0, 300.0], &monitors), [4080.0, 100.0, 400.0, 300.0]);
+        // No monitor list: only made safe.
+        assert_eq!(kept_reachable([9000.0, f32::NAN, 400.0, 300.0], &[]), [9000.0, 0.0, 400.0, 300.0]);
     }
 
     #[test]
