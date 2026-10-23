@@ -540,6 +540,11 @@ pub(super) fn valid_rect(rect: [f32; 4]) -> bool {
     rect.iter().all(|v| v.is_finite() && v.abs() <= MAX_EXTENT) && rect.get(2).is_some_and(|v| *v > 0.0) && rect.get(3).is_some_and(|v| *v > 0.0)
 }
 
+/// A floating window's saved monitor and monitor size, each where given.
+fn valid_monitor(monitor: Option<&Monitor>, monitor_size: Option<[f32; 2]>) -> bool {
+    monitor.is_none_or(|m| valid_rect(m.rect) && m.scale.is_finite() && m.scale > 0.0) && monitor_size.is_none_or(|[w, h]| valid_rect([0.0, 0.0, w, h]))
+}
+
 pub(super) fn valid_width(width: f32) -> bool {
     width.is_finite() && width > 0.0 && width <= MAX_EXTENT
 }
@@ -615,7 +620,10 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             }
         }
         for floating in &self.floating {
-            if !valid_rect(floating.rect) || floating.native.is_some_and(|r| !valid_rect(r)) {
+            if !valid_rect(floating.rect)
+                || floating.native.is_some_and(|r| !valid_rect(r))
+                || !valid_monitor(floating.monitor.as_ref(), floating.monitor_size)
+            {
                 return Err(DockError::InvalidGeometry);
             }
             let mut visit = vec![(&floating.root, 1usize)];
@@ -1180,9 +1188,7 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                 Ok(())
             }
             Action::SetMonitor { panel, monitor, monitor_size } => {
-                let valid = monitor.as_ref().is_none_or(|m| valid_rect(m.rect) && m.scale.is_finite() && m.scale > 0.0)
-                    && monitor_size.is_none_or(|[w, h]| valid_rect([0.0, 0.0, w, h]));
-                if !valid {
+                if !valid_monitor(monitor.as_ref(), monitor_size) {
                     return Err(DockError::InvalidGeometry);
                 }
                 let window = self.floating.iter_mut().find(|g| g.contains(&panel)).ok_or(DockError::InvalidPlacement)?;
