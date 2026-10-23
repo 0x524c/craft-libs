@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 intl_pluralrules = "=7.0.2"
 unic-langid = "0.9"
+log = "0.4"
 sys-locale = "0.3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

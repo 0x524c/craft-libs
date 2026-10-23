@@ -791,6 +791,7 @@ name = "craft-i18n"
 version = "0.1.0"
 dependencies = [
  "intl_pluralrules",
+ "log",
  "sys-locale",
  "unic-langid",
 ]
