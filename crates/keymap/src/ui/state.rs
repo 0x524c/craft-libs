@@ -1469,11 +1469,7 @@ mod tests {
         assert!(matches!(st.finish(), Some(Outcome::Import { .. })));
         assert!(fx.km.overrides().is_empty() && !st.can_undo());
         let read = |text: &str| ForeignKey::read(Some("Default"), text, crate::Flavor::Windows);
-        let set = ForeignSet {
-            name: Some("Theirs".into()),
-            entries: vec![ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S"))],
-            truncated: 0,
-        };
+        let set = ForeignSet::new(vec![ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S"))]).with_name("Theirs");
         let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() };
         st.review_import(&mut fx.env(), set, options);
         st.import_reviewed(&mut fx.env());
@@ -1548,14 +1544,11 @@ mod tests {
         let mut fx = Fx::new(Options::default());
         let mut st = open(&mut fx);
         let read = |text: &str| ForeignKey::read(Some("Default"), text, crate::Flavor::Windows);
-        let set = ForeignSet {
-            name: Some("Theirs".into()),
-            entries: vec![
-                ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(3),
-                ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(4),
-            ],
-            truncated: 0,
-        };
+        let set = ForeignSet::new(vec![
+            ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(3),
+            ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(4),
+        ])
+        .with_name("Theirs");
         let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() };
         st.review_import(&mut fx.env(), set, options);
         let r = st.review.as_ref();

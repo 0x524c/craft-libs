@@ -206,7 +206,9 @@ assert_eq!(sets.active_overrides(&builtins), sets.get("Mine", &builtins).unwrap(
 
 The app's reader turns a file (an InDesign Show Set, an Illustrator `.kys`) into an
 [`import::ForeignSet`](src/import.rs): entries with a menu, a path and keys read by
-`ForeignKey::read`. `import::plan` matches each entry to one command and changes nothing;
+`ForeignKey::read`. The reader builds it with `ForeignSet::new(entries)`, `with_name` and
+`with_truncated`; the struct is `#[non_exhaustive]`, so struct literals outside the crate do not
+compile. `import::plan` matches each entry to one command and changes nothing;
 `ImportPlan::apply` applies the plan and returns an `ImportReport` (serde, camelCase). Report
 rows carry the entry's `item` (its path) and `line`.
 
@@ -220,14 +222,11 @@ let save = Bindable::new("file.save", "Save", Scope::app())
 let mut keymap = Keymap::new(vec![save], Scopes::new(), Platform::Windows);
 
 let read = |text: &str| ForeignKey::read(Some("Default"), text, Flavor::Windows);
-let set = ForeignSet {
-    name: Some("My Set".into()),
-    entries: vec![
-        ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(12),
-        ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(13),
-    ],
-    truncated: 0,
-};
+let set = ForeignSet::new(vec![
+    ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(12),
+    ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(13),
+])
+.with_name("My Set");
 let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() };
 let planned = plan(&set, &keymap, &options);
 // A review UI can show planned.commands and planned.report here.
@@ -327,6 +326,9 @@ Adopt it in three steps:
 2. While the dialog is open, keep a `DialogState` and call `show` (a window) or `ui` (the body,
    for the app's own modal or preferences page) every frame.
 3. Act on the `Outcome` it returns, and drop the state when `is_open()` turns false.
+
+Apps that import other applications' sets read each file into a `ForeignSet` built with
+`ForeignSet::new` ([Importing a shortcut set](#importing-a-shortcut-set)).
 
 ```rust,ignore
 use craft_keymap::ui::{DialogState, I18nText, Options, Outcome, ShortcutsDialog};

@@ -118,14 +118,11 @@
 //! let mut keymap = Keymap::new(vec![save], Scopes::new(), Platform::Windows);
 //!
 //! let read = |text: &str| ForeignKey::read(Some("Default"), text, Flavor::Windows);
-//! let set = ForeignSet {
-//!     name: Some("My Set".into()),
-//!     entries: vec![
-//!         ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(12),
-//!         ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(13),
-//!     ],
-//!     truncated: 0,
-//! };
+//! let set = ForeignSet::new(vec![
+//!     ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(12),
+//!     ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(13),
+//! ])
+//! .with_name("My Set");
 //! let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() };
 //! let planned = plan(&set, &keymap, &options);
 //! assert_eq!(planned.commands.len(), 1);

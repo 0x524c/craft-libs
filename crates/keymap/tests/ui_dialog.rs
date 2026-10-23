@@ -724,17 +724,14 @@ fn set_export_import_round_trip() {
 
 fn foreign_set() -> ForeignSet {
     let read = |text: &str| ForeignKey::read(Some("Default"), text, Flavor::Windows);
-    ForeignSet {
-        name: Some("Theirs".into()),
-        entries: vec![
-            ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(3),
-            ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(4),
-            ForeignEntry::new(Some("File"), ["Export…"]).with_key(read("Ctrl+Blorp")).at_line(5),
-            ForeignEntry::new(Some("Object"), ["Arrange", "Bring to Front"]).with_key(read("Num 7")).at_line(6),
-            ForeignEntry::new(Some("File"), ["Sve Az"]).with_key(read("Ctrl+F9")).at_line(7),
-        ],
-        truncated: 0,
-    }
+    ForeignSet::new(vec![
+        ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(3),
+        ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(4),
+        ForeignEntry::new(Some("File"), ["Export…"]).with_key(read("Ctrl+Blorp")).at_line(5),
+        ForeignEntry::new(Some("Object"), ["Arrange", "Bring to Front"]).with_key(read("Num 7")).at_line(6),
+        ForeignEntry::new(Some("File"), ["Sve Az"]).with_key(read("Ctrl+F9")).at_line(7),
+    ])
+    .with_name("Theirs")
 }
 
 fn review(h: &mut Harness<'_, Fx>) {

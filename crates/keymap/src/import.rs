@@ -29,8 +29,9 @@ pub const MAX_PATH_SEGMENTS: usize = 32;
 /// in [`ImportReport::truncated`]. Entries without keys get no suggestion and do not count.
 pub const MAX_SUGGESTIONS: usize = 200;
 
-/// A shortcut set as an app's reader found it.
+/// A shortcut set as an app's reader found it. Build it with [`ForeignSet::new`].
 #[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct ForeignSet {
     pub name: Option<String>,
     pub entries: Vec<ForeignEntry>,
@@ -60,6 +61,25 @@ pub struct ForeignEntry {
     /// is a segment of some catalog path. Without keys, an entry matched only these ways
     /// changes nothing ([`ImportReport::matched_without_change`]).
     pub panel_menu: bool,
+}
+
+impl ForeignSet {
+    /// A set without a name.
+    pub fn new(entries: Vec<ForeignEntry>) -> ForeignSet {
+        ForeignSet { entries, ..ForeignSet::default() }
+    }
+
+    /// The set's name as the source gives it.
+    pub fn with_name(mut self, name: impl Into<String>) -> ForeignSet {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Entries the reader dropped at its own limits ([`ForeignSet::truncated`]).
+    pub fn with_truncated(mut self, truncated: usize) -> ForeignSet {
+        self.truncated = truncated;
+        self
+    }
 }
 
 impl ForeignEntry {
