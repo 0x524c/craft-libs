@@ -233,7 +233,8 @@ impl Clut {
         for (d, &v) in input.iter().enumerate().take(self.inputs) {
             let (b, rr, ss) = self.locate(d, v);
             base += b;
-            if ss > 0 && rr > 0.0 {
+            // `!= 0.0` keeps a NaN fraction, so a NaN input still gives a NaN result.
+            if ss > 0 && rr != 0.0 {
                 r[n] = rr;
                 s[n] = ss;
                 n += 1;
@@ -314,6 +315,14 @@ mod tests {
         let c = Clut::sample(vec![2, 2], 1, |p, o| o[0] = p[0] + p[1]).unwrap();
         c.eval(&[0.5, 0.25], &mut o).unwrap();
         assert!((o[0] - 0.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_nan_input_still_gives_nan() {
+        let c = Clut::sample(vec![2; 5], 1, |p, o| o[0] = p.iter().sum()).unwrap();
+        let mut o = [0.0];
+        c.eval_multilinear(&[0.5, f32::NAN, 0.5, 0.5, 0.5], &mut o).unwrap();
+        assert!(o[0].is_nan(), "{o:?}");
     }
 
     #[test]
