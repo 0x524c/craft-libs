@@ -100,10 +100,12 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   sets them; otherwise the number locale's CLDR data decides. `Region::system()` reads it once:
   Windows' regional format with the user's changes (`HKCU\Control Panel\International`), Apple's
   current locale (`en_PL`, `en_GB@rg=uszzzz`), `LC_ALL` or else `LC_NUMERIC`, `LC_TIME`,
-  `LC_MEASUREMENT` and `LC_PAPER` each on its own over `LANG` on Unix (`C` there is `en-US`;
-  `LANG=C` gives way to the preferred language), the preferred language on the web and Android.
-  `Region::from_setting` takes the app's saved choice (`auto` or a tag like `pl-PL`). Paper and
-  measurement follow CLDR's territory lists; tags may carry `-u-ms-`, `-u-hc-` and `-u-rg-`.
+  `LC_MEASUREMENT` and `LC_PAPER` each on its own over `LANG` on Unix (`C` there is English on A4,
+  metric, with a `.` decimal and no grouping; `LANG=C` gives way to the preferred language), the
+  preferred language on the web and Android. `Region::from_setting` takes the app's saved choice
+  (`auto` or a tag like `pl-PL`). Paper and measurement follow CLDR's territory lists; tags may
+  carry `-u-ms-`, `-u-hc-`, `-u-rg-` and `-u-nu-` (Apple's `@numbers=`), and a chosen digit
+  system stays in the number locale.
   Ported from WordCraft's `Region`.
 - **Pseudo locale** (`pseudo`, debug builds only, never in `languages()`): every lookup, `get`
   included, comes back as `⟦…⟧`, line by line, so text drawn without the marks never went through
