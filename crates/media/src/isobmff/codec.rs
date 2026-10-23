@@ -491,7 +491,7 @@ pub struct VpcConfig {
     pub bit_depth: u8,
     pub chroma_subsampling: u8,
     pub full_range: bool,
-    pub color_primaries: u8,
+    pub colour_primaries: u8,
     pub transfer_characteristics: u8,
     pub matrix_coefficients: u8,
     pub codec_init: Vec<u8>,
@@ -512,7 +512,7 @@ impl VpcConfig {
         let profile = c.u8()?;
         let level = c.u8()?;
         let a = c.u8()?;
-        let color_primaries = c.u8()?;
+        let colour_primaries = c.u8()?;
         let transfer_characteristics = c.u8()?;
         let matrix_coefficients = c.u8()?;
         let n = c.u16()? as usize;
@@ -523,7 +523,7 @@ impl VpcConfig {
             bit_depth: a >> 4,
             chroma_subsampling: (a >> 1) & 7,
             full_range: a & 1 != 0,
-            color_primaries,
+            colour_primaries,
             transfer_characteristics,
             matrix_coefficients,
             codec_init,
@@ -535,7 +535,7 @@ impl VpcConfig {
         b.u8(self.profile);
         b.u8(self.level);
         b.u8((self.bit_depth << 4) | ((self.chroma_subsampling & 7) << 1) | self.full_range as u8);
-        b.u8(self.color_primaries);
+        b.u8(self.colour_primaries);
         b.u8(self.transfer_characteristics);
         b.u8(self.matrix_coefficients);
         b.u16(self.codec_init.len() as u16);
@@ -1651,7 +1651,7 @@ mod tests {
             bit_depth: 10,
             chroma_subsampling: 1,
             full_range: true,
-            color_primaries: 9,
+            colour_primaries: 9,
             transfer_characteristics: 16,
             matrix_coefficients: 9,
             codec_init: vec![],
