@@ -130,6 +130,21 @@ fn protected_canvas_remains_present_and_cannot_be_grouped_with_panels() {
 }
 
 #[test]
+fn moving_a_floating_group_needs_every_member_movable() {
+    // sample() floats 5 and 6 together; 6 may not move, so naming 5 cannot move it either.
+    let permissions = |panel: &u32| Permissions { movable: *panel != 6, ..Permissions::default() };
+    let layout = sample();
+    let mut next = layout.clone();
+    assert_eq!(
+        next.apply_with_permissions(Action::MoveFloating { panel: 5, rect: [0.0, 0.0, 300.0, 220.0] }, permissions),
+        Err(DockError::NotAllowed)
+    );
+    assert_eq!(next, layout);
+    next.apply_with_permissions(Action::MoveFloating { panel: 5, rect: [0.0, 0.0, 300.0, 220.0] }, |_: &u32| Permissions::default()).unwrap();
+    assert_eq!(next.floating[0].rect, [0.0, 0.0, 300.0, 220.0]);
+}
+
+#[test]
 fn close_and_restore_preserve_fixed_side_and_floating_geometry() {
     let mut layout = Layout {
         root: Some(Node::Split {
