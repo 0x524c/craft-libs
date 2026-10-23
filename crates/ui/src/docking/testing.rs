@@ -115,7 +115,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
         #[cfg(feature = "native-windows")]
         if let Some(host) = &self.host {
             let mut host = host.borrow_mut();
-            (host.time, host.screen) = (self.time, self.screen);
+            (host.time, host.screen, host.modifiers) = (self.time, self.screen, self.modifiers);
             host.frames += 1;
             input.viewports = host.infos();
             input.focused = host.focus == Some(egui::ViewportId::ROOT);
@@ -363,6 +363,8 @@ pub struct NativeHost {
     /// Moves waiting to land under `lag`: window, content position, frame sent.
     late: Vec<(egui::ViewportId, Pos2, usize)>,
     frames: usize,
+    /// The driver's modifiers: the keyboard's, whichever window has focus.
+    modifiers: Modifiers,
     screen: Rect,
     time: f64,
 }
@@ -399,6 +401,7 @@ impl NativeHost {
             commands: Vec::new(),
             late: Vec::new(),
             frames: 0,
+            modifiers: Modifiers::NONE,
             screen: Rect::NOTHING,
             time: 0.0,
         }
@@ -429,7 +432,7 @@ impl NativeHost {
             let visible = builder.visible.unwrap_or(true);
             host.windows.entry(id).or_insert_with(|| HostWindow { rect, visible, frames: 0, events: Vec::new(), close: false, shapes: Vec::new() });
             let mut viewports = host.infos();
-            let (time, focused) = (host.time, host.focus == Some(id));
+            let (time, focused, modifiers) = (host.time, host.focus == Some(id), host.modifiers);
             let Some(window) = host.windows.get_mut(&id) else { return };
             window.frames += 1;
             if std::mem::take(&mut window.close)
@@ -441,7 +444,7 @@ impl NativeHost {
                 viewport_id: id,
                 viewports,
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, window.rect.size())),
-                events: std::mem::take(&mut window.events),
+                events: std::iter::once(Event::ModifiersChanged(modifiers)).chain(std::mem::take(&mut window.events)).collect(),
                 focused,
                 time: Some(time),
                 ..Default::default()

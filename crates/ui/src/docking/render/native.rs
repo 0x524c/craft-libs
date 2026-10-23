@@ -137,6 +137,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             natives.push((window, rect, viewport_id(self.id, window.id, n)));
         }
         if native {
+            self.escape_elsewhere(ctx, None);
             // A window closed or docked during its own bar drag ends the drag.
             let key = self.id.with("window-drag");
             if ctx.data(|d| d.get_temp::<WindowDrag>(key)).is_some_and(|d| !natives.iter().any(|(w, ..)| w.id == d.window)) {
@@ -410,6 +411,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             });
             self.start_window_drag(ui, window.id, true);
         }
+        self.escape_elsewhere(ctx, Some(window.id));
         let origin = ui.input(|i| content_of(i.viewport())).map(|(origin, _)| origin);
         if self.follow_window_drag(ui, window.id) {
             return origin;
@@ -443,8 +445,25 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let key = self.id.with("window-drag");
         let Some(mut drag) = ui.ctx().data(|d| d.get_temp::<WindowDrag>(key)).filter(|d| d.window == window) else { return false };
         let content = ui.input(|i| content_of(i.viewport()));
-        let pointer = self.record_pointer(ui.ctx(), Some(window), content.map(|(origin, _)| origin), Some(&drag));
         let frame = content.map_or(Vec2::ZERO, |(_, frame)| frame);
+        // A pointer move of this frame is relative to where the window was when the window
+        // system sent it, which is where it reports the window now: a move commanded earlier
+        // may not have landed yet. Without one the window stays, since the last position egui
+        // keeps (button events included) was measured against an older place.
+        let moved = ui.input(|i| i.events.iter().rev().find_map(|e| if let Event::PointerMoved(p) = e { Some(*p) } else { None }));
+        let mut step = None;
+        if let (Some((origin, _)), Some(local)) = (content, moved.filter(|p| p.is_finite())) {
+            let to = origin + (local.to_vec2() - drag.grab);
+            if to.distance(drag.to) > 0.0 {
+                (drag.to, step) = (to, Some(to));
+                ui.ctx().data_mut(|d| d.insert_temp(key, drag));
+            }
+        }
+        // The pointer on the desktop is the pressed point of the window where it was last
+        // put, so the origin is that place, less the local pointer.
+        let local = ui.input(|i| i.pointer.latest_pos()).filter(|p| p.is_finite());
+        let origin = local.map(|local| drag.to + drag.grab - local.to_vec2()).or(content.map(|(origin, _)| origin));
+        let pointer = self.record_pointer(ui.ctx(), Some(window), origin, Some(&drag));
         let move_to = |r: &mut Self, to: Pos2| {
             ui.ctx().send_viewport_cmd(ViewportCommand::OuterPosition(to - frame));
             r.cross.moved = Some(to);
@@ -457,6 +476,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             ui.ctx().data_mut(|d| d.remove::<WindowDrag>(key));
             return true;
         }
+        if let Some(to) = step {
+            move_to(self, to);
+        }
         if !pointer.down {
             ui.ctx().data_mut(|d| d.remove::<WindowDrag>(key));
             // Left with too little of its bar on a monitor to grab it: back onto the nearest.
@@ -467,18 +489,6 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 }
             }
             self.end_window_drag(drag, pointer);
-            return true;
-        }
-        // This frame's pointer is relative to where the window was when the window system sent
-        // it, which is where it reports the window now: a move commanded earlier may not have
-        // landed yet.
-        if let (Some((origin, _)), Some(local)) = (content, ui.input(|i| i.pointer.latest_pos()).filter(|p| p.is_finite())) {
-            let to = origin + (local.to_vec2() - drag.grab);
-            if to.distance(drag.to) > 0.0 {
-                drag.to = to;
-                move_to(self, to);
-                ui.ctx().data_mut(|d| d.insert_temp(key, drag));
-            }
         }
         true
     }
@@ -502,7 +512,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 .cloned()
                 .collect::<Vec<_>>()
         });
-        self.output.forwarded_events.extend(events);
+        if !events.is_empty() {
+            self.output.forwarded_modifiers = Some(ui.input(|i| i.modifiers));
+            self.output.forwarded_events.extend(events);
+        }
     }
 }
 

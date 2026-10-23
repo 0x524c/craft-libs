@@ -24,6 +24,9 @@ use crate::docking::{Action, Drag, DropTarget, Floating, GroupDrag, GroupGesture
 pub(super) const POINTER: &str = "drag-pointer";
 /// Key of whether a target was offered last frame, for the source window's undock hint.
 const OFFERED: &str = "drag-offered";
+/// Key of an Escape that reached one of the application's windows other than the drag's
+/// owner. Keys go to the window with keyboard focus, which need not be the one dragging.
+const ESCAPE: &str = "drag-escape";
 
 /// The pointer of a drag, as the window that owns the drag last saw it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -127,13 +130,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     pub(super) fn record_pointer(&mut self, ctx: &Context, owner: Option<u64>, origin: Option<Pos2>, window: Option<&WindowDrag>) -> DragPointer {
         let key = self.id.with(POINTER);
         let kept = ctx.data(|d| d.get_temp::<DragPointer>(key)).filter(|p| p.owner == owner).and_then(|p| p.local);
+        let elsewhere = ctx.data_mut(|d| d.remove_temp::<bool>(self.id.with(ESCAPE))).unwrap_or(false);
         let pointer = ctx.input(|i| DragPointer {
             owner,
             origin,
             local: i.pointer.latest_pos().or(i.pointer.interact_pos()).filter(|p| p.is_finite()).or(kept),
             down: i.pointer.primary_down(),
             released: i.pointer.primary_released(),
-            escape: i.key_pressed(Key::Escape),
+            escape: elsewhere || i.key_pressed(Key::Escape),
             command: i.modifiers.command || i.modifiers.ctrl || i.modifiers.mac_cmd,
             window: window.map(|w| w.window),
             docks: window.is_some_and(|w| w.docks),
@@ -141,6 +145,15 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         ctx.data_mut(|d| d.insert_temp(key, pointer));
         self.cross.pointer = Some(pointer);
         pointer
+    }
+
+    /// In a window that does not own the drag a native window owns (`window`, `None` for the
+    /// main window): an Escape pressed here cancels the drag, and is no shortcut.
+    pub(super) fn escape_elsewhere(&self, ctx: &Context, window: Option<u64>) {
+        let owner = ctx.data(|d| d.get_temp::<DragPointer>(self.id.with(POINTER))).filter(|p| p.down).map(|p| p.owner);
+        if owner.is_some_and(|owner| owner.is_some() && owner != window) && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
+            ctx.data_mut(|d| d.insert_temp(self.id.with(ESCAPE), true));
+        }
     }
 
     /// Where the drag's pointer is. Without desktop positions only the owner's own window is

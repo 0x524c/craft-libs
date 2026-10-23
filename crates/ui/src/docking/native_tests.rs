@@ -313,8 +313,11 @@ fn unused_keys_in_a_native_window_reach_the_app() {
     let mut d = driver(layout(true));
     let id = window(&d, 5).id;
     let key = Event::Key { key: Key::S, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::COMMAND };
+    d.modifiers = Modifiers::COMMAND;
     let out = d.window_step(id, vec![key.clone(), Event::Text("s".into()), Event::Copy, Event::PointerMoved(pos2(50.0, 50.0))]);
+    d.modifiers = Modifiers::NONE;
     assert_eq!(out.forwarded_events, vec![key, Event::Text("s".into()), Event::Copy]);
+    assert_eq!(out.forwarded_modifiers, Some(Modifiers::COMMAND));
     // Keys of the main window stay its own.
     let out = d.key(Key::A);
     assert!(out.forwarded_events.is_empty());
@@ -757,6 +760,13 @@ fn a_bar_drag_follows_the_pointer_when_moves_land_late() {
         d.window_step(id, vec![Event::PointerMoved(local)]);
         assert_eq!(moves(&d, viewport).last(), Some(&(pointer - grab.to_vec2())), "no overshoot");
     }
+    // Frames with no pointer move leave it, though the last move has landed since.
+    let sent = moves(&d, viewport).len();
+    for _ in 0..3 {
+        d.step(vec![]);
+    }
+    assert_eq!(moves(&d, viewport).len(), sent, "no creep");
+    assert_eq!(d.host().windows[&viewport].rect.min, pointer - grab.to_vec2());
     let local = d.window_local(id, pointer).unwrap();
     d.window_step(id, vec![button(local, false)]);
     d.settle();
@@ -861,7 +871,20 @@ fn escape_or_focus_loss_ends_a_drag_a_native_window_owns() {
     let out = d.window_step(id_of(&d), vec![escape()]);
     assert!(out.forwarded_events.is_empty(), "{:?}", out.forwarded_events);
 
-    // Another application takes focus: cancelled.
+    // Escape pressed in the main window, which has keyboard focus, cancels a drag the native
+    // window owns.
+    let mut d = driver(layout(true));
+    let id = id_of(&d);
+    let viewport = d.viewport(id);
+    d.window_step(id, vec![Event::PointerMoved(pos2(40.0, 9.0)), button(pos2(40.0, 9.0), true)]);
+    d.window_step(id, vec![Event::PointerMoved(pos2(60.0, 19.0))]);
+    d.window_step(id, vec![Event::PointerMoved(pos2(140.0, 59.0))]);
+    d.key(Key::Escape);
+    assert_eq!(d.host().windows[&viewport].rect.min, pos2(400.0, 130.0), "back where it was");
+    let out = d.window_step(id, vec![button(pos2(40.0, 9.0), false)]);
+    assert_eq!(window_move(&out), None, "{:?}", out.actions);
+
+        // Another application takes focus: cancelled.
     let mut d = driver(layout(true));
     let id = id_of(&d);
     d.window_hold(id, pos2(15.0, TAB_ROW), over);

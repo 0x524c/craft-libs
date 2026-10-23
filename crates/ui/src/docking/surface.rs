@@ -241,13 +241,17 @@ pub struct DockOutput<P> {
     /// floating window in its own OS window and that none of its widgets used (feature
     /// `native-windows`). egui hands each OS window only its own input, so an application
     /// passes these to the shortcut handling it runs on the main window's input. A window
-    /// whose text field has focus forwards nothing.
+    /// where a widget has keyboard focus forwards nothing.
     pub forwarded_events: Vec<egui::Event>,
+    /// The modifiers held in the native window that forwarded `forwarded_events`, where it
+    /// forwarded any. egui-winit turns Cmd/Ctrl+C, X and V into `Copy`, `Cut` and `Paste`
+    /// without the key, so these tell them from the keyboard's own Copy, Cut and Paste keys.
+    pub forwarded_modifiers: Option<egui::Modifiers>,
 }
 
 impl<P> Default for DockOutput<P> {
     fn default() -> Self {
-        Self { actions: Vec::new(), error: None, focused: None, group_drag: None, group_drop: None, events: Vec::new(), forwarded_events: Vec::new() }
+        Self { actions: Vec::new(), error: None, focused: None, group_drag: None, group_drop: None, events: Vec::new(), forwarded_events: Vec::new(), forwarded_modifiers: None }
     }
 }
 
@@ -557,9 +561,10 @@ pub trait DockContent<P> {
     fn paint_icon(&mut self, _painter: &egui::Painter, _rect: Rect, _panel: &P, _color: Color32) -> bool {
         false
     }
-    /// Whether the panel may move to a native OS window (feature `native-windows`).
+    /// Whether the panel's floating window may be its own OS window (feature
+    /// `native-windows`). A panel that returns false keeps its window in-window.
     fn allow_native(&self, _panel: &P) -> bool {
-        false
+        true
     }
     /// Host-owned drop resolution for targets the renderer cannot know about. Returning
     /// feedback consumes the gesture, including no-op targets; the renderer then emits no move.
