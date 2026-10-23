@@ -31,7 +31,14 @@ impl Lang {
 /// One locale's translations: context → source text → translation, app rows over shared ones.
 struct Locale {
     code: String,
-    rows: HashMap<String, HashMap<String, String>>,
+    /// The shared and the app's catalog text, parsed on first use.
+    shared: &'static str,
+    app: &'static str,
+    /// Plural forms `@plural` rows must list, for [`catalog::parse`].
+    forms: usize,
+    parsed: OnceLock<Parsed>,
+    /// [`I18n::name`], read from the text on first use.
+    name: OnceLock<Option<String>>,
     /// Itself, then its parent without the region if that is embedded too (`pt-br`, `pt`;
     /// `zh-hant-hk`, `zh-hant`). Empty for English and the pseudo locale.
     chain: Vec<usize>,
@@ -42,7 +49,49 @@ struct Locale {
     plural: Option<(PluralRules, Vec<PluralCategory>)>,
 }
 
-/// The embedded catalogs, ready for lookups. Build it once, at start-up.
+/// A locale's rows, app over shared, and what was wrong with the catalogs it came from.
+struct Parsed {
+    rows: HashMap<String, HashMap<String, String>>,
+    problems: Vec<String>,
+}
+
+impl Locale {
+    /// The rows; the catalogs are parsed on the first call and any problems logged then.
+    fn parsed(&self) -> &Parsed {
+        self.parsed.get_or_init(|| {
+            let mut problems = Vec::new();
+            let mut rows: HashMap<String, HashMap<String, String>> = HashMap::new();
+            for (name, text) in [("common", self.shared), ("app", self.app)] {
+                let (entries, errors) = catalog::parse(text, self.forms);
+                problems.extend(errors.into_iter().map(|e| format!("{}/{name}: {e}", self.code)));
+                for e in entries {
+                    rows.entry(e.context).or_default().insert(e.source, e.translation);
+                }
+            }
+            problems.iter().for_each(|p| log::warn!("translation catalog: {p}; row skipped"));
+            Parsed { rows, problems }
+        })
+    }
+
+    /// The `@id language.name` row of the app's catalog, else the shared one, found by scanning the
+    /// text so the locale needn't be parsed.
+    fn language_name(&self) -> Option<&str> {
+        self.name
+            .get_or_init(|| {
+                [self.app, self.shared].into_iter().find_map(|text| {
+                    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+                    text.split('\n')
+                        .filter(|line| line.starts_with("@id\tlanguage.name\t"))
+                        .find_map(|line| catalog::parse_row(line.strip_suffix('\r').unwrap_or(line), self.forms).ok())
+                        .map(|row| row.translation)
+                })
+            })
+            .as_deref()
+    }
+}
+
+/// The embedded catalogs, ready for lookups. Build it once, at start-up. Each locale is parsed on
+/// its first lookup, which is also when its bad rows are logged.
 pub struct I18n {
     locales: Vec<Locale>,
     /// Marked strings for the pseudo locale by source text, leaked so lookups can hand out `&str`.
@@ -55,10 +104,11 @@ pub struct I18n {
 }
 
 impl I18n {
-    /// Read `embedded`, offering the locales in `offered` (any case; the app's own language list),
-    /// so an app never offers a language its interface isn't ready for (right to left, say). Rows
-    /// and locales that can't be used are skipped and come back as problems
-    /// (`<locale>/<common|app>: line N: …`) for the app to log.
+    /// Index `embedded` without parsing it, offering the locales in `offered` (any case; the app's
+    /// own language list), so an app never offers a language its interface isn't ready for (right
+    /// to left, say). Locales that can't be used are skipped and come back as problems for the app
+    /// to log. A locale's bad rows are logged (`log::warn!`) when it is first looked up in, and
+    /// [`I18n::check_all`] lists them all.
     pub fn new(embedded: &'static Embedded, offered: &[&str]) -> (I18n, Vec<String>) {
         let mut problems = Vec::new();
         let mut locales = vec![bare("en"), bare("pseudo")];
@@ -73,16 +123,8 @@ impl I18n {
                 problems.push(format!("{code}: no plural rules; plurals show in English"));
             }
             let forms = plural.as_ref().map_or(1, |(_, c)| c.len());
-            let mut rows: HashMap<String, HashMap<String, String>> = HashMap::new();
-            for (name, text) in [("common", shared), ("app", app)] {
-                let (entries, errors) = catalog::parse(text, forms);
-                problems.extend(errors.into_iter().map(|e| format!("{code}/{name}: {e}")));
-                for e in entries {
-                    rows.entry(e.context).or_default().insert(e.source, e.translation);
-                }
-            }
             let offered = offered.iter().any(|o| o.eq_ignore_ascii_case(&code));
-            locales.push(Locale { code, rows, chain: Vec::new(), plural, offered });
+            locales.push(Locale { code, shared, app, forms, parsed: OnceLock::new(), name: OnceLock::new(), chain: Vec::new(), plural, offered });
         }
         for i in 2..locales.len() {
             let mut chain = vec![i];
@@ -103,6 +145,12 @@ impl I18n {
             }
         }
         (I18n { locales, pseudo: Mutex::default(), system: OnceLock::new() }, problems)
+    }
+
+    /// Parse every locale and list every problem, `<locale>/<common|app>: line N: …`, for a test or
+    /// an audit; the same ones [`I18n::new`] leaves to lookups to log.
+    pub fn check_all(&self) -> Vec<String> {
+        self.locales.iter().flat_map(|l| l.parsed().problems.iter().cloned()).collect()
     }
 
     /// The language with this code (any case): `en`, an offered locale, or in debug builds
@@ -167,7 +215,7 @@ impl I18n {
             .iter()
             .find_map(|&i| {
                 let locale = self.locales.get(i)?;
-                let forms = locale.rows.get("@plural")?.get(&key)?;
+                let forms = locale.parsed().rows.get("@plural")?.get(&key)?;
                 let (rules, categories) = locale.plural.as_ref()?;
                 let category = rules.select(n).ok()?;
                 // A category whole numbers up to 1000 never reach (French `many`) takes the last form.
@@ -190,13 +238,14 @@ impl I18n {
         std::iter::once(Lang::EN).chain(embedded.into_iter().map(Lang)).collect()
     }
 
-    /// The language's name in itself, for a language picker: its shared catalog's
-    /// `@id language.name` row, or the code when there is none.
+    /// The language's name in itself, for a language picker: its `@id language.name` row (the
+    /// app's catalog over the shared one), or the code when there is none. Doesn't parse the
+    /// locale.
     pub fn name(&self, lang: Lang) -> &str {
         if lang == Lang::EN {
             return "English";
         }
-        self.locale(lang).and_then(|l| l.rows.get("@id")?.get("language.name")).map_or_else(|| self.code(lang), String::as_str)
+        self.locale(lang).and_then(Locale::language_name).unwrap_or_else(|| self.code(lang))
     }
 
     /// Whether the language is written right to left. Putting text into display order is the
@@ -255,7 +304,7 @@ impl I18n {
     fn find(&self, lang: Lang, keys: &[(&str, &str)]) -> Option<&str> {
         let chain = self.locale(lang).map(|l| l.chain.as_slice())?;
         chain.iter().find_map(|&i| {
-            let rows = &self.locales.get(i)?.rows;
+            let rows = &self.locales.get(i)?.parsed().rows;
             keys.iter().find_map(|(context, source)| rows.get(*context)?.get(*source).map(String::as_str))
         })
     }
@@ -360,7 +409,17 @@ fn is_region(subtag: &str) -> bool {
 
 /// A locale with no catalogs (English, the pseudo locale).
 fn bare(code: &str) -> Locale {
-    Locale { code: code.to_owned(), rows: HashMap::new(), chain: Vec::new(), plural: None, offered: false }
+    Locale {
+        code: code.to_owned(),
+        shared: "",
+        app: "",
+        forms: 1,
+        parsed: OnceLock::new(),
+        name: OnceLock::new(),
+        chain: Vec::new(),
+        plural: None,
+        offered: false,
+    }
 }
 
 /// `code`'s CLDR cardinal rules and the categories whole numbers 0..=1000 reach, in CLDR order
@@ -397,6 +456,15 @@ fn rank(c: &PluralCategory) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl I18n {
+        /// The embedded locales parsed so far, by code.
+        fn parsed(&self) -> Vec<&str> {
+            let mut codes: Vec<&str> = self.locales.iter().skip(2).filter(|l| l.parsed.get().is_some()).map(|l| l.code.as_str()).collect();
+            codes.sort_unstable();
+            codes
+        }
+    }
 
     static E: &Embedded = &[
         ("fr", "\tSave\tEnregistrer\n\tOpen\tOuvrir\nmenu\tOpen\tOuvrir le menu\n@id\tfile.save\tEnregistrer le fichier\n", "\tSave\tSauvegarder\n"),
@@ -461,11 +529,9 @@ mod tests {
 
     #[test]
     fn bad_rows_skipped_and_reported() {
-        let (i, problems) = all(E);
-        assert_eq!(problems.len(), 2, "{problems:?}");
-        assert!(problems[0].starts_with("de/common: line 1:"), "{problems:?}");
-        assert!(problems[1].starts_with("de/common: line 2:"), "{problems:?}");
+        let i = i18n();
         assert_eq!(i.t(lang(&i, "de"), "Undo"), "Rückgängig");
+        assert_eq!(i.check_all().len(), 2);
     }
 
     #[test]
@@ -703,8 +769,8 @@ mod tests {
 
     #[test]
     fn duplicate_row_keeps_the_first() {
-        let (i, problems) = all(&[("fr", "\tSave\tEnregistrer\n\tSave\tSauver\n", "")]);
-        assert_eq!(problems, ["fr/common: line 2: defined twice (same context and source text); the first is kept"]);
+        let i = all(&[("fr", "\tSave\tEnregistrer\n\tSave\tSauver\n", "")]).0;
+        assert_eq!(i.check_all(), ["fr/common: line 2: defined twice (same context and source text); the first is kept"]);
         assert_eq!(i.t(lang(&i, "fr"), "Save"), "Enregistrer");
     }
 
@@ -738,6 +804,67 @@ mod tests {
     fn more_right_to_left() {
         let i = all(&[("ps", "", ""), ("ckb", "", ""), ("yi", "", ""), ("ug", "", "")]).0;
         assert!(i.languages().into_iter().skip(1).all(|l| i.rtl(l)));
+    }
+
+    #[test]
+    fn check_all_reports_every_bad_row() {
+        let (i, problems) = all(E);
+        assert!(i.parsed().is_empty(), "new parses nothing");
+        assert!(problems.iter().all(|p| !p.contains("line")), "{problems:?}");
+        let found = i.check_all();
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found[0].starts_with("de/common: line 1:"), "{found:?}");
+        assert!(found[1].starts_with("de/common: line 2:"), "{found:?}");
+        assert_eq!(i.check_all(), found);
+        assert_eq!(i.parsed(), ["de", "fr", "pt", "pt-br"]);
+    }
+
+    #[test]
+    fn lookup_parses_only_what_it_reaches() {
+        static LAZY: &Embedded = &[
+            ("pt", "\tUndo\tDesfazer\n", ""),
+            ("pt-br", "\tSave\tSalvar\n", ""),
+            ("de", "\tUndo\tRückgängig\n", ""),
+            ("fr", "\tUndo\tAnnuler\n", ""),
+        ];
+        let i = all(LAZY).0;
+        assert!(i.parsed().is_empty());
+        assert_eq!(i.t(lang(&i, "pt-br"), "Save"), "Salvar");
+        assert_eq!(i.parsed(), ["pt-br"]);
+        assert_eq!(i.t(lang(&i, "pt-br"), "Undo"), "Desfazer");
+        assert_eq!(i.parsed(), ["pt", "pt-br"]);
+        assert_eq!(i.t(lang(&i, "pt-br"), "Undo"), "Desfazer");
+        assert_eq!(i.parsed(), ["pt", "pt-br"]);
+        assert_eq!(i.t(Lang::EN, "Undo"), "Undo");
+        assert_eq!(i.t(Lang::PSEUDO, "Undo"), "⟦Undo⟧");
+        assert_eq!(i.parsed(), ["pt", "pt-br"]);
+    }
+
+    #[test]
+    fn name_reads_escapes_without_parsing() {
+        let i = all(&[("fr", "@id\tlanguage.name\tFran\\\\ais\\tx\n", ""), ("de", "\tA\tB\n@id\tlanguage.name\tDeutsch\n", "")]).0;
+        assert_eq!(i.name(lang(&i, "fr")), "Fran\\ais\tx");
+        assert_eq!(i.name(lang(&i, "de")), "Deutsch");
+        assert!(i.parsed().is_empty());
+    }
+
+    #[test]
+    fn app_name_overrides_shared() {
+        let i = all(&[
+            ("fr", "@id\tlanguage.name\tFrançais\n", "@id\tlanguage.name\tFrançais (app)\n"),
+            ("de", "@id\tlanguage.name\tDeutsch\n", "\tA\tB\n"),
+            ("es", "", ""),
+        ])
+        .0;
+        assert_eq!(i.name(lang(&i, "fr")), "Français (app)");
+        assert_eq!(i.name(lang(&i, "de")), "Deutsch");
+        assert_eq!(i.name(lang(&i, "es")), "es");
+    }
+
+    #[test]
+    fn i18n_is_send_and_sync() {
+        fn check<T: Send + Sync>() {}
+        check::<I18n>();
     }
 
     /// Prints what this machine reports, so CI logs show `system_lang` on each platform.
