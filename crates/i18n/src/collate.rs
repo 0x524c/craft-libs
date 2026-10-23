@@ -131,48 +131,50 @@ mod tests {
         v
     }
 
+    /// Each tailored locale puts a pair in another order than the root collation does, which a
+    /// locale whose data is missing (it falls back to root) wouldn't.
     #[test]
     fn every_shipped_locale_has_its_data() {
-        for locale in [
-            "en",
-            "ar",
-            "bg",
-            "cs",
-            "da",
-            "de",
-            "el",
-            "es",
-            "et",
-            "fa",
-            "fi",
-            "fr",
-            "hi",
-            "hr",
-            "hu",
-            "id",
-            "it",
-            "ja",
-            "ka",
-            "kk",
-            "ko",
-            "lt",
-            "nl",
-            "pl",
-            "pt-br",
-            "ru",
-            "sl",
-            "sr",
-            "sr-latn",
-            "sv",
-            "te",
-            "tr",
-            "uk",
-            "vi",
-            "zh-hans",
-            "zh-hant",
-            "not a locale",
+        let root = Collator::new("und");
+        for (locale, first, second) in [
+            ("ar", "ب", "a"),
+            ("bg", "б", "a"),
+            ("cs", "hrad", "chata"),
+            ("da", "zebra", "år"),
+            ("el", "β", "a"),
+            ("es", "nube", "ñu"),
+            ("et", "wc", "õun"),
+            ("fa", "ب", "a"),
+            ("fi", "zeta", "äiti"),
+            ("hi", "क", "a"),
+            ("hr", "cvijet", "čaj"),
+            ("hu", "cukor", "csak"),
+            ("ja", "亜", "一"),
+            ("ka", "ა", "a"),
+            ("kk", "б", "a"),
+            ("ko", "가", "a"),
+            ("lt", "yra", "jau"),
+            ("pl", "az", "ąb"),
+            ("ru", "б", "a"),
+            ("sl", "cvet", "čaj"),
+            ("sr", "б", "a"),
+            ("sr-latn", "cvijet", "čaj"),
+            ("sv", "zebra", "år"),
+            ("te", "క", "a"),
+            ("tr", "cz", "ça"),
+            ("uk", "б", "a"),
+            ("vi", "az", "ăn"),
+            ("zh-hans", "阿", "中"),
+            ("zh-hant", "人", "丈"),
         ] {
-            assert!(Collator::new(locale).0.is_some(), "{locale}");
+            assert_eq!(Collator::new(locale).compare(first, second), Ordering::Less, "{locale}: {first} < {second}");
+            assert_eq!(root.compare(first, second), Ordering::Greater, "root: {second} < {first}");
+        }
+        // CLDR doesn't tailor these: they sort in the root order.
+        for locale in ["en", "de", "fr", "id", "it", "nl", "pt-br", "not a locale"] {
+            let collator = Collator::new(locale);
+            assert!(collator.0.is_some(), "{locale}");
+            assert_eq!(collator.compare("čaj", "cvijet"), Ordering::Less, "{locale}");
         }
     }
 
