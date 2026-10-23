@@ -46,9 +46,11 @@ pub struct DockDriver<P, C> {
     pub float_bounds: Option<Rect>,
     /// Passed to [`DockArea::monitors`].
     pub monitors: Vec<Monitor>,
-    /// The stand-in for OS windows, from [`Self::with_native_host`].
+    /// The stand-in for OS windows, in use after [`Self::with_native_host`].
     #[cfg(feature = "native-windows")]
-    pub host: Option<std::rc::Rc<std::cell::RefCell<NativeHost>>>,
+    host: Option<std::rc::Rc<std::cell::RefCell<NativeHost>>>,
+    #[cfg(feature = "native-windows")]
+    no_host: std::cell::RefCell<NativeHost>,
     style: Option<StyleFn>,
     shapes: Vec<ClippedShape>,
     time: f64,
@@ -74,6 +76,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
             monitors: Vec::new(),
             #[cfg(feature = "native-windows")]
             host: None,
+            #[cfg(feature = "native-windows")]
+            no_host: std::cell::RefCell::new(NativeHost::new(Pos2::ZERO)),
             style: None,
             shapes: Vec::new(),
             time: 0.0,
@@ -158,10 +162,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
         self
     }
 
-    /// The stand-in for OS windows. Panics without [`Self::with_native_host`].
+    /// The stand-in for OS windows: without [`Self::with_native_host`], one with no windows
+    /// that nothing uses.
     #[cfg(feature = "native-windows")]
     pub fn host(&self) -> std::cell::RefMut<'_, NativeHost> {
-        self.host.as_ref().expect("with_native_host").borrow_mut()
+        self.host.as_deref().unwrap_or(&self.no_host).borrow_mut()
     }
 
     /// The viewport of the floating window with this [`super::Floating::id`].

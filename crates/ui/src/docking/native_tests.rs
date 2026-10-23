@@ -58,6 +58,7 @@ fn driver(layout: Layout<u32>) -> DockDriver<u32, Content> {
     DockDriver::new(layout, Content::default()).with_style(|s| s.command_press_floats = true).with_native_host(ORIGIN)
 }
 
+#[allow(clippy::expect_used)]
 fn window(d: &DockDriver<u32, Content>, panel: u32) -> &Floating<u32> {
     d.layout.floating.iter().find(|w| w.contains(&panel)).expect("floating")
 }
