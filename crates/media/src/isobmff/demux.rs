@@ -934,16 +934,24 @@ fn charge_metadata(left: &mut usize, key_len: usize, value_len: usize) -> bool {
     }
 }
 
+/// Length of `String::from_utf8_lossy(bytes)` without building it: each invalid sequence
+/// becomes one three-byte U+FFFD.
+fn lossy_len(bytes: &[u8]) -> usize {
+    bytes.utf8_chunks().map(|c| c.valid().len() + if c.invalid().is_empty() { 0 } else { 3 }).sum()
+}
+
 fn parse_udta(p: &[u8], md: &mut Metadata, left: &mut usize) {
     for b in boxes(p).map_while(|b| b.ok()) {
         if b.kind == b"meta" {
             parse_meta(b.payload, md, left);
         } else if b.kind.0[0] == 0xA9 && b.payload.len() >= 4 {
             let n = u16::from_be_bytes([b.payload[0], b.payload[1]]) as usize;
+            // Charged at the stored text's length, before the value is converted.
+            let key = b.kind.to_string_lossy();
             if let Some(s) = b.payload.get(4..4 + n)
-                && charge_metadata(left, 4, s.len())
+                && charge_metadata(left, key.len(), lossy_len(s))
             {
-                md.entries.push((b.kind.to_string_lossy(), String::from_utf8_lossy(s).into_owned()));
+                md.entries.push((key, String::from_utf8_lossy(s).into_owned()));
             }
         }
     }
@@ -974,10 +982,15 @@ fn parse_meta(p: &[u8], md: &mut Metadata, left: &mut usize) {
             && d.len() >= 8
         {
             let ty = u32::from_be_bytes([d[0], d[1], d[2], d[3]]) & 0xFF_FFFF;
-            // Charged before the key is copied: every item naming one long key is another copy.
-            if (ty == 1 || ty == 0) && charge_metadata(left, named.map_or(4, String::len), d.len() - 8) {
-                let key = named.cloned().unwrap_or_else(|| item.kind.to_string_lossy());
-                md.entries.push((key, String::from_utf8_lossy(&d[8..]).into_owned()));
+            // Charged before the key is copied (every item naming one long key is another copy)
+            // and before the value is converted, at the lengths they will be stored at.
+            if ty == 1 || ty == 0 {
+                let fallback = if named.is_none() { Some(item.kind.to_string_lossy()) } else { None };
+                let key_len = named.or(fallback.as_ref()).map_or(0, String::len);
+                if charge_metadata(left, key_len, lossy_len(&d[8..])) {
+                    let key = named.cloned().or(fallback).unwrap_or_default();
+                    md.entries.push((key, String::from_utf8_lossy(&d[8..]).into_owned()));
+                }
             }
         }
     }
@@ -1283,6 +1296,26 @@ mod tests {
         assert!(!md.entries.is_empty() && md.entries.len() < 1000, "{}", md.entries.len());
         assert!(md.entries.iter().map(|(k, v)| k.len() + v.len()).sum::<usize>() <= MAX_METADATA_BYTES);
         assert_eq!(md.entries[0].0.len(), key.len());
+    }
+
+    #[test]
+    fn metadata_is_charged_at_its_stored_length() {
+        assert_eq!(lossy_len(b"plain"), 5);
+        for bytes in [&b"a\xFFb"[..], b"\xFF\xFE\xFD", b"\xE2\x82", "\u{a9}nam".as_bytes()] {
+            assert_eq!(lossy_len(bytes), String::from_utf8_lossy(bytes).len(), "{bytes:?}");
+        }
+        // Invalid UTF-8 triples in size when converted; the budget sees the converted size.
+        let mut b = BoxBuf::new();
+        let m = b.start(&[0xA9, b'n', b'a', b'm']);
+        b.u16(1000);
+        b.u16(0);
+        b.bytes(&[0xFF; 1000]);
+        b.end(m);
+        let mut md = Metadata::default();
+        let mut left = 3000 + METADATA_ENTRY_COST + 5;
+        parse_udta(&b.buf, &mut md, &mut left);
+        assert_eq!(md.entries.len(), 1);
+        assert_eq!(md.entries[0].0.len() + md.entries[0].1.len(), 3000 + 5 - left);
     }
 
     #[test]
