@@ -851,6 +851,8 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             dividers: Vec::new(),
             tree: None,
             monitors: self.monitors,
+            #[cfg(feature = "native-windows")]
+            cross: Default::default(),
         };
         if let Some(root) = &view.root {
             renderer.node(ui, root, rect, &mut Vec::new());
@@ -858,8 +860,12 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
         }
         renderer.flyout(ui.ctx());
         renderer.floating(ui.ctx(), &view.floating);
+        #[cfg(feature = "native-windows")]
+        renderer.finish_window_drag(ui);
         renderer.finish_group_drag(ui);
         renderer.finish_drag(ui.ctx());
+        #[cfg(feature = "native-windows")]
+        renderer.end_cross(ui.ctx());
         renderer.report_flyout(ui.ctx());
         super::hits::record(ui.ctx(), self.id, layout, &renderer.owned_interactions);
         record_tab_focus(ui.ctx(), self.id, layout, !renderer.output.actions.is_empty());

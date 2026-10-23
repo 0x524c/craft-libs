@@ -20,6 +20,39 @@ const DOCKED_FLOAT_HEIGHT: f32 = 320.0;
 /// Least height of a floating window or flyout fitted to a short panel's content.
 pub(super) const MIN_FITTED_HEIGHT: f32 = 120.0;
 
+/// What finishing a drag reads of the pointer, in the coordinates of the window finishing it.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct DragInput {
+    pub pointer: Option<Pos2>,
+    pub down: bool,
+    pub released: bool,
+    pub focused: bool,
+    /// The pointer left the window.
+    pub gone: bool,
+    pub escape: bool,
+    /// Ctrl or Cmd held.
+    pub command: bool,
+    /// A touch ended this frame.
+    pub touch_ended: bool,
+}
+
+impl DragInput {
+    /// This window's own input.
+    fn of(ctx: &Context) -> Self {
+        let command = float_only(ctx);
+        ctx.input(|i| Self {
+            pointer: i.pointer.interact_pos().filter(|p| p.is_finite()),
+            down: i.pointer.primary_down(),
+            released: i.pointer.primary_released(),
+            focused: i.focused,
+            gone: !i.pointer.has_pointer(),
+            escape: i.key_pressed(Key::Escape),
+            command,
+            touch_ended: i.events.iter().any(|e| matches!(e, egui::Event::Touch { phase: egui::TouchPhase::End, .. })),
+        })
+    }
+}
+
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     pub(in crate::docking) fn finish_group_drag(&mut self, ui: &Ui) {
         let ctx = ui.ctx();
@@ -29,9 +62,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             ctx.data_mut(|d| d.remove::<GroupDrag<P>>(key));
             return;
         }
-        let (escape, focused, down, released, pointer) =
-            ctx.input(|i| (i.key_pressed(Key::Escape), i.focused, i.pointer.primary_down(), i.pointer.primary_released(), i.pointer.interact_pos()));
-        let pointer = pointer.filter(|p| p.is_finite());
+        let input = DragInput::of(ctx);
+        #[cfg(feature = "native-windows")]
+        let Some((drag, input)) = self.cross_group(ui, &drag, input) else { return };
+        let DragInput { escape, focused, down, released, pointer, .. } = input;
         let ghost = pointer.map(|pointer| self.group_ghost(&drag, pointer));
         if !escape
             && focused
@@ -46,10 +80,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             return;
         }
         // A button release outside the window may never reach egui.
-        let has_pointer = ctx.input(|i| i.pointer.has_pointer());
+        let has_pointer = !input.gone;
         // Touch-up also removes the pointer, but still completes a drop.
-        let touch_ended = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Touch { phase: egui::TouchPhase::End, .. })));
-        let float_only = float_only(ctx);
+        let touch_ended = input.touch_ended;
+        let float_only = input.command;
         if escape || !focused || !down || !has_pointer {
             cancel_drag::<P>(ctx, self.id);
             if escape || !focused {
@@ -185,7 +219,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 
     /// The ghost at the pointer (a window moving live is its own ghost) under one destination
     /// preview. The ghost has a translucent fill, a 2 pt outline and the members' labels.
-    fn paint_group_drag(&mut self, ui: &Ui, drag: &GroupDrag<P>, pointer: Pos2, float_only: bool) {
+    pub(super) fn paint_group_drag(&mut self, ui: &Ui, drag: &GroupDrag<P>, pointer: Pos2, float_only: bool) {
         let ctx = ui.ctx();
         let painter = self.preview_painter(ctx);
         if drag.gesture != GroupGesture::Window {
@@ -232,13 +266,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 
     pub(in crate::docking) fn finish_drag(&mut self, ctx: &Context) {
         let Some(drag) = ctx.data(|d| d.get_temp::<Drag<P>>(self.id.with("drag"))) else { return };
-        let (pointer, down, released, focused, gone) =
-            ctx.input(|i| (i.pointer.interact_pos(), i.pointer.primary_down(), i.pointer.primary_released(), i.focused, !i.pointer.has_pointer()));
+        let escape = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+        let input = DragInput { escape, ..DragInput::of(ctx) };
+        #[cfg(feature = "native-windows")]
+        let Some((drag, input)) = self.cross_tab(ctx, &drag, input) else { return };
+        let DragInput { pointer, down, released, focused, gone, escape, .. } = input;
         // Leaving the window is the drop: on X11 and Windows the release outside never reaches
         // egui, so the drag would otherwise stay on the pointer. `interact_pos` still holds the
         // last position this frame, and the panel floats there rather than docking at the edge.
+        // With native viewports the release does arrive, and `gone` is false.
         let released = released || gone;
-        let escape = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
         if escape || !focused || !self.layout.contains(&drag.panel) || (!down && !released) {
             cancel_drag::<P>(ctx, self.id);
             return;
@@ -255,7 +292,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             return;
         }
-        let float_only = float_only(ctx) || drag.undock;
+        let float_only = input.command || drag.undock;
         let outside = gone || !ctx.content_rect().contains(pointer);
         let empty_drop =
             self.style.float_on_empty_drop && (!drag.source.contains(pointer) || self.layout.floating.iter().any(|g| g.contains(&drag.panel)));
@@ -281,17 +318,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             }
             return;
         }
-        let proposal = if float_only {
-            None
-        } else {
-            self.extra_proposal(std::slice::from_ref(&drag.panel), pointer, false).or_else(|| {
-                let panel = &drag.panel;
-                self.resolve_roomy(panel, pointer, &self.targets, |to| match to {
-                    Target::At { anchor, placement } => Action::Move { panel: panel.clone(), anchor, placement },
-                    to => Action::MovePanel { panel: panel.clone(), to },
-                })
-            })
-        };
+        let proposal = if float_only { None } else { self.tab_proposal(&drag.panel, pointer) };
         if released {
             cancel_drag::<P>(ctx, self.id);
             if pointer.distance(drag.origin) < 2.0 || proposal.as_ref().is_some_and(|proposal| proposal.noop && !outside) {
@@ -317,20 +344,35 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         let painter = self.preview_painter(ctx);
         if let Some(proposal) = proposal {
-            // Reordering inside the source strip shows only the insertion line.
-            let same_group = proposal.insertion.is_some()
-                && self.targets.iter().any(|target| target.rect == proposal.preview && target.tabs.iter().any(|(panel, _)| panel == &drag.panel));
-            if !same_group && !proposal.noop && crate::docking::targets::usable(proposal.preview) && !self.paint_zone(&painter, &proposal, pointer) {
-                drop_preview(&painter, proposal.preview.shrink(1.0), self.style.accent, true);
-            }
-            if let Some(marker) = proposal.insertion {
-                painter.rect_filled(marker, 0.0, self.style.accent);
-            }
-            if !proposal.noop {
-                self.paint_float_hint(ctx, pointer);
-            }
+            self.paint_tab_proposal(ctx, &painter, &drag, &proposal, pointer);
         } else if let Some(rect) = floating_rect {
             drop_preview(&painter, rect, self.style.accent, false);
+        }
+    }
+
+    /// The group target a single tab drag would take at `pointer`.
+    pub(super) fn tab_proposal(&self, panel: &P, pointer: Pos2) -> Option<DropProposal<P>> {
+        self.extra_proposal(std::slice::from_ref(panel), pointer, false).or_else(|| {
+            self.resolve_roomy(panel, pointer, &self.targets, |to| match to {
+                Target::At { anchor, placement } => Action::Move { panel: panel.clone(), anchor, placement },
+                to => Action::MovePanel { panel: panel.clone(), to },
+            })
+        })
+    }
+
+    /// The preview of a tab drag's group target, and the undock hint.
+    pub(super) fn paint_tab_proposal(&self, ctx: &Context, painter: &egui::Painter, drag: &Drag<P>, proposal: &DropProposal<P>, pointer: Pos2) {
+        // Reordering inside the source strip shows only the insertion line.
+        let same_group = proposal.insertion.is_some()
+            && self.targets.iter().any(|target| target.rect == proposal.preview && target.tabs.iter().any(|(panel, _)| panel == &drag.panel));
+        if !same_group && !proposal.noop && crate::docking::targets::usable(proposal.preview) && !self.paint_zone(painter, proposal, pointer) {
+            drop_preview(painter, proposal.preview.shrink(1.0), self.style.accent, true);
+        }
+        if let Some(marker) = proposal.insertion {
+            painter.rect_filled(marker, 0.0, self.style.accent);
+        }
+        if !proposal.noop {
+            self.paint_float_hint(ctx, pointer);
         }
     }
 

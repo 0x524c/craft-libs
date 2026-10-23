@@ -6,6 +6,8 @@ use crate::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis};
 
 use super::{Action, DockContent, DockOutput, DockStyle, DropTarget, Layout, Node, PanelLimits, Permissions, dock_model::Place};
 
+#[cfg(feature = "native-windows")]
+mod cross;
 mod dock;
 mod floating;
 mod frame;
@@ -69,6 +71,9 @@ pub(super) struct Renderer<'a, P> {
     /// [`crate::docking::DockArea::monitors`].
     #[cfg_attr(not(feature = "native-windows"), allow(dead_code))]
     pub(super) monitors: Vec<crate::docking::Monitor>,
+    /// The other OS windows a drag may cross into.
+    #[cfg(feature = "native-windows")]
+    pub(super) cross: cross::Cross<P>,
 }
 
 pub(super) struct DrawnDivider {

@@ -193,6 +193,30 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
         self.window_step(window, vec![Event::PointerMoved(pos), self.button(pos, false)])
     }
 
+    /// In a native window, press at `from`, move past the drag threshold and on to `to`, in
+    /// its coordinates at each frame, without releasing. The window system keeps sending the
+    /// pointer to the window where it was pressed, inside it or not.
+    #[cfg(feature = "native-windows")]
+    pub fn window_hold(&mut self, window: u64, from: Pos2, to: Pos2) -> DockOutput<P> {
+        self.window_step(window, vec![Event::PointerMoved(from), self.button(from, true)]);
+        self.window_step(window, vec![Event::PointerMoved(from + NUDGE)]);
+        self.window_step(window, vec![Event::PointerMoved(to)])
+    }
+
+    /// Release at `pos` in a native window, in its coordinates.
+    #[cfg(feature = "native-windows")]
+    pub fn window_release(&mut self, window: u64, pos: Pos2) -> DockOutput<P> {
+        self.window_step(window, vec![Event::PointerMoved(pos), self.button(pos, false)])
+    }
+
+    /// The desktop point `point` in the coordinates of the native window of `window`, as the
+    /// host placed it.
+    #[cfg(feature = "native-windows")]
+    pub fn window_local(&self, window: u64, point: Pos2) -> Option<Pos2> {
+        let viewport = self.viewport(window);
+        self.host().windows.get(&viewport).map(|w| point - w.rect.min.to_vec2())
+    }
+
     /// Render one frame and apply its actions, all or none, with the content's permissions. A
     /// rejected batch is reported in the output's `error`.
     pub fn step(&mut self, events: Vec<Event>) -> DockOutput<P> {
