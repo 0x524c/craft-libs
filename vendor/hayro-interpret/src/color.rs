@@ -1892,7 +1892,7 @@ impl ColorSpace {
     /// Craft patch (CMYK masks): the alternate space of a `Separation` or `DeviceN` space that
     /// names a spot ink; `None` for other spaces, and for colorants that are all process inks,
     /// `All` or `None`.
-    fn spot_alternate(&self) -> Option<&ColorSpace> {
+    fn spot_alternate_space(&self) -> Option<&ColorSpace> {
         let is_spot = |c: &Colorant| matches!(c, Colorant::Ink(Ink::Spot(_)));
         match self.0.as_ref() {
             ColorSpaceType::Separation(s) if is_spot(&s.colorant) => Some(&s.alternate_space),
@@ -1922,7 +1922,7 @@ impl ColorSpace {
     /// `spots_as_process` (Craft patch, CMYK masks), a space naming a spot ink paints as its
     /// alternate space.
     pub(crate) fn ink_use(&self, ink: &Ink, spots_as_process: bool) -> InkUse {
-        if spots_as_process && let Some(alternate) = self.spot_alternate() {
+        if spots_as_process && let Some(alternate) = self.spot_alternate_space() {
             return alternate.ink_use(ink, false);
         }
         match self.0.as_ref() {
@@ -1978,7 +1978,7 @@ impl ColorSpace {
         manual_scale: bool,
         spots_as_process: bool,
     ) -> f32 {
-        if spots_as_process && let Some(alternate) = self.spot_alternate() {
+        if spots_as_process && let Some(alternate) = self.spot_alternate_space() {
             let alternate_components = self.tint_transform(components);
             return alternate.ink_tint(&alternate_components, ink, simulation, false, false);
         }
