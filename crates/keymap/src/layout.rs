@@ -22,7 +22,8 @@
 //!    that has no key (Dvorak's ⇧, types `<`) as the key's position, W. With Shift held on a
 //!    Latin layout, such a press at a letter position that has been seen typing something other
 //!    than its letter resolves to nothing, so Ctrl+Shift+, never runs Ctrl+Shift+W once a `,`
-//!    has been typed.
+//!    has been typed. A change in the reported Latin status, or [`Layout::forget_letters`],
+//!    clears what the positions typed.
 //! 6. **Labels** show letters and digits by name, and a punctuation key as the character the
 //!    layout types at its position when that character has no key of its own: Ctrl+[ is `Ctrl+Ü`
 //!    on German and `Ctrl+Х` on Russian.
@@ -143,9 +144,21 @@ impl Layout {
     }
 
     /// Whether the layout is Latin, as the platform reports it; `None` when it cannot tell, so
-    /// that typing decides. Call again when the user switches layouts.
+    /// that typing decides. Call again when the user switches layouts. A report that differs
+    /// from the last one means another layout, so what letter positions typed is forgotten
+    /// ([`forget_letters`](Self::forget_letters)).
     pub fn set_latin(&mut self, latin: Option<bool>) {
+        if latin != self.reported_latin {
+            self.forget_letters();
+        }
         self.reported_latin = latin;
+    }
+
+    /// Forgets what each letter position has been seen typing, for an app that learns of a
+    /// layout switch the platform does not report: until typing shows the new layout, Shift
+    /// presses at letter positions resolve as their letters again (rule 5).
+    pub fn forget_letters(&mut self) {
+        self.letters.clear();
     }
 
     /// Whether letters are read as typed (rule 1): what the platform reported, else what a letter

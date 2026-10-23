@@ -99,7 +99,9 @@ macOS it folds into `cmd` (`Chord::effective`).
 5. With Shift held on a Latin layout, a press that egui reports as the letter at its own
    position, because the character typed has no key (Dvorak's ⇧, types `<`), runs nothing when
    that position has been seen typing something other than its letter: once a `,` has been
-   typed, Ctrl+Shift+, never runs Ctrl+Shift+W.
+   typed, Ctrl+Shift+, never runs Ctrl+Shift+W. A change in the reported Latin status clears
+   what the positions typed; an app that learns of a layout switch itself calls
+   `Layout::forget_letters`.
 6. Labels show letters and digits by name, and a punctuation key as the character the layout
    types at its position when that character has no key of its own (`Ctrl+Ü` for Ctrl+[ on
    German).

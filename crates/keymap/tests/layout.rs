@@ -183,6 +183,29 @@ fn dvorak_shift_punctuation_never_runs_its_position() {
 }
 
 #[test]
+fn a_layout_switch_forgets_what_letter_positions_typed() {
+    // On Dvorak the W position types `,`; after a switch to QWERTY, Ctrl+Shift+W is W again.
+    let ctrl_shift_w = at("Cmd+Shift+W", Key::W);
+    let mut layout = Layout::new().with_latin(true);
+    layout.observe(Key::W, Mods::NONE, ",");
+    assert_eq!(layout.resolve(&ctrl_shift_w), None);
+    layout.set_latin(Some(true));
+    assert_eq!(layout.resolve(&ctrl_shift_w), None, "the same report is the same layout");
+
+    // Dvorak, then Russian, then QWERTY, as the platform reports them.
+    layout.set_latin(Some(false));
+    layout.set_latin(Some(true));
+    assert_eq!(layout.resolve(&ctrl_shift_w), Some(chord("Cmd+Shift+W")));
+
+    // An app that learns of a switch itself.
+    let mut unreported = Layout::new();
+    unreported.observe(Key::W, Mods::NONE, ",");
+    assert_eq!(unreported.resolve(&ctrl_shift_w), None);
+    unreported.forget_letters();
+    assert_eq!(unreported.resolve(&ctrl_shift_w), Some(chord("Cmd+Shift+W")));
+}
+
+#[test]
 fn labels_show_the_layouts_own_punctuation() {
     let mut german = Layout::new().with_char(Key::OpenBracket, 'ü').with_char(Key::Slash, '-').with_char(Key::CloseBracket, '+');
     german.observe(Key::Minus, Mods::NONE, "ß");
