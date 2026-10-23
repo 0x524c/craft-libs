@@ -806,7 +806,13 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             }
             Action::Float { panel, .. } if !permissions(panel).floatable || !permissions(panel).movable => return Err(DockError::NotAllowed),
             Action::Close { panel } if !permissions(panel).closable => return Err(DockError::NotAllowed),
-            Action::MoveFloating { panel, .. } if !permissions(panel).movable => return Err(DockError::NotAllowed),
+            // The rectangle belongs to the whole floating window, so every panel in it must allow it.
+            Action::MoveFloating { panel, .. }
+                if !permissions(panel).movable
+                    || self.floating.iter().find(|w| w.contains(panel)).is_some_and(|w| w.panels().any(|p| !permissions(p).movable)) =>
+            {
+                return Err(DockError::NotAllowed);
+            }
             Action::Open { anchor: Some(anchor), .. } if !permissions(anchor).accepts_tabs => return Err(DockError::NotAllowed),
             Action::MovePanel { panel, to } => {
                 let policy = permissions(panel);

@@ -100,7 +100,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
             ..Default::default()
         };
         let (layout, content, area, id) = (&self.layout, &mut self.content, self.area, self.id);
-        let (style_fn, maximized, raise, auto, bounds) = (&self.style, self.maximized.clone(), self.raise.take(), self.auto_collapse, self.float_bounds);
+        let (style_fn, maximized, raise, auto, bounds) =
+            (&self.style, self.maximized.clone(), self.raise.take(), self.auto_collapse, self.float_bounds);
         let mut full = self.ctx.run_ui(input, |ui| {
             let mut style = DockStyle::from_ui(ui);
             if let Some(adjust) = style_fn {
