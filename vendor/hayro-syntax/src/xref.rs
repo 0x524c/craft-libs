@@ -618,9 +618,13 @@ impl XRef {
                     return None;
                 }
 
-                let stream = self.get_with::<Stream<'_>>(obj_stream_id, &ctx)?;
                 let data = repr.data.get_with(obj_stream_id, &ctx)?;
-                let object_stream = ObjectStream::new(stream, data, &ctx)?;
+                // PdfCraft patch: the offset table is parsed once per stream (see Data).
+                let offsets = repr.data.object_offsets(obj_stream_id, || {
+                    let stream = self.get_with::<Stream<'_>>(obj_stream_id, &ctx)?;
+                    ObjectStream::offsets(stream, data)
+                })?;
+                let object_stream = ObjectStream::with_offsets(offsets, data, &ctx);
                 object_stream.get(index)
             }
         }
@@ -959,6 +963,22 @@ fn xref_stream_subsection<'a>(
     f3_len: u8,
     insert_map: &mut XrefMap,
 ) -> Option<()> {
+    // PdfCraft patch: every entry must be backed by stream bytes. With all widths zero an entry
+    // reads nothing, so a tiny stream could declare billions of entries; and a count past the
+    // decoded data is refused before any of it is inserted.
+    let width = f1_len as usize + f2_len as usize + f3_len as usize;
+    if width == 0 {
+        warn!("xref stream entries have no width");
+
+        return None;
+    }
+    let available = xref_reader.len().saturating_sub(xref_reader.offset());
+    if (num_elements as usize).checked_mul(width).is_none_or(|need| need > available) {
+        warn!("xref stream subsection declares more entries than its data holds");
+
+        return None;
+    }
+
     for i in 0..num_elements {
         let f_type = if f1_len == 0 {
             1
@@ -1064,11 +1084,23 @@ fn get_decryptor(trailer_dict: &Dict<'_>, password: &[u8]) -> Result<Decryptor, 
 struct ObjectStream<'a> {
     data: &'a [u8],
     ctx: ReaderContext<'a>,
-    offsets: Vec<(u32, usize)>,
+    offsets: Arc<Vec<(u32, usize)>>,
 }
 
 impl<'a> ObjectStream<'a> {
     fn new(inner: Stream<'_>, data: &'a [u8], ctx: &ReaderContext<'a>) -> Option<Self> {
+        Some(Self::with_offsets(Arc::new(Self::offsets(inner, data)?), data, ctx))
+    }
+
+    fn with_offsets(offsets: Arc<Vec<(u32, usize)>>, data: &'a [u8], ctx: &ReaderContext<'a>) -> Self {
+        let mut ctx = ctx.clone();
+        ctx.set_in_object_stream(true);
+
+        Self { data, ctx, offsets }
+    }
+
+    /// The `/N` pairs of object number and absolute offset at the start of `data`.
+    fn offsets(inner: Stream<'_>, data: &[u8]) -> Option<Vec<(u32, usize)>> {
         let num_objects = inner.dict().get::<usize>(N)?;
         let first_offset = inner.dict().get::<usize>(FIRST)?;
 
@@ -1082,13 +1114,10 @@ impl<'a> ObjectStream<'a> {
             let obj_num = r.read_without_context::<u32>()?;
             r.skip_white_spaces_and_comments();
             let relative_offset = r.read_without_context::<usize>()?;
-            offsets.push((obj_num, first_offset + relative_offset));
+            offsets.push((obj_num, first_offset.checked_add(relative_offset)?));
         }
 
-        let mut ctx = ctx.clone();
-        ctx.set_in_object_stream(true);
-
-        Some(Self { data, ctx, offsets })
+        Some(offsets)
     }
 
     fn get<T>(&self, index: u32) -> Option<T>
@@ -1136,6 +1165,32 @@ fn parse_metadata(info_dict: &Dict<'_>) -> Metadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xref_stream_entries_need_backing_bytes() {
+        let mut map = XrefMap::default();
+        // All widths zero: an entry reads nothing, so none may be declared.
+        let mut empty = Reader::new(&[]);
+        assert!(xref_stream_subsection(&mut empty, 0, u32::MAX, 0, 0, 0, &mut map).is_none());
+        // Three entries of width 3 need nine bytes; eight are refused before any insert.
+        let data = [1, 0, 9, 1, 0, 9, 1, 0];
+        let mut short = Reader::new(&data);
+        assert!(xref_stream_subsection(&mut short, 0, 3, 1, 1, 1, &mut map).is_none());
+        assert!(map.is_empty());
+        let mut whole = Reader::new(&data[..6]);
+        assert!(xref_stream_subsection(&mut whole, 0, 2, 1, 1, 1, &mut map).is_some());
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn object_stream_offsets_are_parsed_once() {
+        let data = Data::new(PdfData::from(Vec::new()));
+        let id = ObjectIdentifier::new(7, 0);
+        let first = data.object_offsets(id, || Some(vec![(1, 10), (2, 20)])).unwrap();
+        let again = data.object_offsets(id, || panic!("reparsed a cached offset table")).unwrap();
+        assert!(Arc::ptr_eq(&first, &again));
+        assert!(data.object_offsets(ObjectIdentifier::new(8, 0), || None).is_none());
+    }
 
     // Contributor-original, MIT OR Apache-2.0. Matches the bounded, uncompressed
     // synthetic regression used to reproduce the cold-publication race. A second
