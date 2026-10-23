@@ -15,7 +15,7 @@ mod iconic;
 #[cfg(feature = "native-windows")]
 mod native;
 #[cfg(all(test, feature = "native-windows"))]
-pub(in crate::docking) use native::floats_shown;
+pub(in crate::docking) use {cross::DragPointer, native::WindowDrag, native::floats_shown};
 
 /// The viewport of the native window `window` of the dock area `area`.
 #[cfg(feature = "native-windows")]

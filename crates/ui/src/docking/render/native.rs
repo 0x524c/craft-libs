@@ -7,21 +7,25 @@
 
 use std::{fmt::Debug, hash::Hash};
 
-use egui::{Context, Event, Id, Pos2, Rect, Ui, Vec2, ViewportBuilder, ViewportClass, ViewportCommand, ViewportId, WindowLevel, pos2, vec2};
+use egui::{
+    Context, Event, Id, Key, Modifiers, Pos2, Rect, Ui, Vec2, ViewportBuilder, ViewportClass, ViewportCommand, ViewportId, ViewportInfo, WindowLevel, pos2,
+    vec2,
+};
 
 use super::Renderer;
 use super::cross::{DragPointer, Surface};
 use crate::docking::chrome::{ChromeStyle, TitleBar};
-use crate::docking::placement::{monitor_of, restore, sanitized};
+pub(in crate::docking) use crate::docking::placement::BAR_HEIGHT;
+use crate::docking::placement::{kept_reachable, monitor_of, restore, sanitized};
 use crate::docking::{Action, Drag, Floating, GroupDrag, GroupGesture, Node};
 
 /// Smallest native window.
 const MIN_SIZE: [f32; 2] = [160.0, 100.0];
-/// Height of the bar drawn at the top of a native window.
-pub(in crate::docking) const BAR_HEIGHT: f32 = 18.0;
 /// How long floating windows stay after the application's last window lost focus, so focus
 /// moving between our own windows does not hide them.
 const HIDE_DELAY: f64 = 0.25;
+/// How long reports of a native window's place may lag a move the dock area commanded.
+const MOVE_WAIT: f64 = 0.5;
 
 /// A drag of a native window's bar, in the context's data under the area's `"window-drag"`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -30,11 +34,40 @@ pub(in crate::docking) struct WindowDrag {
     pub window: u64,
     /// Where the pointer pressed, in the window's local points.
     pub grab: Vec2,
-    /// The window's outer position on the desktop: reported when the drag began, then as last
-    /// commanded. The reported position lags and jitters while the window moves.
-    pub origin: Pos2,
-    /// Where the window was when the drag began, for Escape.
+    /// Desktop position of the window's content as last commanded.
+    pub to: Pos2,
+    /// Desktop position of the window's content when the drag began, for Escape.
     pub start: Pos2,
+    /// The drag began on the window's only tab or group, so it docks whatever
+    /// [`crate::docking::DockStyle::title_bar_docks`] says.
+    pub docks: bool,
+}
+
+/// What the dock area knows of a shown native window's place, in the context's data under
+/// the area's `("native-place", viewport)`. Rects are desktop rects of the window's content.
+#[derive(Clone, Copy, Debug)]
+struct Place {
+    /// Where it opened. The builder keeps it, so egui sends no move of its own.
+    spawn: [f32; 4],
+    /// As last reported or commanded. [`Floating::native`] follows it; a `native` that differs
+    /// was changed by the application (undo, reset, a reloaded layout), and the window moves.
+    known: [f32; 4],
+    /// Until when reports that differ from `known` are a commanded move that has not landed.
+    pending: Option<f64>,
+    /// The window system put the frame, not the content, where it opened: corrected once.
+    corrected: bool,
+}
+
+/// Whether two rects differ by more than rounding.
+fn differs(a: [f32; 4], b: [f32; 4]) -> bool {
+    a.iter().zip(b).any(|(a, b)| (a - b).abs() > 0.5)
+}
+
+/// Desktop position of a viewport's content, and its offset from the window's outer
+/// position, where the window system reports both.
+fn content_of(info: &ViewportInfo) -> Option<(Pos2, Vec2)> {
+    let (outer, inner) = (info.outer_rect?, info.inner_rect?);
+    (outer.min.is_finite() && inner.min.is_finite()).then(|| (inner.min, inner.min - outer.min))
 }
 
 /// The viewport of the native window `window` of the dock area `area`. The `n`th window with
@@ -52,17 +85,20 @@ pub(in crate::docking) fn floats_shown(focused: bool, now: f64, last_focused: f6
     focused || now - last_focused < HIDE_DELAY
 }
 
-/// The desktop rect a native viewport reports: outer position, inner size. None when the
-/// backend reports nothing usable.
-fn placed(outer: Option<Rect>, inner: Option<Rect>) -> Option<[f32; 4]> {
-    let (outer, inner) = (outer?, inner?);
-    (outer.min.is_finite() && inner.size().is_finite()).then(|| sanitized([outer.min.x, outer.min.y, inner.width(), inner.height()]))
+/// The desktop rect of a native viewport's content. None when the backend reports no
+/// positions.
+fn placed(info: &ViewportInfo) -> Option<[f32; 4]> {
+    let (min, _) = content_of(info)?;
+    let size = info.inner_rect?.size();
+    size.is_finite().then(|| sanitized([min.x, min.y, size.x, size.y]))
 }
 
 /// What a native window's frame reports back to the main window.
 struct Report<P> {
     closed: bool,
     placed: Option<[f32; 4]>,
+    /// From the window's outer position to its content.
+    frame: Vec2,
     monitor_size: Option<Vec2>,
     /// Its drop targets, for drags from other windows.
     surface: Option<Surface<P>>,
@@ -70,7 +106,7 @@ struct Report<P> {
 
 impl<P> Default for Report<P> {
     fn default() -> Self {
-        Self { closed: false, placed: None, monitor_size: None, surface: None }
+        Self { closed: false, placed: None, frame: Vec2::ZERO, monitor_size: None, surface: None }
     }
 }
 
@@ -87,22 +123,25 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let mut natives = Vec::new();
         for window in windows {
             let allowed = window.panels().all(|p| self.content.allow_native(p) && self.permissions(p).floatable);
-            let Some(first) = window.panels().next().cloned().filter(|_| native && allowed) else {
+            if !native || !allowed || window.panels().next().is_none() {
                 in_window.push(window);
                 continue;
-            };
+            }
             // Every float is native: one still in-window opens over its place in the app window.
             let rect = window.native.unwrap_or_else(|| {
                 let [x, y, w, h] = window.rect;
-                let rect = sanitized([origin.x + x, origin.y + y, w, h]);
-                self.output.actions.push(Action::SetNative { panel: first, rect: Some(rect) });
-                rect
+                sanitized([origin.x + x, origin.y + y, w, h])
             });
             let n = ids.iter().filter(|id| **id == window.id).count();
             ids.push(window.id);
             natives.push((window, rect, viewport_id(self.id, window.id, n)));
         }
         if native {
+            // A window closed or docked during its own bar drag ends the drag.
+            let key = self.id.with("window-drag");
+            if ctx.data(|d| d.get_temp::<WindowDrag>(key)).is_some_and(|d| !natives.iter().any(|(w, ..)| w.id == d.window)) {
+                ctx.data_mut(|d| d.remove::<WindowDrag>(key));
+            }
             self.map_desktop(ctx, &natives, visibility.0);
             // The main window owns drags of the panels it draws.
             let id = self.id;
@@ -124,7 +163,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let previous = ctx.data_mut(|d| d.remove_temp::<Vec<Id>>(key)).unwrap_or_default();
         ctx.data_mut(|d| {
             for id in previous.iter().filter(|id| !shown.contains(id)) {
-                d.remove::<[f32; 4]>(*id);
+                d.remove::<Place>(*id);
             }
             d.insert_temp(key, shown);
         });
@@ -137,7 +176,6 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let key = self.id.with("native-order");
         let mut order = ctx.data(|d| d.get_temp::<Vec<u64>>(key)).unwrap_or_default();
         order.retain(|id| natives.iter().any(|(w, ..)| w.id == *id));
-        let moving = ctx.data(|d| d.get_temp::<WindowDrag>(self.id.with("window-drag")));
         let mut windows = Vec::new();
         for (window, rect, viewport) in natives {
             let info = ctx.input(|i| i.raw.viewports.get(viewport).cloned());
@@ -149,10 +187,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let [x, y, w, h] = *rect;
             let placed = match info {
                 None => Some(Rect::from_min_size(pos2(x, y), vec2(w, h))),
-                Some(info) => info.outer_rect.zip(info.inner_rect).map(|(outer, inner)| {
-                    let min = moving.filter(|m| m.window == window.id).map_or(outer.min, |m| m.origin);
-                    Rect::from_min_size(min, inner.size())
-                }),
+                Some(info) => placed(&info).map(|[x, y, w, h]| Rect::from_min_size(pos2(x, y), vec2(w, h))),
             };
             if let Some(placed) = placed.filter(|r| r.is_finite() && visible) {
                 windows.push((window.id, placed));
@@ -184,32 +219,61 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         (visible, visible != was)
     }
 
-    /// One floating window in its own viewport. Returns the key of its spawn rect.
+    /// One floating window in its own viewport. Returns the key of its [`Place`].
     fn native_window(&mut self, ctx: &Context, window: &Floating<P>, rect: [f32; 4], viewport: ViewportId, visibility: (bool, bool)) -> Option<Id> {
         let (visible, toggled) = visibility;
         let first = window.panels().next()?.clone();
-        // The window opens at its saved place, moved onto a connected monitor; after that the
-        // window system owns its position and size, which are read back below.
-        let spawn_key = self.id.with(("native-spawn", viewport));
-        let spawned = ctx.data(|d| d.get_temp::<[f32; 4]>(spawn_key));
-        let spawn = spawned.unwrap_or_else(|| {
-            let (main, size) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().monitor_size));
-            restore(rect, window.monitor.as_ref(), &self.monitors, main, size)
-        });
-        ctx.data_mut(|d| d.insert_temp(spawn_key, spawn));
+        let key = self.id.with(("native-place", viewport));
+        let now = ctx.input(|i| i.time);
+        let drag_key = self.id.with("window-drag");
+        let moving = |ctx: &Context| ctx.data(|d| d.get_temp::<WindowDrag>(drag_key)).is_some_and(|d| d.window == window.id);
+        let info = ctx.input(|i| i.raw.viewports.get(&viewport).cloned());
+        let frame = info.as_ref().and_then(content_of).map_or(Vec2::ZERO, |(_, frame)| frame);
+        let mut place = match ctx.data(|d| d.get_temp::<Place>(key)) {
+            Some(mut place) => {
+                // The application changed the window's place (undo, reset, a reloaded layout):
+                // the OS window moves there, kept where its bar can be grabbed.
+                if !moving(ctx)
+                    && let Some(native) = window.native.filter(|native| differs(*native, place.known))
+                {
+                    let target = kept_reachable(native, &self.monitors);
+                    ctx.send_viewport_cmd_to(viewport, ViewportCommand::OuterPosition(pos2(target[0], target[1]) - frame));
+                    ctx.send_viewport_cmd_to(viewport, ViewportCommand::InnerSize(vec2(target[2], target[3])));
+                    (place.known, place.pending) = (target, Some(now + MOVE_WAIT));
+                }
+                place
+            }
+            None => {
+                // A window of a loaded layout opens at its saved place, moved onto a connected
+                // monitor. One made this session opens where it was put.
+                let seen_key = self.id.with("native-seen");
+                let mut seen = ctx.data(|d| d.get_temp::<std::collections::HashSet<u64>>(seen_key)).unwrap_or_default();
+                let spawn = if window.native.is_some() && !seen.contains(&window.id) {
+                    let (main, size) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().monitor_size));
+                    restore(rect, window.monitor.as_ref(), &self.monitors, main, size)
+                } else {
+                    sanitized(rect)
+                };
+                seen.insert(window.id);
+                ctx.data_mut(|d| d.insert_temp(seen_key, seen));
+                Place { spawn, known: spawn, pending: Some(now + MOVE_WAIT), corrected: false }
+            }
+        };
+        let spawn = place.spawn;
         let title = crate::docking::dock_model::first_active(&window.root).map(|p| self.label_of(p)).unwrap_or_default();
         let builder = ViewportBuilder::default()
             .with_title(title)
             .with_position([spawn[0], spawn[1]])
             .with_inner_size([spawn[2], spawn[3]])
             .with_min_inner_size(MIN_SIZE)
-            .with_window_level(WindowLevel::AlwaysOnTop);
+            .with_window_level(WindowLevel::AlwaysOnTop)
+            .with_taskbar(false);
         // The bar replaces the OS title bar. macOS keeps its frame for edge resizing.
         #[cfg(target_os = "macos")]
         let builder = builder.with_titlebar_shown(false).with_title_shown(false).with_fullsize_content_view(true).with_titlebar_buttons_shown(false);
         #[cfg(not(target_os = "macos"))]
         let builder = builder.with_decorations(false);
-        if toggled || (spawned.is_none() && !visible) {
+        if toggled || (info.is_none() && !visible) {
             ctx.send_viewport_cmd_to(viewport, ViewportCommand::Visible(visible));
         }
         if visible && self.activation.as_ref().is_some_and(|panel| window.contains(panel)) {
@@ -244,32 +308,57 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             self.forward_events(ui);
             ui.input(|i| Report {
                 closed: i.viewport().close_requested(),
-                placed: placed(i.viewport().outer_rect, i.viewport().inner_rect),
+                placed: placed(i.viewport()),
+                frame: content_of(i.viewport()).map_or(Vec2::ZERO, |(_, frame)| frame),
                 monitor_size: i.viewport().monitor_size,
                 surface: Some(surface),
             })
         });
-        // Targets in another OS window are in its coordinates.
-        self.targets.truncate(targets);
-        self.dock_targets.truncate(docks);
-        self.frame.windows.truncate(windows);
+        // Targets in another OS window are in its coordinates. An embedded fallback drew its
+        // targets in the main window's.
+        if report.surface.is_some() {
+            self.targets.truncate(targets);
+            self.dock_targets.truncate(docks);
+            self.frame.windows.truncate(windows);
+        }
         self.cross.surfaces.extend(report.surface);
+        if let Some(to) = self.cross.moved.take() {
+            (place.known[0], place.known[1], place.pending) = (to.x, to.y, Some(now + MOVE_WAIT));
+        }
+        let moving = moving(ctx);
+        if let Some(placed) = report.placed.filter(|_| !moving) {
+            let waiting = place.pending.is_some_and(|until| now < until);
+            if !differs(placed, place.known) {
+                place.pending = None;
+            } else if waiting {
+                // The window system put the window's frame where its content should be.
+                let outer = pos2(placed[0], placed[1]) - report.frame;
+                if !place.corrected && report.frame.length() > 0.5 && outer.distance(pos2(place.known[0], place.known[1])) < 0.5 {
+                    place.corrected = true;
+                    ctx.send_viewport_cmd_to(viewport, ViewportCommand::OuterPosition(pos2(place.known[0], place.known[1]) - report.frame));
+                }
+            } else {
+                (place.known, place.pending) = (placed, None);
+            }
+        }
+        ctx.data_mut(|d| d.insert_temp(key, place));
         if report.closed {
             // Like the bar's ×: its panels close and reopen from the application's menu.
             self.output.actions.push(Action::CloseWindow { panel: first });
-            return Some(spawn_key);
+            return Some(key);
         }
-        let now = report.placed.unwrap_or(rect);
-        if let Some(placed) = report.placed.filter(|placed| placed.iter().zip(rect).any(|(a, b)| (a - b).abs() > 0.5)) {
-            self.output.actions.push(Action::SetNative { panel: first.clone(), rect: Some(placed) });
+        // The layout follows the window's place, once a bar drag is over.
+        let known = place.known;
+        if !moving && window.native.is_none_or(|native| differs(native, known)) {
+            self.output.actions.push(Action::SetNative { panel: first.clone(), rect: Some(known) });
             // The in-window rect follows, for builds that draw the window in-window.
             if window.panels().all(|p| self.permissions(p).movable) {
                 let origin = ctx.input(|i| i.viewport().inner_rect.map(|r| r.min)).filter(|p| p.is_finite()).unwrap_or(Pos2::ZERO);
-                let [x, y, w, h] = placed;
+                let [x, y, w, h] = known;
                 self.output.actions.push(Action::MoveFloating { panel: first.clone(), rect: [x - origin.x, y - origin.y, w, h] });
             }
         }
-        let monitor = monitor_of(&self.monitors, now).cloned();
+        let monitor = monitor_of(&self.monitors, known).cloned();
         let size = match monitor {
             Some(_) => None,
             None => report.monitor_size.filter(|s| s.is_finite() && s.x > 0.0 && s.y > 0.0).map(|s| [s.x, s.y]),
@@ -277,7 +366,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if (monitor.is_some() || size.is_some()) && (monitor != window.monitor || size != window.monitor_size) {
             self.output.actions.push(Action::SetMonitor { panel: first, monitor, monitor_size: size });
         }
-        Some(spawn_key)
+        Some(key)
     }
 
     /// The bar at the top of a native window: its title and ×. Dragging it moves the window.
@@ -300,13 +389,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             self.output.actions.push(Action::CloseWindow { panel: first });
         }
         if movable && response.bar.drag_started() {
-            self.start_window_drag(ui, window.id);
+            self.start_window_drag(ui, window.id, false);
         }
     }
 
     /// After a native window's tree drew: a drag of its only tab, or of its only group, moves
     /// the window as its bar does. Then the window follows a bar drag, and writes the pointer
-    /// of a drag it owns. Returns the window's desktop origin, where known.
+    /// of a drag it owns. Returns the desktop position of the window's content, where known.
     fn window_gestures(&mut self, ui: &Ui, window: &Floating<P>) -> Option<Pos2> {
         let ctx = ui.ctx();
         let (drag_key, group_key) = (self.id.with("drag"), self.id.with("group-drag"));
@@ -319,60 +408,79 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 d.remove::<Drag<P>>(drag_key);
                 d.remove::<GroupDrag<P>>(group_key);
             });
-            self.start_window_drag(ui, window.id);
+            self.start_window_drag(ui, window.id, true);
         }
-        let outer = ui.input(|i| i.viewport().outer_rect).map(|r| r.min).filter(|p| p.is_finite());
-        if let Some(origin) = self.follow_window_drag(ui, window.id) {
-            return Some(origin);
+        let origin = ui.input(|i| content_of(i.viewport())).map(|(origin, _)| origin);
+        if self.follow_window_drag(ui, window.id) {
+            return origin;
         }
         let owns = ctx.data(|d| d.get_temp::<Drag<P>>(drag_key).map(|d| d.panel).or(d.get_temp::<GroupDrag<P>>(group_key).map(|d| d.panel)));
-        if owns.is_some_and(|panel| window.contains(&panel)) {
-            self.record_pointer(ctx, Some(window.id), outer, None);
+        if owns.is_some_and(|panel| window.contains(&panel)) && self.record_pointer(ctx, Some(window.id), origin, None).escape {
+            // The drag's cancel, not a shortcut.
+            ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
         }
-        outer
+        origin
     }
 
     /// Start moving the window with the pointer, from the position the window system reports,
-    /// or, where it reports none (Wayland), by handing the move to it.
-    fn start_window_drag(&mut self, ui: &Ui, window: u64) {
+    /// or, where it reports none (Wayland), by handing the move to it. `docks`: the drag began
+    /// on the window's only tab or group.
+    fn start_window_drag(&mut self, ui: &Ui, window: u64, docks: bool) {
         let press = ui.input(|i| i.pointer.press_origin().or(i.pointer.latest_pos()));
-        match (ui.input(|i| i.viewport().outer_rect), press) {
-            (Some(outer), Some(press)) if outer.min.is_finite() => {
-                let drag = WindowDrag { window, grab: press.to_vec2(), origin: outer.min, start: outer.min };
+        match (ui.input(|i| content_of(i.viewport())), press) {
+            (Some((origin, _)), Some(press)) => {
+                let drag = WindowDrag { window, grab: press.to_vec2(), to: origin, start: origin, docks };
                 ui.ctx().data_mut(|d| d.insert_temp(self.id.with("window-drag"), drag));
             }
             _ => ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag),
         }
     }
 
-    /// Move the window by `OuterPosition` from the position last commanded, while the button
-    /// is held. Escape puts it back; losing focus leaves it. Returns the desktop origin of
-    /// this frame's input while the window is moving.
-    fn follow_window_drag(&mut self, ui: &Ui, window: u64) -> Option<Pos2> {
+    /// Move the window by `OuterPosition` while the button is held, so the pressed point stays
+    /// under the pointer. Escape puts it back; losing focus leaves it. Returns whether the
+    /// window is moving.
+    fn follow_window_drag(&mut self, ui: &Ui, window: u64) -> bool {
         let key = self.id.with("window-drag");
-        let mut drag = ui.ctx().data(|d| d.get_temp::<WindowDrag>(key)).filter(|d| d.window == window)?;
-        let origin = drag.origin;
-        let pointer = self.record_pointer(ui.ctx(), Some(window), Some(origin), Some(window));
+        let Some(mut drag) = ui.ctx().data(|d| d.get_temp::<WindowDrag>(key)).filter(|d| d.window == window) else { return false };
+        let content = ui.input(|i| content_of(i.viewport()));
+        let pointer = self.record_pointer(ui.ctx(), Some(window), content.map(|(origin, _)| origin), Some(&drag));
+        let frame = content.map_or(Vec2::ZERO, |(_, frame)| frame);
+        let move_to = |r: &mut Self, to: Pos2| {
+            ui.ctx().send_viewport_cmd(ViewportCommand::OuterPosition(to - frame));
+            r.cross.moved = Some(to);
+        };
         if pointer.escape || !self.cross.focused {
             if pointer.escape {
-                ui.ctx().send_viewport_cmd(ViewportCommand::OuterPosition(drag.start));
+                move_to(self, drag.start);
+                ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
             }
             ui.ctx().data_mut(|d| d.remove::<WindowDrag>(key));
-            return Some(origin);
+            return true;
         }
         if !pointer.down {
             ui.ctx().data_mut(|d| d.remove::<WindowDrag>(key));
+            // Left with too little of its bar on a monitor to grab it: back onto the nearest.
+            if let Some(size) = ui.input(|i| i.viewport().inner_rect.map(|r| r.size())) {
+                let [x, y, ..] = kept_reachable([drag.to.x, drag.to.y, size.x, size.y], &self.monitors);
+                if pos2(x, y).distance(drag.to) > 0.5 {
+                    move_to(self, pos2(x, y));
+                }
+            }
             self.end_window_drag(drag, pointer);
-            return Some(origin);
+            return true;
         }
-        // The pointer on the desktop is the commanded origin plus the local pointer.
-        let step = ui.input(|i| i.pointer.latest_pos()).filter(|p| p.is_finite()).map_or(Vec2::ZERO, |p| p.to_vec2() - drag.grab);
-        if step != Vec2::ZERO {
-            drag.origin += step;
-            ui.ctx().send_viewport_cmd(ViewportCommand::OuterPosition(drag.origin));
-            ui.ctx().data_mut(|d| d.insert_temp(key, drag));
+        // This frame's pointer is relative to where the window was when the window system sent
+        // it, which is where it reports the window now: a move commanded earlier may not have
+        // landed yet.
+        if let (Some((origin, _)), Some(local)) = (content, ui.input(|i| i.pointer.latest_pos()).filter(|p| p.is_finite())) {
+            let to = origin + (local.to_vec2() - drag.grab);
+            if to.distance(drag.to) > 0.0 {
+                drag.to = to;
+                move_to(self, to);
+                ui.ctx().data_mut(|d| d.insert_temp(key, drag));
+            }
         }
-        Some(origin)
+        true
     }
 
     /// Release of a bar drag. The window already sits where it was dragged; over a target in
@@ -382,9 +490,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     /// Keys, text and clipboard events the window's widgets left over, for the application's
-    /// shortcuts. Nothing while a text field of the window has focus.
+    /// shortcuts. Nothing while a widget of the window has keyboard focus: its keys are its own.
     fn forward_events(&mut self, ui: &Ui) {
-        if ui.ctx().text_edit_focused() {
+        if ui.memory(|m| m.focused().is_some()) {
             return;
         }
         let events = ui.input(|i| {

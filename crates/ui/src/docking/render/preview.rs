@@ -250,7 +250,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 x += advance;
             }
         }
-        if float_only || (drag.gesture == GroupGesture::Window && !self.style.title_bar_docks) {
+        if float_only || (drag.gesture == GroupGesture::Window && !self.title_bar_docks()) {
             return;
         }
         if let Some((action, line)) = self.dock_group_proposal(drag, pointer) {

@@ -537,9 +537,12 @@ fn native_window_close_closes_its_panels() {
     d.ctx.set_embed_viewports(false);
     d.content.native = true;
     d.layout = layout;
-    let out = d.step(vec![]);
+    d.step(vec![]);
     assert!(d.response(Id::new(AREA).with(("move-group", Some(&5u32)))).is_none(), "drawn in its own OS window");
-    assert!(out.actions.contains(&Action::SetNative { panel: 5, rect: Some([1210.0, 905.0, 250.0, 300.0]) }), "{:?}", out.actions);
+    // Where the window system put its content, once a report that late is no longer the
+    // opening move landing.
+    let reported = (0..60).any(|_| d.step(vec![]).actions.contains(&Action::SetNative { panel: 5, rect: Some([1210.0, 935.0, 250.0, 300.0]) }));
+    assert!(reported, "{:?}", d.layout.floating[0].native);
 
     close.set(true);
     let out = d.step(vec![]);
