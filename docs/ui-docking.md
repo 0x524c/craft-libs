@@ -39,8 +39,9 @@ their sides.
 
 A `Floating` window holds a tree like the docked layout's (`root`: splits, tab groups and
 accordions, no docks), a rect, an optional native-window rect and `minimized`.
-`Floating::single` makes a window with one group and `Floating::new` one with a tree; `panels()`
-and `contains()` read it. Saved layouts keep loading: a window stored as one group (v1) or as a
+`Floating::single` makes a window with one group, `Floating::new` one with a tree, and
+`Floating::stack` one with groups stacked top to bottom (a vertical split sized by the groups'
+heights, as an app's own stacked layouts migrate); `panels()` and `contains()` read it. Saved layouts keep loading: a window stored as one group (v1) or as a
 stack of groups loads as that group or as a vertical split of the stacked groups, sized by their
 heights.
 

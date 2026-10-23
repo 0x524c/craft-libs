@@ -23,7 +23,7 @@ pub(super) fn docked() -> Layout<u32> {
         Node::Dock { side: Side::End, columns: vec![Column::new(vec![g(&[2, 3], 1), g(&[4], 0)], 180.0), Column::new(vec![g(&[5], 0)], 120.0)] };
     Layout {
         root: Some(hsplit(SplitSize::FixedSecond(300.0), middle, dock)),
-        floating: vec![Floating::stack(vec![g(&[6, 7], 1), g(&[8], 0)], [100.0, 100.0, 300.0, 400.0])],
+        floating: vec![Floating::stack(vec![g(&[6, 7], 1), g(&[8], 0)], [100.0, 100.0, 300.0, 400.0]).unwrap()],
     }
 }
 
@@ -213,7 +213,7 @@ fn restore_into_a_column_group_seam_and_new_column_round_trips() {
     let start = Node::Dock { side: Side::Start, columns: vec![Column::new(vec![g(&[10], 0)], 200.0)] };
     let original = Layout {
         root: Some(hsplit(SplitSize::FixedFirst(200.0), start, hsplit(SplitSize::FixedSecond(300.0), tabs(&[1], 0), end))),
-        floating: vec![Floating::stack(vec![g(&[6], 0), Group { height: Some(90.0), ..g(&[7], 0) }], [10.0, 10.0, 200.0, 300.0])],
+        floating: vec![Floating::stack(vec![g(&[6], 0), Group { height: Some(90.0), ..g(&[7], 0) }], [10.0, 10.0, 200.0, 300.0]).unwrap()],
     };
     original.validate().unwrap();
     // 4: the seam between [2, 3] and [9]; 9: below [4]; 5: a new column after A; 10: alone in
@@ -415,7 +415,7 @@ mod serde_tests {
         let plain = Floating::single(vec![4u32, 5], 1, rect);
         assert_eq!(serde_json::to_value(&plain).unwrap(), json!({"panels": [4, 5], "active": 1, "rect": rect}));
         let minimized = Floating { minimized: true, ..Floating::single(vec![4u32], 0, rect) };
-        let stacked = Floating::stack(vec![g(&[4], 0), g(&[5], 0)], rect);
+        let stacked = Floating::stack(vec![g(&[4], 0), g(&[5], 0)], rect).unwrap();
         let native = Floating { native: Some(rect), ..Floating::single(vec![4u32], 0, rect) };
         for window in [minimized, stacked, native] {
             let value = serde_json::to_value(&window).unwrap();

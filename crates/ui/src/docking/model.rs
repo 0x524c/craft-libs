@@ -87,10 +87,10 @@ impl<P> Floating<P> {
         tree_panels(&self.root).into_iter()
     }
 
-    /// Groups stacked top to bottom, as a v1 layout stored them.
-    #[cfg(test)]
-    pub(crate) fn stack(groups: Vec<Group<P>>, rect: [f32; 4]) -> Self {
-        Self::new(super::dock_model::stack_tree(groups).expect("a group"), rect)
+    /// Groups stacked top to bottom, as a v1 layout stored them: each group over a vertical
+    /// split of the ones below it, sized by their heights. `None` without groups.
+    pub fn stack(groups: Vec<Group<P>>, rect: [f32; 4]) -> Option<Self> {
+        super::dock_model::stack_tree(groups).map(|root| Self::new(root, rect))
     }
 
     /// The window's groups, first to last.

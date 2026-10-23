@@ -551,7 +551,7 @@ fn drag_bar_menu_has_the_group_items_and_opens_from_the_keyboard() {
 
 #[test]
 fn a_group_dragged_out_of_a_floating_stack_tears_out_alone() {
-    let stack = Floating::stack(vec![Group::new(vec![5], 0), Group::new(vec![6, 7], 1)], [80.0, 70.0, 300.0, 400.0]);
+    let stack = Floating::stack(vec![Group::new(vec![5], 0), Group::new(vec![6, 7], 1)], [80.0, 70.0, 300.0, 400.0]).unwrap();
     let layout = Layout { root: Some(tabs(&[1], 0)), floating: vec![stack] };
     let mut d = Driver::new(layout);
     let from = d.rect("drag-bar", 6).center();

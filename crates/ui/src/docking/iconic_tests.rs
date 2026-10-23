@@ -283,7 +283,7 @@ fn hit_rects_cover_every_gesture_source() {
         first: Box::new(Node::Tabs { panels: vec![0], active: 0 }),
         second: Box::new(stack),
     };
-    let window = Floating::stack(vec![Group::new(vec![12], 0), Group::new(vec![13], 0)], [500.0, 60.0, 220.0, 300.0]);
+    let window = Floating::stack(vec![Group::new(vec![12], 0), Group::new(vec![13], 0)], [500.0, 60.0, 220.0, 300.0]).unwrap();
     let layout = Layout {
         root: Some(Node::Split { axis: SplitAxis::Horizontal, size: SplitSize::FixedFirst(200.0), first: Box::new(dock), second: Box::new(frames) }),
         floating: vec![window],

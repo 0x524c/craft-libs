@@ -295,7 +295,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 None => self.id.with(("intersection", outer, inner_layout)),
                 Some((panel, _)) => self.id.with(("window-intersection", panel, outer, inner_layout)),
             };
-            let response = ui.interact(hit, id, Sense::drag());
+            // Pointer only: each of the two dividers it joins already takes keyboard focus.
+            let response = ui.interact(hit, id, Sense::DRAG);
             self.register_interaction(ui.ctx(), id);
             if response.hovered() || response.dragged() {
                 ui.ctx().set_cursor_icon(CursorIcon::Move);
