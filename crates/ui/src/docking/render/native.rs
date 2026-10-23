@@ -8,8 +8,8 @@
 use std::{fmt::Debug, hash::Hash};
 
 use egui::{
-    Context, Event, Id, Key, Modifiers, Pos2, Rect, Ui, Vec2, ViewportBuilder, ViewportClass, ViewportCommand, ViewportId, ViewportInfo, WindowLevel, pos2,
-    vec2,
+    Context, Event, Id, Key, Modifiers, Pos2, Rect, Ui, Vec2, ViewportBuilder, ViewportClass, ViewportCommand, ViewportId, ViewportInfo, WindowLevel,
+    pos2, vec2,
 };
 
 use super::Renderer;

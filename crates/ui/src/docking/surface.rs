@@ -251,7 +251,16 @@ pub struct DockOutput<P> {
 
 impl<P> Default for DockOutput<P> {
     fn default() -> Self {
-        Self { actions: Vec::new(), error: None, focused: None, group_drag: None, group_drop: None, events: Vec::new(), forwarded_events: Vec::new(), forwarded_modifiers: None }
+        Self {
+            actions: Vec::new(),
+            error: None,
+            focused: None,
+            group_drag: None,
+            group_drop: None,
+            events: Vec::new(),
+            forwarded_events: Vec::new(),
+            forwarded_modifiers: None,
+        }
     }
 }
 

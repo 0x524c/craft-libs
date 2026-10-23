@@ -45,9 +45,17 @@ impl eframe::App for App {
 fn main() -> eframe::Result {
     let tabs = |panels: &[u32]| Node::Tabs { panels: panels.to_vec(), active: 0 };
     let layout = Layout {
-        root: Some(Node::Split { axis: SplitAxis::Horizontal, size: SplitSize::Ratio(0.5), first: Box::new(tabs(&[1, 2])), second: Box::new(tabs(&[3, 4])) }),
+        root: Some(Node::Split {
+            axis: SplitAxis::Horizontal,
+            size: SplitSize::Ratio(0.5),
+            first: Box::new(tabs(&[1, 2])),
+            second: Box::new(tabs(&[3, 4])),
+        }),
         floating: vec![Floating::single(vec![5, 6], 0, [300.0, 200.0, 320.0, 260.0]), Floating::single(vec![7], 0, [700.0, 300.0, 260.0, 200.0])],
     };
-    let options = eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 700.0]).with_position([0.0, 0.0]), ..Default::default() };
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 700.0]).with_position([0.0, 0.0]),
+        ..Default::default()
+    };
     eframe::run_native("Docking", options, Box::new(|_| Ok(Box::new(App { layout }))))
 }

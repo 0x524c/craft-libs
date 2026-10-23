@@ -411,7 +411,8 @@ impl NativeHost {
     fn infos(&self) -> egui::ViewportIdMap<egui::ViewportInfo> {
         let info = |id: egui::ViewportId, rect: Rect| egui::ViewportInfo {
             inner_rect: Some(rect),
-            outer_rect: (!self.no_position).then(|| if id == egui::ViewportId::ROOT { rect } else { Rect::from_min_max(rect.min - self.frame, rect.max) }),
+            outer_rect: (!self.no_position)
+                .then(|| if id == egui::ViewportId::ROOT { rect } else { Rect::from_min_max(rect.min - self.frame, rect.max) }),
             focused: Some(self.focus == Some(id)),
             monitor_size: self.monitor_size,
             ..Default::default()

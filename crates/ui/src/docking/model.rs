@@ -542,7 +542,8 @@ pub(super) fn valid_rect(rect: [f32; 4]) -> bool {
 
 /// A floating window's saved monitor and monitor size, each where given.
 fn valid_monitor(monitor: Option<&Monitor>, monitor_size: Option<[f32; 2]>) -> bool {
-    monitor.is_none_or(|m| valid_rect(m.rect) && m.scale.is_finite() && m.scale > 0.0) && monitor_size.is_none_or(|[w, h]| valid_rect([0.0, 0.0, w, h]))
+    monitor.is_none_or(|m| valid_rect(m.rect) && m.scale.is_finite() && m.scale > 0.0)
+        && monitor_size.is_none_or(|[w, h]| valid_rect([0.0, 0.0, w, h]))
 }
 
 pub(super) fn valid_width(width: f32) -> bool {

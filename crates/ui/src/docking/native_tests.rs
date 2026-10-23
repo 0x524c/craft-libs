@@ -884,7 +884,7 @@ fn escape_or_focus_loss_ends_a_drag_a_native_window_owns() {
     let out = d.window_step(id, vec![button(pos2(40.0, 9.0), false)]);
     assert_eq!(window_move(&out), None, "{:?}", out.actions);
 
-        // Another application takes focus: cancelled.
+    // Another application takes focus: cancelled.
     let mut d = driver(layout(true));
     let id = id_of(&d);
     d.window_hold(id, pos2(15.0, TAB_ROW), over);
