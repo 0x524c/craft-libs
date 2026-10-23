@@ -351,8 +351,34 @@ viewport's `inner_rect.min` plus its rect). A window with a panel whose
   events that reach a native window and that none of its widgets used come back in
   `DockOutput::forwarded_events`; the app feeds them to the shortcut handling it runs on the main
   window. A window whose text field has focus forwards nothing.
-- **Drags.** Tabs and groups do not drag between OS windows yet: a drag that starts in a native
-  window is cancelled, and targets in another window are ignored.
+- **Drags.** Tabs, groups and whole windows drag between the app's OS windows.
+  - *Ownership.* The window where the button went down owns the drag: the window system sends it
+    the pointer's moves and the release while the button is held, inside the window or not. So
+    the pointer leaving a window (`PointerGone`) is not a release. A drag ends on release,
+    Escape, or when none of the app's windows has focus.
+  - *Hit-testing.* The owner adds its desktop origin to the pointer (a native window's origin is
+    the one last commanded while it moves, else the reported `outer_rect`). The window under that
+    desktop point is a floating native window first, most recently focused first, then the main
+    window. A window moving by its bar is never its own target. A point in no window is on the
+    desktop.
+  - *Targets and previews.* Each window draws its drop targets in its own coordinates, and the
+    window under the pointer draws the drop preview (zone, dock line, ghost) in its own frame.
+    The source window shows only the "Hold {key} to undock" hint. The release is resolved at the
+    end of the main window's frame, after every native window has drawn.
+  - *Drops.* Over a window, a tab or group docks or joins there with the usual targets: dock lines
+    and frame zones in the main window, frame zones and tab rows in floating windows. Over the
+    desktop, it floats into a new OS window placed so the grabbed tab stays under the pointer
+    (the window's top-left is the pointer minus the grab offset, less the bar's height). A
+    Ctrl/Cmd-drag floats there wherever it is released.
+  - *Moving a window.* Dragging the bar, the only tab of a window, or the drag area of its only
+    group moves the window. Released over a target in another window, the whole window docks or
+    joins there (`Action::MoveWindow`, as for the in-window title bar with
+    `DockStyle::title_bar_docks`); over the desktop, or with Ctrl/Cmd held, it stays where it was
+    moved. Escape puts it back.
+  - *Wayland.* Where `outer_rect` is `None`, desktop positions are unknown, so drops across
+    windows cannot be resolved. A drag works inside its own window, and a release outside it
+    floats a new window that the compositor places. Moving a window hands the move to the
+    compositor, which never docks it.
 
 On the web and wherever egui embeds viewports, nothing changes: floating windows stay in the
 page at their in-window rect, `native` and the monitor fields are kept but unused, and
