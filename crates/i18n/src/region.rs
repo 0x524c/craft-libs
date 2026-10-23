@@ -69,11 +69,18 @@ impl Default for Region {
 impl Region {
     /// The region a BCP 47 or POSIX locale tag names (`pl-PL`, `de_AT.UTF-8@euro`, `zh-Hans-CN`,
     /// `en-US-u-ms-metric`, Apple's `en_US@rg=plzzzz`). The Unicode extensions `ms` (measurement),
-    /// `hc` (clock) and `rg` (region override) are read. An empty or unreadable tag, `C` and
-    /// `POSIX` are `en-US`; a bare `en` is the United States, any other bare language has no
-    /// territory.
+    /// `hc` (clock), `rg` (region override) and `nu` (digits; Apple's `@numbers=`) are read, and
+    /// `nu` stays in the number and time locales (`ar-EG-u-nu-latn`). `C` and `POSIX` are the C
+    /// locale: English, A4, metric, a `.` decimal and no grouping. An empty or unreadable tag is
+    /// `en-US`; a bare `en` is the United States, any other bare language has no territory.
     pub fn from_tag(tag: &str) -> Region {
-        Region::from_parts(&Tag::parse(tag).unwrap_or_default())
+        match Tag::parse(tag) {
+            Some(tag) => Region::from_parts(&tag),
+            None if is_c_locale(tag) => {
+                Region { measurement: Measurement::Metric, paper: Paper::A4, decimal: Some('.'), grouping: Some(None), ..Region::default() }
+            }
+            None => Region::default(),
+        }
     }
 
     /// The region for an app's saved region setting: `""` or `auto` (any case) is
@@ -123,11 +130,13 @@ struct Tag {
     territory: String,
     measurement: Option<Measurement>,
     hour_cycle: Option<HourCycle>,
+    /// The `nu` keyword (`latn`, `arab`); empty when the tag has none.
+    digits: String,
 }
 
 impl Default for Tag {
     fn default() -> Self {
-        Tag { language: "en".into(), script: String::new(), territory: "US".into(), measurement: None, hour_cycle: None }
+        Tag { language: "en".into(), script: String::new(), territory: "US".into(), measurement: None, hour_cycle: None, digits: String::new() }
     }
 }
 
@@ -137,7 +146,7 @@ impl Tag {
         let tag: String = tag.chars().take(64).collect();
         let (tag, modifier) = tag.split_once('@').unwrap_or((&tag, ""));
         let tag = tag.split('.').next().unwrap_or_default().trim();
-        if tag.eq_ignore_ascii_case("c") || tag.eq_ignore_ascii_case("posix") {
+        if is_c_locale(tag) {
             return None;
         }
         let mut parts = tag.split(['-', '_']);
@@ -145,8 +154,14 @@ impl Tag {
         if !(2..=3).contains(&language.len()) || !language.chars().all(|c| c.is_ascii_alphabetic()) {
             return None;
         }
-        let mut out =
-            Tag { language: language.to_ascii_lowercase(), script: String::new(), territory: String::new(), measurement: None, hour_cycle: None };
+        let mut out = Tag {
+            language: language.to_ascii_lowercase(),
+            script: String::new(),
+            territory: String::new(),
+            measurement: None,
+            hour_cycle: None,
+            digits: String::new(),
+        };
         let mut extension = None;
         for p in parts.by_ref() {
             // A singleton starts the extensions (`-u-…`, `-x-…`).
@@ -189,6 +204,7 @@ impl Tag {
                 ("ms", "ussystem") => out.measurement = Some(Measurement::Us),
                 ("hc", "h11" | "h12") => out.hour_cycle = Some(HourCycle::H12),
                 ("hc", "h23" | "h24") => out.hour_cycle = Some(HourCycle::H23),
+                ("nu" | "numbers", v) if (3..=8).contains(&v.len()) && v.chars().all(|c| c.is_ascii_alphanumeric()) => out.digits = v.into(),
                 ("rg", v) if v.len() == 6 && v.ends_with("zzzz") && v.get(..2).is_some_and(is_territory) => {
                     out.territory = v.get(..2).unwrap_or_default().to_ascii_uppercase();
                 }
@@ -202,7 +218,8 @@ impl Tag {
     }
 
     fn bcp47(&self) -> String {
-        [self.language.as_str(), &self.script, &self.territory].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-")
+        let tag = [self.language.as_str(), &self.script, &self.territory].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+        if self.digits.is_empty() { tag } else { format!("{tag}-u-nu-{}", self.digits) }
     }
 }
 
@@ -216,16 +233,15 @@ fn title_case(p: &str) -> String {
     chars.next().map(|c| c.to_ascii_uppercase().to_string() + chars.as_str()).unwrap_or_default()
 }
 
-/// Whether a locale variable names the C locale (`C`, `C.UTF-8`, `POSIX`).
-#[cfg(any(test, all(unix, not(any(target_vendor = "apple", target_os = "android")))))]
-fn is_c_locale(v: &str) -> bool {
-    let v = v.trim();
-    v.eq_ignore_ascii_case("c") || v.eq_ignore_ascii_case("posix") || v.starts_with("C.")
+/// Whether a locale tag names the C locale (`C`, `C.UTF-8`, `POSIX`).
+fn is_c_locale(tag: &str) -> bool {
+    let tag = tag.split(['@', '.']).next().unwrap_or_default().trim();
+    tag.eq_ignore_ascii_case("c") || tag.eq_ignore_ascii_case("posix")
 }
 
 /// The region from the POSIX locale variables `var` reads. An empty variable is unset; `C` in
-/// `LC_ALL` or an `LC_*` variable is the C locale, written as `en-US`. `LANG` set to `C` or unset
-/// gives way to the platform's preferred locale.
+/// `LC_ALL` or an `LC_*` variable is the C locale's conventions. `LANG` set to `C` or unset gives
+/// way to the platform's preferred locale.
 #[cfg(any(test, all(unix, not(any(target_vendor = "apple", target_os = "android")))))]
 fn from_posix(var: impl Fn(&str) -> Option<String>, platform: impl FnOnce() -> Option<String>) -> Region {
     let var = |name: &str| var(name).filter(|v| !v.trim().is_empty());
@@ -248,7 +264,7 @@ fn from_posix(var: impl Fn(&str) -> Option<String>, platform: impl FnOnce() -> O
 /// reads, where Windows keeps the regional format and the user's changes to it. `LocaleName` is
 /// the format (`pl-PL`), else the platform's preferred locale.
 #[cfg(any(test, windows))]
-fn from_windows(value: impl Fn(&str) -> Option<String>, platform: impl FnOnce() -> Option<String>) -> Region {
+pub(crate) fn from_windows(value: impl Fn(&str) -> Option<String>, platform: impl FnOnce() -> Option<String>) -> Region {
     let mut region = Region::from_tag(&value("LocaleName").or_else(platform).unwrap_or_default());
     region.decimal = value("sDecimal").as_deref().and_then(single_char);
     region.grouping = value("sThousand").as_deref().and_then(grouping);
@@ -361,9 +377,31 @@ mod tests {
         assert_eq!(Region::from_tag("es-419").numbers, "es-419");
         assert_eq!(Region::from_tag("fr").numbers, "fr");
         assert_eq!(Region::from_tag("en").numbers, "en-US", "bare English is the US");
-        for junk in ["", "C", "POSIX", "C.UTF-8", "1234", "x", "--", "ünïcode-ÄÄ", &"a".repeat(10_000)] {
+        for junk in ["", "1234", "x", "--", "ünïcode-ÄÄ", &"a".repeat(10_000)] {
             assert_eq!(Region::from_tag(junk), Region::default(), "{junk:?}");
         }
+    }
+
+    /// glibc's C locale: A4 and metric (`C-paper.c`, `C-measurement.c`), `.` and no grouping.
+    #[test]
+    fn the_c_locale_is_a4_metric_and_ungrouped() {
+        for c in ["C", "POSIX", "C.UTF-8", "c.utf8", " C "] {
+            let r = Region::from_tag(c);
+            assert_eq!(
+                (r.numbers.as_str(), r.paper, r.measurement, r.decimal, r.grouping),
+                ("en-US", Paper::A4, Measurement::Metric, Some('.'), Some(None)),
+                "{c:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_chosen_digit_system_stays_in_the_locale() {
+        assert_eq!(Region::from_tag("ar-EG-u-nu-latn").numbers, "ar-EG-u-nu-latn");
+        let r = Region::from_tag("ar_EG@numbers=latn");
+        assert_eq!((r.numbers.as_str(), r.time.as_str()), ("ar-EG-u-nu-latn", "ar-EG-u-nu-latn"));
+        assert_eq!(Region::from_tag("en-US-u-nu-arab-ms-metric").numbers, "en-US-u-nu-arab");
+        assert_eq!(Region::from_tag("ar-EG-u-nu-x").numbers, "ar-EG", "not a numbering system");
     }
 
     #[test]
@@ -411,7 +449,9 @@ mod tests {
         // `C` in an LC_* variable is the C locale's conventions, not an unset variable.
         let r = from_posix(env(&[("LANG", "de_DE.UTF-8"), ("LC_NUMERIC", "C"), ("LC_TIME", "C.UTF-8")]), none);
         assert_eq!((r.numbers.as_str(), r.time.as_str(), r.paper), ("en-US", "en-US", Paper::A4));
-        assert_eq!(from_posix(env(&[("LANG", "de_DE.UTF-8"), ("LC_ALL", "C")]), none), Region::default());
+        assert_eq!(from_posix(env(&[("LANG", "de_DE.UTF-8"), ("LC_ALL", "C")]), none), Region::from_tag("C"));
+        let r = from_posix(env(&[("LANG", "en_US.UTF-8"), ("LC_PAPER", "C"), ("LC_MEASUREMENT", "C.UTF-8")]), none);
+        assert_eq!((r.paper, r.measurement, r.decimal), (Paper::A4, Measurement::Metric, None));
         assert_eq!(from_posix(env(&[("LANG", "C"), ("LC_NUMERIC", "")]), || Some("it-IT".into())).numbers, "it-IT");
     }
 

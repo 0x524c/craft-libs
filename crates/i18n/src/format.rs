@@ -53,14 +53,18 @@ impl Format {
         let latin = probe.integer.starts_with(|c: char| c.is_ascii_digit());
         if latin {
             if let Some(point) = region.decimal.map(String::from).filter(|p| *p != probe.point) {
-                // `1,234.5` with a decimal comma becomes `1.234,5`, never `1,234,5`.
-                if probe.group == point && region.grouping.is_none() {
-                    format.group = Some(probe.point.clone());
-                }
                 format.point = Some(point);
             }
             if let Some(g) = region.grouping.map(|g| g.map(String::from).unwrap_or_default()).filter(|g| *g != probe.group) {
                 format.group = Some(g);
+            }
+            // A grouping mark equal to the decimal mark (`1,234,5`) wouldn't read back. With a
+            // decimal comma and the locale's grouping, `1,234.5` becomes `1.234,5`; a grouping
+            // comma the system sets as well (Windows always sets one) leaves no grouping.
+            let point = format.point.as_deref().unwrap_or(&probe.point);
+            if format.group.as_deref().unwrap_or(&probe.group) == point {
+                let swapped = region.grouping.is_none() && probe.point != point;
+                format.group = Some(if swapped { probe.point.clone() } else { String::new() });
             }
         }
         format.percent = percent_affixes(&region.numbers, latin);
@@ -95,6 +99,18 @@ impl Format {
         }
     }
 
+    /// [`Self::number`] without grouping separators, for values such as pixel sizes and years:
+    /// `1920`, `١٩٢٠`, `1234,5`.
+    pub fn number_ungrouped(&self, value: f64, decimals: usize) -> String {
+        match to_decimal(value, decimals) {
+            Some(d) => {
+                let p = self.parts_with(&d, Some(""));
+                p.sign + &p.text
+            }
+            None => non_finite(value).to_owned(),
+        }
+    }
+
     /// `ratio` as a percentage with `decimals` digits after the decimal separator: `0.5` is
     /// `50%`, `50 %` (French, German), `%50` (Turkish), `٥٠٪؜` (Egyptian Arabic).
     pub fn percent(&self, ratio: f64, decimals: usize) -> String {
@@ -112,7 +128,13 @@ impl Format {
     }
 
     fn parts(&self, d: &Decimal) -> Written {
-        let mut sink = Sink { group: self.group.as_deref(), point: self.point.as_deref(), into: Target::Text, w: Written::default() };
+        self.parts_with(d, self.group.as_deref())
+    }
+
+    /// `d` taken apart, with `group` in place of the locale's grouping separator if set (`""`
+    /// drops it).
+    fn parts_with(&self, d: &Decimal, group: Option<&str>) -> Written {
+        let mut sink = Sink { group, point: self.point.as_deref(), into: Target::Text, w: Written::default() };
         let written = match &self.decimal {
             Some(f) => f.format(d).write_to_parts(&mut sink),
             None => fmt::Write::write_str(&mut sink, &d.to_string()),
@@ -260,6 +282,25 @@ mod tests {
     }
 
     #[test]
+    fn ungrouped_numbers() {
+        for (tag, want) in [("en", "1920"), ("de", "-1234567,5"), ("hi", "1234567"), ("ar-EG", "١٩٢٠")] {
+            let value = if tag == "de" {
+                -1_234_567.5
+            } else if tag == "hi" {
+                1_234_567.0
+            } else {
+                1920.0
+            };
+            let decimals = usize::from(tag == "de");
+            assert_eq!(Format::from_tag(tag).number_ungrouped(value, decimals), want, "{tag}");
+        }
+        let mut region = Region::from_tag("en-US");
+        region.decimal = Some(',');
+        assert_eq!(Format::new(&region, Digits::Locale).number_ungrouped(1234.5, 1), "1234,5", "the system's decimal mark stays");
+        assert_eq!(Format::from_tag("en").number_ungrouped(f64::INFINITY, 0), "∞");
+    }
+
+    #[test]
     fn forced_latin_digits() {
         assert_eq!(latin("ar-EG").number(1234.5, 1), "1,234.5");
         assert_eq!(latin("fa").integer(1_234_567), "1,234,567");
@@ -301,6 +342,27 @@ mod tests {
         let mut region = Region::from_tag("ar-EG");
         region.grouping = Some(Some(','));
         assert_eq!(Format::new(&region, Digits::Locale).number(1234.5, 1), "١٬٢٣٤٫٥");
+    }
+
+    /// Windows always sets `sThousand`, so a decimal comma the user picks arrives beside a grouping
+    /// comma: the numbers drop grouping rather than read `1,234,5`.
+    #[test]
+    fn a_system_grouping_mark_equal_to_the_decimal_mark_is_dropped() {
+        let reg = |pairs: &'static [(&'static str, &'static str)]| move |n: &str| pairs.iter().find(|(k, _)| *k == n).map(|(_, v)| v.to_string());
+        let region = crate::region::from_windows(reg(&[("LocaleName", "en-US"), ("sDecimal", ","), ("sThousand", ",")]), || None);
+        let format = Format::new(&region, Digits::Locale);
+        assert_eq!((format.number(1234.5, 1), format.integer(1_234_567)), ("1234,5".to_owned(), "1234567".to_owned()));
+        let region = crate::region::from_windows(reg(&[("LocaleName", "de-DE"), ("sDecimal", ","), ("sThousand", ",")]), || None);
+        assert_eq!(Format::new(&region, Digits::Locale).number(1234.5, 1), "1234,5");
+        let region = crate::region::from_windows(reg(&[("LocaleName", "en-US"), ("sDecimal", "."), ("sThousand", ".")]), || None);
+        assert_eq!(Format::new(&region, Digits::Locale).number(1234.5, 1), "1234.5");
+    }
+
+    #[test]
+    fn a_digit_system_the_region_names_is_used() {
+        assert_eq!(Format::new(&Region::from_tag("ar-EG-u-nu-latn"), Digits::Locale).number(1234.5, 1), "1,234.5");
+        assert_eq!(Format::new(&Region::from_tag("ar_EG@numbers=latn"), Digits::Locale).integer(5), "5");
+        assert_eq!(Format::new(&Region::from_tag("en-US-u-nu-arab"), Digits::Locale).integer(5), "٥");
     }
 
     #[test]
