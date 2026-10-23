@@ -467,14 +467,14 @@ fn ctrl_or_cmd_floats_from_a_tab_or_a_drag_bar_and_the_preview_says_so() {
         // Without the modifier, a release over a group docks there; the preview names the modifier.
         let mut d = film();
         d.hold(from, over);
-        assert!(texts(&d).iter().any(|t| *t == hint), "{from:?}: {:?}", texts(&d));
+        assert!(texts(&d).contains(&hint), "{from:?}: {:?}", texts(&d));
         let out = d.release(over);
         assert!(!out.actions.is_empty() && !floated(&out.actions, PROJECT[0]), "{from:?}: {:?}", out.actions);
         // Held, it floats, and the hint is gone.
         let mut d = film();
         d.modifiers = Modifiers::COMMAND;
         d.hold(from, over);
-        assert!(!texts(&d).iter().any(|t| *t == hint), "{from:?}");
+        assert!(!texts(&d).contains(&hint), "{from:?}");
         let out = d.release(over);
         assert!(floated(&out.actions, PROJECT[0]), "{from:?}: {:?}", out.actions);
     }
