@@ -283,6 +283,29 @@ fn cmap_reads_formats_4_and_12_and_collections() {
     assert!(Cmap::read(&font[..40], 0).is_none());
 }
 
+#[test]
+fn cmap_reads_each_subtable_within_its_declared_length() {
+    // 'A' takes its glyph from an empty glyph array, so the read lands on the format 12 subtable
+    // that follows the format 4 one.
+    let font = tiny_font(&[(0x41, 0x41, Some(&[]))], &[(0x2_0000, 0x2_0000)]);
+    let cmap = Cmap::read(&font, 0).unwrap();
+    assert!(!cmap.covers('A') && cmap.covers('\u{20000}'));
+
+    // A format 4 length past the end of the table is clamped rather than rejected. The format 4
+    // subtable starts after the 28-byte font header, the 4-byte cmap header and two 8-byte encoding
+    // records.
+    let mut font = tiny_font(&[(0x41, 0x5A, None)], &[(0x2_0000, 0x2_0000)]);
+    let format4 = 28 + 4 + 2 * 8;
+    let format12 = format4 + usize::from(u16::from_be_bytes(font[format4 + 2..format4 + 4].try_into().unwrap()));
+    font[format4 + 2..format4 + 4].copy_from_slice(&u16::MAX.to_be_bytes());
+    assert!(Cmap::read(&font, 0).unwrap().covers('A'));
+
+    // A format 12 group past the declared length doesn't count.
+    font[format12 + 4..format12 + 8].copy_from_slice(&16u32.to_be_bytes());
+    let cmap = Cmap::read(&font, 0).unwrap();
+    assert!(cmap.covers('A') && !cmap.covers('\u{20000}'));
+}
+
 /// A craft-fonts checkout in `scratch` with these `(family, scripts, role, font)` faces, all
 /// Regular.
 fn checkout(scratch: &Scratch, faces: &[(&str, &str, &str, Vec<u8>)]) -> PathBuf {
