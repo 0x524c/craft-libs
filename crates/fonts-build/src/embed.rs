@@ -81,6 +81,7 @@ impl Embed {
     /// the manifest), cut to the characters of the catalogs given to `Embed::subset_to`. Other
     /// CJK faces are dropped and the rest are kept. Without catalogs the interface faces are left
     /// out too, with a `cargo::warning`, so a full CJK face is never embedded for the interface.
+    /// A manifest with no interface face is also a `cargo::warning` when that drops a CJK face.
     /// Combines with [`Embed::scripts`] and [`Embed::filter`]; with `CRAFT_FONTS_REQUIRED=1`, an
     /// interface face satisfies its script tags.
     pub fn for_ui(mut self) -> Self {
@@ -89,7 +90,8 @@ impl Embed {
     }
 
     /// Cut the interface faces to the characters these translation catalogs use, and embed the
-    /// cut faces, written to `OUT_DIR`. Implies [`Embed::for_ui`].
+    /// cut faces, written to `OUT_DIR`. Implies [`Embed::for_ui`]. An empty list counts as no
+    /// catalogs: the interface faces are left out, with a `cargo::warning`.
     ///
     /// The cut keeps the catalogs' characters from U+2E80 up (CJK and later blocks, without emoji,
     /// variation selectors and tags), plus CJK punctuation (U+3000–303F), kana (U+3040–30FF,
@@ -201,8 +203,9 @@ impl Embed {
     /// The wanted manifest entries with their canonical file paths.
     fn select(&self, dir: &Path, cargo: &mut Vec<String>) -> Result<Vec<Face>, Error> {
         let manifest = dir.join("fonts/manifest.txt");
-        cargo.push(format!("cargo::rerun-if-changed={}", manifest.display()));
         let text = std::fs::read_to_string(&manifest).map_err(|source| Error::Read { path: manifest.clone(), source })?;
+        // Cargo treats a missing watched file as changed, which would rerun the build every time.
+        cargo.push(format!("cargo::rerun-if-changed={}", manifest.display()));
         let entries = parse_manifest(&text).map_err(|error| Error::Parse { manifest: manifest.clone(), error })?;
         if let Some(families) = &self.families {
             let unknown: Vec<String> = families.iter().filter(|f| !entries.iter().any(|e| &e.family == *f)).cloned().collect();
@@ -216,8 +219,11 @@ impl Embed {
                 return Err(Error::UnknownFamilies { manifest, families: unknown, known });
             }
         }
+        let has_ui = entries.iter().any(ManifestEntry::is_ui);
+        let no_catalogs = self.catalogs.as_ref().is_none_or(Vec::is_empty);
         let mut faces = Vec::new();
         let mut uncut = Vec::new();
+        let mut dropped_cjk = false;
         for entry in entries {
             // Interface faces are the sources of the cuts: embedded whole only when named.
             let named = match &self.families {
@@ -230,10 +236,12 @@ impl Embed {
             let wanted = self.scripts.as_ref().is_none_or(|tags| tags.iter().any(|t| entry.has_script(t)));
             let ui_dropped = self.ui && entry.is_cjk() && !entry.is_ui();
             if !wanted || ui_dropped || self.filter.as_ref().is_some_and(|keep| !keep(&entry)) {
+                dropped_cjk |= wanted && ui_dropped;
                 continue;
             }
             let cut = self.ui && entry.is_ui();
-            if cut && self.catalogs.is_none() {
+            // An empty list would cut the faces to kana and punctuation, so it counts as none.
+            if cut && no_catalogs {
                 uncut.push(format!("{} {}", entry.family, entry.style));
                 continue;
             }
@@ -245,10 +253,18 @@ impl Embed {
             faces.push(Face { entry, path, index, cut });
         }
         if !uncut.is_empty() {
+            let why = if self.catalogs.is_some() { "Embed::subset_to was given no translation catalogs" } else { "no translation catalogs" };
             cargo.push(format!(
-                "cargo::warning=craft-fonts: not embedding the interface faces {}: pass the translation catalogs to \
+                "cargo::warning=craft-fonts: not embedding the interface faces {}: {why}; pass the catalogs to \
                  Embed::subset_to (feature `subset`) to embed them cut to the catalogs' characters",
                 uncut.join(", ")
+            ));
+        }
+        if dropped_cjk && !has_ui {
+            cargo.push(format!(
+                "cargo::warning=craft-fonts: not embedding any CJK face for the interface: {} has no interface face \
+                 (role `ui`); use a craft-fonts checkout that has them",
+                manifest.display()
             ));
         }
         Ok(faces)
@@ -258,6 +274,7 @@ impl Embed {
     #[cfg(feature = "subset")]
     fn cut(&self, faces: &mut [Face], out_dir: &Path) -> Result<(), Error> {
         let Some(catalogs) = &self.catalogs else { return Ok(()) };
+        // `select` leaves the faces to cut out when there are no catalogs.
         if !faces.iter().any(|face| face.cut) {
             return Ok(());
         }

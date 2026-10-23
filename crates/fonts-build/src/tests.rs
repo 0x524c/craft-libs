@@ -105,6 +105,8 @@ fn required_fails_without_a_usable_checkout() {
     assert!(matches!(run(Embed::new(), Some(missing), Some("1")).result, Err(Error::Read { .. })));
     let r = run(Embed::new(), Some(missing), None);
     assert!(r.result.unwrap().is_empty());
+    // Watching a missing manifest would rerun the build script on every build.
+    assert!(!r.cargo.iter().any(|l| l.starts_with("cargo::rerun-if-changed")), "{:?}", r.cargo);
     assert!(r.cargo.iter().any(|l| l.starts_with("cargo::warning=building without craft-fonts")), "{:?}", r.cargo);
 
     let scratch = Scratch::new("missing-file");
@@ -358,6 +360,12 @@ fn for_ui_embeds_cjk_faces_only_as_cut_interface_faces() {
     assert_eq!(w.len(), 1, "{w:#?}");
     assert!(w[0].contains("not embedding the interface faces Noto Sans TC UI Regular, Noto Sans HK UI Regular"), "{}", w[0]);
     assert!(w[0].contains("Embed::subset_to"), "{}", w[0]);
+    // A manifest without interface faces loses every CJK face, which is worth a warning.
+    let r = run(Embed::new().for_ui(), Some(&fixture()), None);
+    assert!(r.cargo.contains(&format!("cargo::rerun-if-changed={}", fixture().join("fonts/manifest.txt").display())), "{:?}", r.cargo);
+    let w = warnings(&r);
+    assert_eq!(w.len(), 1, "{w:#?}");
+    assert!(w[0].contains("not embedding any CJK face for the interface") && w[0].contains("role `ui`"), "{}", w[0]);
     let r = run(Embed::new().for_ui().scripts(&["Hant", "Arab"]), Some(&dir), Some("1"));
     let Err(Error::MissingScripts { scripts, .. }) = r.result else { panic!("{:?}", r.result) };
     assert_eq!(scripts, ["Hant"]);
@@ -514,6 +522,13 @@ mod subset {
         let r = run(Embed::new().subset_to([&tw, &ko]).check_text([scratch.0.join("zh-TW.tsv")]), Some(&dir), None);
         assert_eq!(mapped(&std::fs::read(cut_file(&r, "Noto Sans TC UI")).unwrap()), [0x3001, 0x300C, 0x3042, 0x4E00, 0x4E01, 0xFF01]);
         assert_eq!(warnings(&r).len(), 1, "{:#?}", warnings(&r));
+
+        // No catalogs (an app whose CRAFT_I18N_DIR is unset) leaves the faces out, not cut to kana.
+        let r = run(Embed::new().subset_to(Vec::<PathBuf>::new()), Some(&dir), None);
+        assert_eq!(r.result.as_ref().unwrap(), &["Noto Sans Arabic Regular"]);
+        let w = warnings(&r);
+        assert_eq!(w.len(), 1, "{w:#?}");
+        assert!(w[0].contains("Noto Sans TC UI Regular") && w[0].contains("given no translation catalogs"), "{}", w[0]);
     }
 
     #[test]
