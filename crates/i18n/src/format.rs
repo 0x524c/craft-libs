@@ -50,14 +50,18 @@ impl Format {
         let latin = probe.integer.starts_with(|c: char| c.is_ascii_digit());
         if latin {
             if let Some(point) = region.decimal.map(String::from).filter(|p| *p != probe.point) {
-                // `1,234.5` with a decimal comma becomes `1.234,5`, never `1,234,5`.
-                if probe.group == point && region.grouping.is_none() {
-                    format.group = Some(probe.point.clone());
-                }
                 format.point = Some(point);
             }
             if let Some(g) = region.grouping.map(|g| g.map(String::from).unwrap_or_default()).filter(|g| *g != probe.group) {
                 format.group = Some(g);
+            }
+            // A grouping mark equal to the decimal mark (`1,234,5`) wouldn't read back. With a
+            // decimal comma and the locale's grouping, `1,234.5` becomes `1.234,5`; a grouping
+            // comma the system sets as well (Windows always sets one) leaves no grouping.
+            let point = format.point.as_deref().unwrap_or(&probe.point);
+            if format.group.as_deref().unwrap_or(&probe.group) == point {
+                let swapped = region.grouping.is_none() && probe.point != point;
+                format.group = Some(if swapped { probe.point.clone() } else { String::new() });
             }
         }
         format.percent = percent_affixes(&region.numbers, latin);
@@ -326,6 +330,27 @@ mod tests {
         let mut region = Region::from_tag("ar-EG");
         region.grouping = Some(Some(','));
         assert_eq!(Format::new(&region, Digits::Locale).number(1234.5, 1), "١٬٢٣٤٫٥");
+    }
+
+    /// Windows always sets `sThousand`, so a decimal comma the user picks arrives beside a grouping
+    /// comma: the numbers drop grouping rather than read `1,234,5`.
+    #[test]
+    fn a_system_grouping_mark_equal_to_the_decimal_mark_is_dropped() {
+        let reg = |pairs: &'static [(&'static str, &'static str)]| move |n: &str| pairs.iter().find(|(k, _)| *k == n).map(|(_, v)| v.to_string());
+        let region = crate::region::from_windows(reg(&[("LocaleName", "en-US"), ("sDecimal", ","), ("sThousand", ",")]), || None);
+        let format = Format::new(&region, Digits::Locale);
+        assert_eq!((format.number(1234.5, 1), format.integer(1_234_567)), ("1234,5".to_owned(), "1234567".to_owned()));
+        let region = crate::region::from_windows(reg(&[("LocaleName", "de-DE"), ("sDecimal", ","), ("sThousand", ",")]), || None);
+        assert_eq!(Format::new(&region, Digits::Locale).number(1234.5, 1), "1234,5");
+        let region = crate::region::from_windows(reg(&[("LocaleName", "en-US"), ("sDecimal", "."), ("sThousand", ".")]), || None);
+        assert_eq!(Format::new(&region, Digits::Locale).number(1234.5, 1), "1234.5");
+    }
+
+    #[test]
+    fn a_digit_system_the_region_names_is_used() {
+        assert_eq!(Format::new(&Region::from_tag("ar-EG-u-nu-latn"), Digits::Locale).number(1234.5, 1), "1,234.5");
+        assert_eq!(Format::new(&Region::from_tag("ar_EG@numbers=latn"), Digits::Locale).integer(5), "5");
+        assert_eq!(Format::new(&Region::from_tag("en-US-u-nu-arab"), Digits::Locale).integer(5), "٥");
     }
 
     #[test]
