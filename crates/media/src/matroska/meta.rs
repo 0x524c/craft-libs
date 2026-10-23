@@ -590,6 +590,36 @@ mod metadata_depth_tests {
         assert!(matches!(&refused[..], [ContentEncoding::Compression { algo: 3, .. }]), "{refused:?}");
     }
 
+    fn track_with_private(private: &[u8], strips: &[(&[u8], u64)]) -> Track {
+        let mut encs = Vec::new();
+        for &(bytes, scope) in strips {
+            let mut comp = Vec::new();
+            el_uint(&mut comp, CONTENT_COMP_ALGO, 3);
+            el(&mut comp, CONTENT_COMP_SETTINGS, bytes);
+            let mut enc = Vec::new();
+            el_uint(&mut enc, CONTENT_ENCODING_SCOPE, scope);
+            el(&mut enc, CONTENT_COMPRESSION, &comp);
+            el(&mut encs, CONTENT_ENCODING, &enc);
+        }
+        let mut te = Vec::new();
+        el_uint(&mut te, TRACK_NUMBER, 1);
+        el(&mut te, CODEC_ID, b"V_TEST");
+        el(&mut te, CODEC_PRIVATE, private);
+        el(&mut te, CONTENT_ENCODINGS, &encs);
+        let mut tracks = Vec::new();
+        el(&mut tracks, TRACK_ENTRY, &te);
+        let mut parsed = parse_tracks(&tracks, 1_000_000);
+        assert_eq!(parsed.len(), 1);
+        parsed.remove(0)
+    }
+
+    #[test]
+    fn codec_private_stripped_headers_are_restored_in_reverse_order() {
+        let strips: [(&[u8], u64); 4] = [(b"first", 2), (b"", 2), (b"second", 2), (b"frame", 1)];
+        assert_eq!(track_with_private(b"private", &strips).codec_private, b"secondfirstprivate");
+        assert_eq!(track_with_private(b"private", &[(b"frame", 1)]).codec_private, b"private");
+    }
+
     #[test]
     fn deeply_nested_chapters_stop_at_depth_limit() {
         // Unknown-size elements make every pair the sole child of the previous ChapterAtom.

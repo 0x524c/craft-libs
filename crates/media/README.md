@@ -83,8 +83,9 @@ Other differences:
   without a debug assertion: `peek` and `read_bits` return the low 32 bits of the field (use
   `read_bits_u64` for wide fields), and `write_bits` writes leading zero bits, at most 64 bits in
   all.
-- `bitstream::length_prefixed_nals` returns `BitError::Eof` for a zero `length_size` on non-empty
-  data and cannot overflow on a hostile length prefix.
+- `bitstream::length_prefixed_nals` returns the new `BitError::InvalidNalLengthSize` for a
+  `length_size` outside 1 to 4 (as FilmCraft does since filmcraft#2953) and cannot overflow on a
+  hostile length prefix.
 - `isobmff::PcmConfig::bytes_per_frame` saturates at `u32::MAX` for a hostile channel count.
 - `matroska`: a cluster timestamp above `i64::MAX` saturates at `i64::MAX` (FilmCraft wraps it to
   a negative value), and adding a block's relative timestamp saturates instead of overflowing (a
