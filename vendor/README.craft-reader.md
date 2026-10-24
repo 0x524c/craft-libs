@@ -71,6 +71,15 @@ Hostile-input bounds (CodeRabbit findings):
 - A CID font's `/W2` run that starts past CID 65535 is skipped as in `/W`, instead of
   overflowing and discarding the whole table.
 
+Reader limits from the [PdfCraft revision a2ec27b4775f53c40cad3456936d9406611e3a8d ledger](https://github.com/storytold/pdfcraft/blob/a2ec27b4775f53c40cad3456936d9406611e3a8d/vendor/README.md),
+by its item ids: hayro-interpret (31), its overflow part: the largest 32-bit Type 0 sample is
+computed in 64 bits instead of overflowing `2_u32.pow(32)`. The flat sample array that (31)
+also brings is a performance change and is not part of this set. hayro-syntax (7), (22) and
+(25) are covered by the local bounds above: ASCII85 output stops at the decode limit,
+object-stream indexes are parsed once with checked offsets, and direct objects nest at most
+64 levels, stricter than PdfCraft's 128. Test:
+`function::type0::tests::thirty_two_bit_samples_do_not_overflow`.
+
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
 equivalence. The independent color oracles, backend tests and facade contracts cover
