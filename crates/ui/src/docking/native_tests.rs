@@ -531,6 +531,33 @@ fn the_preview_is_drawn_in_the_window_under_the_pointer() {
     assert!(matches!(out.actions.as_slice(), [Action::Move { panel: 1, anchor: 7, .. }]), "{:?}", out.actions);
 }
 
+/// Zone outlines: closed 1 pt paths without a fill.
+fn zone_outlines(shapes: &[ClippedShape]) -> usize {
+    shapes
+        .iter()
+        .filter(|clipped| matches!(&clipped.shape, egui::Shape::Path(path) if path.closed && path.fill == Color32::TRANSPARENT && path.stroke.width == 1.0))
+        .count()
+}
+
+#[test]
+fn drop_zones_are_drawn_in_the_window_under_the_pointer() {
+    let mut d = DockDriver::new(two_windows(), Content::default())
+        .with_style(|s| {
+            s.side_edge_zones = true;
+            s.float_hint = false;
+        })
+        .with_native_host(ORIGIN);
+    let viewport = d.viewport(window(&d, 7).id);
+    // Tab 1 of the main window over window [7]'s body, too short to split top or bottom: its
+    // left and right sides, center and strip.
+    let tab = d.hit(&Hit::Tab(1)).unwrap().center();
+    let body = d.host().windows[&viewport].rect.center() - ORIGIN.to_vec2();
+    d.hold(tab, body);
+    d.move_to(body);
+    assert_eq!(zone_outlines(&d.host().windows[&viewport].shapes), 4, "drawn in the destination");
+    assert_eq!(zone_outlines(d.shapes()), 0, "not in the source");
+}
+
 #[test]
 fn a_command_drag_floats_even_over_another_window() {
     let mut d = driver(two_windows());
@@ -588,9 +615,9 @@ fn window_move(out: &super::DockOutput<u32>) -> Option<&Target<u32>> {
 
 #[test]
 fn a_native_windows_bar_docks_it_at_frame_edges_and_dock_lines_but_not_a_body_center() {
-    // The right edge zone of frame [3, 4], clear of the new-dock band along the window's edge.
+    // The right edge zone of frame [3, 4], 25 pt in, clear of the new-dock band along the window's edge.
     let mut d = driver(layout(true));
-    let out = drag_bar_to(&mut d, 5, pos2(740.0, 300.0));
+    let out = drag_bar_to(&mut d, 5, pos2(775.0, 300.0));
     assert!(matches!(window_move(&out), Some(Target::At { anchor: 3 | 4, placement: Placement::Split(super::Zone::Right) })), "{:?}", out.actions);
     assert!(d.layout.floating.is_empty());
     assert!(in_root(&d, 5) && in_root(&d, 6));

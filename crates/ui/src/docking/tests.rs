@@ -287,19 +287,46 @@ fn target(anchor: u32, members: &[u32], rect: Rect) -> DropTarget<u32> {
 fn pointer_targets_distinguish_reorder_center_split_and_occlusion() {
     let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(300.0, 200.0));
     let group = target(2, &[2, 3], rect);
-    let placement = resolve_drop(&5, pos2(90.0, 30.0), std::slice::from_ref(&group)).unwrap();
+    let placement = resolve_drop(&5, pos2(90.0, 30.0), std::slice::from_ref(&group), 40.0).unwrap();
     assert_eq!(placement.placement, Placement::Tab { before: Some(3) });
     assert!(placement.insertion.unwrap().is_finite());
-    assert_eq!(resolve_drop(&5, rect.center(), std::slice::from_ref(&group)).unwrap().placement, Placement::Split(Zone::Center));
-    assert_eq!(resolve_drop(&5, pos2(11.0, 90.0), std::slice::from_ref(&group)).unwrap().placement, Placement::Split(Zone::Left));
-    assert!(resolve_drop(&3, rect.center(), std::slice::from_ref(&group)).unwrap().noop);
-    assert!(resolve_drop(&3, pos2(11.0, 90.0), std::slice::from_ref(&group)).is_some());
+    assert_eq!(resolve_drop(&5, rect.center(), std::slice::from_ref(&group), 40.0).unwrap().placement, Placement::Split(Zone::Center));
+    assert_eq!(resolve_drop(&5, pos2(11.0, 90.0), std::slice::from_ref(&group), 40.0).unwrap().placement, Placement::Split(Zone::Left));
+    assert!(resolve_drop(&3, rect.center(), std::slice::from_ref(&group), 40.0).unwrap().noop);
+    assert!(resolve_drop(&3, pos2(11.0, 90.0), std::slice::from_ref(&group), 40.0).is_some());
     let mut overlay = target(5, &[5], rect);
     overlay.accepts_tabs = false;
     overlay.allow_splits = false;
-    assert!(resolve_drop(&3, rect.center(), &[group, overlay]).is_none());
-    assert!(drop_zone(Rect::NOTHING, 24.0, pos2(0.0, 0.0)).is_none());
-    assert!(drop_zone(rect, 24.0, pos2(f32::NAN, 0.0)).is_none());
+    assert!(resolve_drop(&3, rect.center(), &[group, overlay], 40.0).is_none());
+    assert!(drop_zone(Rect::NOTHING, 24.0, 40.0, pos2(0.0, 0.0)).is_none());
+    assert!(drop_zone(rect, 24.0, 40.0, pos2(f32::NAN, 0.0)).is_none());
+}
+
+#[test]
+fn side_zones_are_40_pt_deep_or_a_third_of_a_small_body() {
+    let depth = DockStyle::default().zone_depth;
+    assert_eq!(depth, 40.0);
+    // The inner corner of the left trapezoid is the depth of both bands.
+    let inner = |rect: Rect| zone_shape(rect, 0.0, depth, Zone::Left).unwrap()[1] - rect.min;
+    for size in [vec2(600.0, 400.0), vec2(130.0, 130.0)] {
+        let rect = Rect::from_min_size(pos2(10.0, 20.0), size);
+        assert_eq!(inner(rect), vec2(40.0, 40.0), "{size:?}");
+        let y = rect.center().y;
+        assert_eq!(drop_zone(rect, 0.0, depth, pos2(rect.left() + 39.0, y)), Some(Zone::Left), "{size:?}");
+        assert_eq!(drop_zone(rect, 0.0, depth, pos2(rect.left() + 41.0, y)), Some(Zone::Center), "{size:?}");
+    }
+    // A 90 pt body keeps a 30 pt center.
+    let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(90.0, 90.0));
+    assert_eq!(inner(rect), vec2(30.0, 30.0));
+    assert_eq!(drop_zone(rect, 0.0, depth, rect.center()), Some(Zone::Center));
+    assert_eq!(drop_zone(rect, 0.0, depth, pos2(rect.left() + 29.0, rect.center().y)), Some(Zone::Left));
+    // The bands start below the tab header.
+    let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(600.0, 400.0));
+    assert_eq!(drop_zone(rect, 24.0, depth, pos2(rect.center().x, rect.top() + 60.0)), Some(Zone::Top));
+    assert_eq!(zone_shape(rect, 24.0, depth, Zone::Top).unwrap()[0], rect.left_top() + vec2(0.0, 24.0));
+    // Without depth there are no sides.
+    assert_eq!(drop_zone(rect, 0.0, 0.0, pos2(rect.left() + 1.0, rect.center().y)), Some(Zone::Center));
+    assert!(zone_shape(rect, 0.0, 0.0, Zone::Left).is_none());
 }
 
 #[test]
@@ -1520,7 +1547,7 @@ fn returning_to_a_singleton_or_floating_source_body_is_an_explicit_noop() {
                 accepts_tabs: true,
                 right_to_left: false,
             };
-            let proposal = resolve_drop(&1, rect.center(), &[target]).unwrap();
+            let proposal = resolve_drop(&1, rect.center(), &[target], 40.0).unwrap();
             assert!(proposal.noop);
             assert!(proposal.insertion.is_none());
         }
@@ -1583,13 +1610,13 @@ fn unchanged_tab_slots_are_explicit_noops_with_bounded_insertion_markers() {
     };
     for (panel, positions) in [(1, [10.0, 50.0]), (2, [70.0, 110.0]), (3, [130.0, 210.0])] {
         for x in positions {
-            let proposal = resolve_drop(&panel, pos2(x, 12.0), std::slice::from_ref(&target)).unwrap();
+            let proposal = resolve_drop(&panel, pos2(x, 12.0), std::slice::from_ref(&target), 40.0).unwrap();
             assert!(proposal.noop, "{panel}/{x}");
             assert!(target.tab_strip.unwrap().contains_rect(proposal.insertion.unwrap()));
         }
     }
     for (panel, x) in [(1, 140.0), (3, 10.0), (2, 210.0)] {
-        let proposal = resolve_drop(&panel, pos2(x, 12.0), std::slice::from_ref(&target)).unwrap();
+        let proposal = resolve_drop(&panel, pos2(x, 12.0), std::slice::from_ref(&target), 40.0).unwrap();
         assert!(!proposal.noop);
         assert!(proposal.insertion.is_some());
     }
@@ -1663,10 +1690,10 @@ fn overflow_noop_detection_uses_logical_order_including_hidden_tabs() {
         accepts_tabs: true,
         right_to_left: false,
     };
-    assert!(resolve_drop(&1, pos2(10.0, 12.0), std::slice::from_ref(&target)).unwrap().noop);
+    assert!(resolve_drop(&1, pos2(10.0, 12.0), std::slice::from_ref(&target), 40.0).unwrap().noop);
     // Before the next visible tab crosses hidden tab 2 and really changes the order.
-    assert!(!resolve_drop(&1, pos2(65.0, 12.0), std::slice::from_ref(&target)).unwrap().noop);
-    assert!(resolve_drop(&3, pos2(130.0, 12.0), std::slice::from_ref(&target)).unwrap().noop);
+    assert!(!resolve_drop(&1, pos2(65.0, 12.0), std::slice::from_ref(&target), 40.0).unwrap().noop);
+    assert!(resolve_drop(&3, pos2(130.0, 12.0), std::slice::from_ref(&target), 40.0).unwrap().noop);
 }
 
 #[test]
@@ -1685,7 +1712,7 @@ fn insertion_markers_stay_inside_clipped_and_singleton_strips() {
                 right_to_left: false,
             };
             for x in [rect.left(), rect.center().x, rect.right()] {
-                let proposal = resolve_drop(&1, pos2(x, 25.0), std::slice::from_ref(&target)).unwrap();
+                let proposal = resolve_drop(&1, pos2(x, 25.0), std::slice::from_ref(&target), 40.0).unwrap();
                 assert!(proposal.noop);
                 let marker = proposal.insertion.unwrap();
                 assert!(rect.intersect(target.tab_strip.unwrap()).contains_rect(marker));
@@ -1700,7 +1727,7 @@ fn insertion_marker_handles_subpixel_strip_crossing_zero_without_panicking() {
     let rect = Rect::from_min_max(pos2(-0.001, 0.0), pos2(0.002, 30.0));
     let target =
         DropTarget { anchor: 1, rect, tab_strip: Some(rect), tabs: vec![(1, rect)], allow_splits: true, accepts_tabs: true, right_to_left: false };
-    let proposal = resolve_drop(&1, pos2(0.0, 12.0), &[target]).unwrap();
+    let proposal = resolve_drop(&1, pos2(0.0, 12.0), &[target], 40.0).unwrap();
     assert!(proposal.noop);
     assert!(rect.contains_rect(proposal.insertion.unwrap()));
 }

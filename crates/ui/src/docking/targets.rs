@@ -31,53 +31,78 @@ pub(super) fn usable(rect: Rect) -> bool {
     rect.is_finite() && rect.width() > 0.0 && rect.height() > 0.0 && rect.width() <= 1_000_000.0 && rect.height() <= 1_000_000.0
 }
 
-/// Least depth of a side zone, so a narrow frame such as a tool strip keeps side targets wide
-/// enough to hit.
-const MIN_SIDE_ZONE: f32 = 32.0;
-
-/// Tab header is the center; otherwise the nearest side zone wins. A side zone is a quarter of
-/// the frame deep, at least 32 pt and at most half the frame, so a frame up to 64 pt wide has no
-/// center. Outside, non-finite, empty and inverted rectangles have no target.
-pub fn drop_zone(rect: Rect, tab_height: f32, pointer: Pos2) -> Option<Zone> {
+/// Tab header (the top `tab_height` of `rect`) is the center; otherwise the nearest side zone of
+/// the body below it wins. A side zone reaches `depth` into the body, or a third of the body's
+/// extent in that axis when that is less, so a body always keeps a center; a `depth` of zero
+/// or less leaves only the center. Outside, non-finite, empty and inverted rectangles have no
+/// target.
+pub fn drop_zone(rect: Rect, tab_height: f32, depth: f32, pointer: Pos2) -> Option<Zone> {
     if !usable(rect) || !pointer.is_finite() || !rect.contains(pointer) || !tab_height.is_finite() || tab_height < 0.0 {
         return None;
     }
-    if pointer.y < rect.top() + tab_height.min(rect.height()) {
+    let body = body(rect, tab_height);
+    if pointer.y < body.top() || !usable(body) {
         return Some(Zone::Center);
     }
-    let Vec2 { x, y } = side_depths(rect);
-    let distances = [
-        ((pointer.x - rect.left()) / x, Zone::Left),
-        ((rect.right() - pointer.x) / x, Zone::Right),
-        ((pointer.y - rect.top()) / y, Zone::Top),
-        ((rect.bottom() - pointer.y) / y, Zone::Bottom),
+    let Vec2 { x, y } = side_depths(body, depth);
+    let sides = [
+        (pointer.x - body.left(), x, Zone::Left),
+        (body.right() - pointer.x, x, Zone::Right),
+        (pointer.y - body.top(), y, Zone::Top),
+        (body.bottom() - pointer.y, y, Zone::Bottom),
     ];
-    let (distance, zone) = distances.into_iter().min_by(|a, b| a.0.total_cmp(&b.0))?;
-    Some(if distance > 1.0 { Zone::Center } else { zone })
+    let nearest =
+        sides.into_iter().filter(|(_, depth, _)| *depth > 0.0).map(|(gap, depth, zone)| (gap / depth, zone)).min_by(|a, b| a.0.total_cmp(&b.0));
+    Some(match nearest {
+        Some((distance, zone)) if distance <= 1.0 => zone,
+        _ => Zone::Center,
+    })
 }
 
-/// How deep the side zones of a group drawn at `rect` reach in from its left and right edges
-/// (`x`) and its top and bottom edges (`y`).
-fn side_depths(rect: Rect) -> Vec2 {
-    let depth = |extent: f32| (extent * 0.25).max(MIN_SIDE_ZONE).min(extent * 0.5);
-    vec2(depth(rect.width()), depth(rect.height()))
+/// The part of a group drawn at `rect` below its tab header.
+fn body(rect: Rect, tab_height: f32) -> Rect {
+    Rect::from_min_max(pos2(rect.left(), rect.top() + tab_height.min(rect.height())), rect.max)
 }
 
-/// The outline of a drop zone of the group drawn at `rect`, as [`drop_zone`] finds it: a side's
-/// trapezoid (its outer edge the whole side, its inner edge on the center rectangle), or the
-/// center rectangle. The tab strip is a grouping zone too.
-pub fn zone_shape(rect: Rect, zone: Zone) -> Option<Vec<Pos2>> {
-    if !usable(rect) {
+/// How deep the side zones of `body` reach in from its left and right edges (`x`) and its top
+/// and bottom edges (`y`).
+fn side_depths(body: Rect, depth: f32) -> Vec2 {
+    let depth = if depth > 0.0 { depth } else { 0.0 };
+    vec2(depth.min(body.width() / 3.0), depth.min(body.height() / 3.0))
+}
+
+/// The outline of a drop zone of the group drawn at `rect`, as [`drop_zone`] finds it with the
+/// same `tab_height` and `depth`: a side's trapezoid (its outer edge the whole side of the body,
+/// its inner edge on the center rectangle), or the center rectangle. The tab header, a grouping
+/// zone too, is not part of any shape. None for a side without depth.
+pub fn zone_shape(rect: Rect, tab_height: f32, depth: f32, zone: Zone) -> Option<Vec<Pos2>> {
+    if !usable(rect) || !tab_height.is_finite() || tab_height < 0.0 {
         return None;
     }
-    let inner = rect.shrink2(side_depths(rect));
+    let body = body(rect, tab_height);
+    let depths = side_depths(body, depth);
+    let flat = match zone {
+        Zone::Left | Zone::Right => depths.x <= 0.0,
+        Zone::Top | Zone::Bottom => depths.y <= 0.0,
+        Zone::Center => false,
+    };
+    if !usable(body) || flat {
+        return None;
+    }
+    let inner = body.shrink2(depths);
     Some(match zone {
-        Zone::Left => vec![rect.left_top(), inner.left_top(), inner.left_bottom(), rect.left_bottom()],
-        Zone::Right => vec![inner.right_top(), rect.right_top(), rect.right_bottom(), inner.right_bottom()],
-        Zone::Top => vec![rect.left_top(), rect.right_top(), inner.right_top(), inner.left_top()],
-        Zone::Bottom => vec![inner.left_bottom(), inner.right_bottom(), rect.right_bottom(), rect.left_bottom()],
+        Zone::Left => vec![body.left_top(), inner.left_top(), inner.left_bottom(), body.left_bottom()],
+        Zone::Right => vec![inner.right_top(), body.right_top(), body.right_bottom(), inner.right_bottom()],
+        Zone::Top => vec![body.left_top(), body.right_top(), inner.right_top(), inner.left_top()],
+        Zone::Bottom => vec![inner.left_bottom(), inner.right_bottom(), body.right_bottom(), body.left_bottom()],
         Zone::Center => vec![inner.left_top(), inner.right_top(), inner.right_bottom(), inner.left_bottom()],
     })
+}
+
+/// Height of the tab header of `target` that [`resolve_drop`] treats as a grouping zone: from the
+/// top of its rect to the bottom of its tab strip.
+pub(super) fn header_height<P>(target: &DropTarget<P>) -> f32 {
+    target.tab_strip.map(|strip| strip.intersect(target.rect)).filter(|strip| usable(*strip)).map_or(0.0, |strip| strip.bottom() - target.rect.top())
 }
 
 /// Preview of the region occupied after a split or group merge.
@@ -126,8 +151,10 @@ pub fn tab_insertion_marker<P: Eq>(target: &DropTarget<P>, before: Option<&P>) -
 
 /// Resolve a pointer against visible groups. The frontmost containing group occludes groups
 /// behind it even if it rejects the drop. A strip reorders by midpoint; the body of the source
-/// group is a no-op at center. Floating groups normally set `allow_splits` to false.
-pub fn resolve_drop<P: Clone + Eq>(panel: &P, pointer: Pos2, targets: &[DropTarget<P>]) -> Option<DropProposal<P>> {
+/// group is a no-op at center. The body's side zones are [`drop_zone`]'s with `zone_depth` (see
+/// [`crate::docking::DockStyle::zone_depth`]). Floating groups normally set `allow_splits` to
+/// false.
+pub fn resolve_drop<P: Clone + Eq>(panel: &P, pointer: Pos2, targets: &[DropTarget<P>], zone_depth: f32) -> Option<DropProposal<P>> {
     if !pointer.is_finite() || targets.len() > super::MAX_PANELS {
         return None;
     }
@@ -165,7 +192,7 @@ pub fn resolve_drop<P: Clone + Eq>(panel: &P, pointer: Pos2, targets: &[DropTarg
             noop,
         });
     }
-    let zone = if target.allow_splits { drop_zone(target.rect, 0.0, pointer)? } else { Zone::Center };
+    let zone = if target.allow_splits { drop_zone(target.rect, header_height(target), zone_depth, pointer)? } else { Zone::Center };
     if zone == Zone::Center && target.accepts_tabs && target.tabs.iter().any(|(p, _)| p == panel) {
         return Some(DropProposal {
             anchor: anchor.clone(),

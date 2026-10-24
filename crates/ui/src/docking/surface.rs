@@ -51,6 +51,10 @@ pub struct DockStyle {
     /// The outer edge band also runs along the left and right edges, where a drop adds a
     /// full-height column. Off: only the top and bottom edges add a full-width row.
     pub side_edge_zones: bool,
+    /// How far a group's side drop zones reach into its body, below the tab strip. A body less
+    /// than three times as wide or tall gets zones a third of its extent deep in that axis, so
+    /// it keeps a center.
+    pub zone_depth: f32,
     /// [D] The docked area's left and right edges, where no dock is yet, take a drop as a new
     /// dock (see [`Self::new_dock_band`]).
     pub new_dock_zones: bool,
@@ -161,6 +165,7 @@ impl DockStyle {
             title_height: super::chrome::TITLE_HEIGHT,
             edge_band: 8.0,
             side_edge_zones: false,
+            zone_depth: 40.0,
             new_dock_zones: true,
             column_bar_height: 14.0,
             seam_band: 8.0,
@@ -206,6 +211,7 @@ impl DockStyle {
             self.floating_stroke.width,
             self.title_height,
             self.edge_band,
+            self.zone_depth,
             self.column_bar_height,
             self.seam_band,
             self.new_dock_band,

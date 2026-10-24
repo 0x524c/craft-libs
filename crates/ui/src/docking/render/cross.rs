@@ -387,10 +387,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 return;
             }
             let drag = Drag { origin: drag.origin + shift, source: drag.source.translate(shift), ..drag };
-            if let Some(proposal) = self.tab_proposal(&drag.panel, local) {
-                let painter = self.preview_painter(ctx);
-                self.paint_tab_proposal(ctx, &painter, &drag, &proposal, local);
-            }
+            let proposal = self.tab_proposal(&drag.panel, local);
+            let painter = self.preview_painter(ctx);
+            self.paint_tab_proposal(ctx, &painter, &drag, proposal.as_ref(), local);
         } else if let Some(drag) = ctx.data(|d| d.get_temp::<GroupDrag<P>>(self.id.with("group-drag"))).filter(|d| d.gesture != GroupGesture::Window)
         {
             let drag = GroupDrag { origin: drag.origin + shift, source: drag.source.translate(shift), ..drag };

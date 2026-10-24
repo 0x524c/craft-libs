@@ -23,11 +23,13 @@ const INFO: u32 = 9;
 
 const SCREEN: Vec2 = Vec2::new(1440.0, 860.0);
 
-/// Panel bodies by their rects; `caps` are maximum widths a host asks for.
+/// Panel bodies by their rects; `caps` are maximum widths a host asks for, `rules` the
+/// permissions of panels that differ from the default.
 #[derive(Default)]
 struct Film {
     bodies: HashMap<u32, Rect>,
     caps: HashMap<u32, f32>,
+    rules: HashMap<u32, Permissions>,
 }
 
 impl DockContent<u32> for Film {
@@ -42,6 +44,9 @@ impl DockContent<u32> for Film {
             Some(width) => PanelLimits { min: Vec2::ZERO, max: vec2(*width, 1_000_000.0) },
             None => PanelLimits::default(),
         }
+    }
+    fn permissions(&self, panel: &u32) -> Permissions {
+        self.rules.get(panel).copied().unwrap_or_default()
     }
 }
 
@@ -117,8 +122,9 @@ fn a_group_is_a_picture_frame_whose_edges_split_it_in_half_and_whose_middle_join
     let base = film();
     let timeline = group(&base, TIMELINE);
     let others = [PROJECT[0], TOOLS, METERS, SOURCE[0], PROGRAM, PROPERTIES[0]];
+    // Halfway into each 40 pt band of the body below the tab strip.
     let inset = |zone| {
-        let (w, h) = (timeline.width() * 0.08, (timeline.height() - 26.0) * 0.08);
+        let (w, h) = (20.0, 20.0);
         match zone {
             Zone::Left => pos2(timeline.left() + w, timeline.center().y + 13.0),
             Zone::Right => pos2(timeline.right() - w, timeline.center().y + 13.0),
@@ -132,8 +138,7 @@ fn a_group_is_a_picture_frame_whose_edges_split_it_in_half_and_whose_middle_join
         let before = sizes(&d, &others);
         let at = inset(zone);
         d.hold(tab(&d, INFO), at);
-        let half = zone_rect(timeline, zone).unwrap();
-        assert!(d.outlined(half.shrink(1.0)), "{zone:?}: the preview outlines that half of the group");
+        assert!(d.filled_polygon(&zone_shape(timeline, 26.0, 40.0, zone).unwrap()), "{zone:?}: the preview fills that band");
         let out = d.release(at);
         assert_eq!(out.actions, vec![Action::Move { panel: INFO, anchor: TIMELINE, placement: Placement::Split(zone) }], "{zone:?}");
         d.settle();
@@ -275,7 +280,7 @@ fn a_drop_beside_a_narrow_group_splits_that_group_only() {
     assert!(tools.width() > 120.0, "{tools:?}");
     let at = pos2(tools.right() - 8.0, tools.center().y + 13.0);
     d.hold(tab(&d, INFO), at);
-    assert!(d.outlined(zone_rect(tools, Zone::Right).unwrap().shrink(1.0)), "the preview outlines Tools' right half");
+    assert!(d.filled_polygon(&zone_shape(tools, 26.0, 40.0, Zone::Right).unwrap()), "the preview fills Tools' right band");
     let out = d.release(at);
     assert_eq!(out.actions, vec![Action::Move { panel: INFO, anchor: TOOLS, placement: Placement::Split(Zone::Right) }]);
     d.settle();
@@ -647,35 +652,57 @@ fn a_closed_floating_window_closes_its_panels_and_each_reopens_where_it_was() {
     assert_eq!((&window.root, window.rect), (&tree, [700.0, 100.0, 600.0, 400.0]));
 }
 
+/// The zone outlines of the last frame: closed 1 pt paths without a fill.
+fn zone_outlines(d: &Driver) -> Vec<Vec<Pos2>> {
+    d.shapes()
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Path(path) if path.closed && path.fill == egui::Color32::TRANSPARENT && path.stroke.width == 1.0 => {
+                Some(path.points.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn same_polygon(a: &[Pos2], b: &[Pos2]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.distance(*b) <= 0.5)
+}
+
+fn corners(rect: Rect) -> Vec<Pos2> {
+    vec![rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()]
+}
+
 #[test]
-fn the_preview_fills_the_zone_under_the_pointer_and_outlines_the_result() {
+fn the_preview_fills_the_zone_under_the_pointer_and_no_result_rect() {
     let d = film();
     let timeline = group(&d, TIMELINE);
     let strip = Rect::from_min_size(timeline.min, vec2(timeline.width(), 26.0));
-    // A side band: its trapezoid, and the half the panel takes.
+    // A side band: its trapezoid, without the half the panel takes.
     for (zone, at) in
         [(Zone::Left, pos2(timeline.left() + 8.0, timeline.center().y + 13.0)), (Zone::Bottom, pos2(timeline.center().x, timeline.bottom() - 20.0))]
     {
         let mut d = film();
         d.hold(tab(&d, INFO), at);
-        assert!(d.filled_polygon(&zone_shape(timeline, zone).unwrap()), "{zone:?}");
-        assert!(d.outlined(zone_rect(timeline, zone).unwrap().shrink(1.0)), "{zone:?}");
+        assert!(d.filled_polygon(&zone_shape(timeline, 26.0, 40.0, zone).unwrap()), "{zone:?}");
+        assert!(!d.outlined(zone_rect(timeline, zone).unwrap().shrink(1.0)), "{zone:?}");
         d.key(egui::Key::Escape);
     }
-    // The middle and the tab row: the center rectangle and the strip, and the whole group.
+    // The middle and the tab row: the center rectangle and the strip.
     for at in [timeline.center() + vec2(0.0, 13.0), strip.center()] {
         let mut d = film();
         d.hold(tab(&d, INFO), at);
-        assert!(d.filled_polygon(&zone_shape(timeline, Zone::Center).unwrap()), "{at:?}");
-        assert!(d.filled(strip), "{at:?}");
-        assert!(d.outlined(timeline.shrink(1.0)), "{at:?}");
+        assert!(d.filled_polygon(&zone_shape(timeline, 26.0, 40.0, Zone::Center).unwrap()), "{at:?}");
+        assert!(d.filled_polygon(&corners(strip)), "{at:?}");
+        assert!(!d.outlined(timeline.shrink(1.0)), "{at:?}");
         d.key(egui::Key::Escape);
     }
     // A group's drag bar shows the same.
     let mut d = film();
     let bar = d.hit(&Hit::DragBar(PROJECT[0])).unwrap().center();
     d.hold(bar, pos2(timeline.left() + 8.0, timeline.center().y + 13.0));
-    assert!(d.filled_polygon(&zone_shape(timeline, Zone::Left).unwrap()));
+    assert!(d.filled_polygon(&zone_shape(timeline, 26.0, 40.0, Zone::Left).unwrap()));
+    assert_eq!(zone_outlines(&d).len(), 6);
     d.key(egui::Key::Escape);
 
     // The dock-and-canvas arrangement keeps its filled half.
@@ -684,6 +711,71 @@ fn the_preview_fills_the_zone_under_the_pointer_and_outlines_the_result() {
     d.area = d.screen;
     d.settle();
     d.hold(tab(&d, INFO), pos2(timeline.left() + 8.0, timeline.center().y + 13.0));
-    assert!(!d.filled_polygon(&zone_shape(timeline, Zone::Left).unwrap()));
+    assert!(!d.filled_polygon(&zone_shape(timeline, 26.0, 40.0, Zone::Left).unwrap()));
+    assert!(zone_outlines(&d).is_empty());
     assert!(d.filled(zone_rect(timeline, Zone::Left).unwrap().shrink(1.0)));
+}
+
+#[test]
+fn a_drag_over_a_group_outlines_all_its_zones_and_fills_the_one_drop_zone_names() {
+    let d = film();
+    let timeline = group(&d, TIMELINE);
+    let strip = Rect::from_min_size(timeline.min, vec2(timeline.width(), 26.0));
+    let shape = |zone| zone_shape(timeline, 26.0, 40.0, zone).unwrap();
+    let all: Vec<Vec<Pos2>> =
+        [Zone::Left, Zone::Right, Zone::Top, Zone::Bottom, Zone::Center].map(shape).into_iter().chain([corners(strip)]).collect();
+    let body = Rect::from_min_max(pos2(timeline.left(), strip.bottom()), timeline.max);
+    // Each band, near its corners too, the middle, and the tab row.
+    let points = [
+        pos2(body.left() + 30.0, body.center().y),
+        pos2(body.left() + 30.0, body.top() + 34.0),
+        pos2(body.right() - 2.0, body.bottom() - 12.0),
+        pos2(body.center().x, body.top() + 5.0),
+        pos2(body.left() + 50.0, body.bottom() - 30.0),
+        body.center(),
+        pos2(body.left() + 45.0, body.top() + 45.0),
+        strip.center(),
+    ];
+    for at in points {
+        let mut d = film();
+        d.hold(tab(&d, INFO), at);
+        let outlines = zone_outlines(&d);
+        assert_eq!(outlines.len(), all.len(), "{at:?}: four sides, the center and the strip");
+        assert!(all.iter().all(|zone| outlines.iter().any(|o| same_polygon(o, zone))), "{at:?}: only Timeline's zones");
+        let zone = drop_zone(timeline, 26.0, 40.0, at).unwrap();
+        assert!(d.filled_polygon(&shape(zone)), "{at:?}: {zone:?} is filled");
+        let filled = all.iter().filter(|z| d.filled_polygon(z)).count();
+        assert_eq!(filled, if zone == Zone::Center { 2 } else { 1 }, "{at:?}: only {zone:?}");
+        d.key(egui::Key::Escape);
+    }
+}
+
+#[test]
+fn zones_a_group_does_not_take_are_not_drawn() {
+    let timeline = group(&film(), TIMELINE);
+    let strip = Rect::from_min_size(timeline.min, vec2(timeline.width(), 26.0));
+    let shape = |zone| zone_shape(timeline, 26.0, 40.0, zone).unwrap();
+    let at = pos2(timeline.left() + 8.0, timeline.center().y + 13.0);
+    let content = |rules: Permissions| Film { rules: HashMap::from([(TIMELINE, rules)]), ..Film::default() };
+    // No splits: the center and the strip only, and the left band under the pointer neither
+    // outlined nor filled.
+    let mut d = driver(editing(), content(Permissions { accepts_splits: false, ..Permissions::default() }));
+    d.hold(tab(&d, INFO), at);
+    let outlines = zone_outlines(&d);
+    assert_eq!(outlines.len(), 2, "{outlines:?}");
+    assert!(outlines.iter().any(|o| same_polygon(o, &shape(Zone::Center))) && outlines.iter().any(|o| same_polygon(o, &corners(strip))));
+    assert!(!d.filled_polygon(&shape(Zone::Left)));
+    d.key(egui::Key::Escape);
+    // No tabs: the four sides only.
+    let mut d = driver(editing(), content(Permissions { accepts_tabs: false, ..Permissions::default() }));
+    d.hold(tab(&d, INFO), at);
+    let outlines = zone_outlines(&d);
+    assert_eq!(outlines.len(), 4, "{outlines:?}");
+    assert!([Zone::Left, Zone::Right, Zone::Top, Zone::Bottom].into_iter().all(|z| outlines.iter().any(|o| same_polygon(o, &shape(z)))));
+    assert!(d.filled_polygon(&shape(Zone::Left)));
+    d.key(egui::Key::Escape);
+    // A tab over its own single-tab group: nothing to drop on.
+    let mut d = film();
+    d.hold(tab(&d, TIMELINE), timeline.center() + vec2(0.0, 13.0));
+    assert!(zone_outlines(&d).is_empty());
 }
