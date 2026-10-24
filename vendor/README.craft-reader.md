@@ -205,6 +205,37 @@ OCR text (mode 3) keeps a heading drawn through its clip. The unit tests
 glyph_names_resolve_to_the_first_glyph_with_that_name}` come with (49) and (50); the #3116
 contract is in `tests/upstream_text.rs`.
 
+Fixes from the [PdfCraft revision 0b670caf4a090e9d83a7f41a84b4cb2144a2d33e ledger](https://github.com/storytold/pdfcraft/blob/0b670caf4a090e9d83a7f41a84b4cb2144a2d33e/vendor/README.md),
+by its item ids, each marked `PdfCraft patch` in the source. hayro-syntax (24), PdfCraft
+#2400: `xref::prev_offset` reads a trailer `/Prev` written as a reference `N G R` as the
+offset that object holds when the section's own entries place it (iText's
+`indirectPrev.pdf`), and otherwise as offset N (tiff2pdf), so the earlier sections' pages
+are seen. Each section's entries are read before its `Prev` is followed; the local
+xref-stream bounds above apply to them unchanged. Tests:
+`xref::tests::prev_as_reference_reaches_the_earlier_section` and
+`xref::tests::prev_as_reference_to_an_object_holding_the_offset_reads_that_offset`.
+hayro-syntax (P5), PdfCraft #3184: `filter::jpx::decode` applies a JP2 palette (`pclr`) when
+the image dictionary has no `/ColorSpace`, or one that does not resolve, since the colors then
+come from the JP2 header (ISO 32000-2 §7.4.9). With a `/ColorSpace` the raw indices are kept,
+as an `/Indexed` space needs. Resolved palette colors are 8-bit samples whatever the
+precision of the indices; an image without a palette keeps its own. Tests:
+`filter::jpx::tests::jpx_palette_is_applied_without_a_color_space`,
+`filter::jpx::tests::jpx_palette_indices_stay_raw_for_an_indexed_color_space` and
+`filter::jpx::tests::palette_colours_are_eight_bit_and_other_samples_keep_their_precision`.
+PdfCraft's raster test `a_jp2_palette_keeps_its_colours_whatever_the_index_precision` is not
+ported: the unit tests show the same behavior.
+
+From [PdfCraft revision 0b670caf4a090e9d83a7f41a84b4cb2144a2d33e](https://github.com/storytold/pdfcraft/tree/0b670caf4a090e9d83a7f41a84b4cb2144a2d33e/vendor),
+unledgered and marked `PdfCraft patch` in the source: hayro-syntax #3438 (issue #3107), with
+its look-ahead bound from 01af6cba3. An inline image without a filter ends at the byte
+length its `/W`, `/H`, `/CS`, `/BPC` and `/IM` give (rows padded to whole bytes) when white
+space and `EI` follow there, so an `EI` inside its samples does not end it. Conflicting
+long and short keys, filters and other color spaces keep the `EI` look-ahead. When the
+computed end lies past the content window, the tokenizer asks for more data only while the
+image, its header and the terminator fit within `MAX_DECODED_STREAM`, and otherwise falls
+back to the look-ahead. Its unit tests in `content::tests` come with it. PdfCraft's raster
+test is not ported: the windowed tokenizer tests cover the same content streams.
+
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
 equivalence. The independent color oracles, backend tests and facade contracts cover
