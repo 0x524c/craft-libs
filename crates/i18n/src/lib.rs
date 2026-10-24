@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod catalog;
+mod region;
 mod scripts;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -15,6 +16,7 @@ use intl_pluralrules::{PluralCategory, PluralRuleType, PluralRules};
 use unic_langid::LanguageIdentifier;
 use unicode_bidi::{BidiClass, bidi_class};
 
+pub use region::{HourCycle, Measurement, Paper, Region};
 pub use scripts::{Direction, Han, Script, base_direction, direction, han, scripts};
 
 /// The catalogs an app embeds, one entry per locale: (locale, shared catalog, the app's catalog).

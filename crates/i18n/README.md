@@ -85,6 +85,19 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   `pt-PT` → `pt-br` when that is the only Portuguese, `C`/`POSIX` → English. A script is never
   crossed: `sr_RS@latin` and `sr-Latn-RS` pick `sr-latn`, never `sr`, while `sr-Cyrl-RS` picks `sr`.
   A region that implies a script counts as that script: `pa-PK` picks `pa-arab`, not Gurmukhi `pa`.
+- **Formatting region:** `Region` holds how numbers, times and measurements are written, apart
+  from the interface language: the number and time locales (BCP 47), metric or US measurement, A4
+  or Letter, and the decimal and grouping separators (or no grouping) and clock when the system
+  sets them; otherwise the number locale's CLDR data decides. `Region::system()` reads it once:
+  Windows' regional format with the user's changes (`HKCU\Control Panel\International`), Apple's
+  current locale (`en_PL`, `en_GB@rg=uszzzz`), `LC_ALL` or else `LC_NUMERIC`, `LC_TIME`,
+  `LC_MEASUREMENT` and `LC_PAPER` each on its own over `LANG` on Unix (`C` there is English on A4,
+  metric, with a `.` decimal and no grouping; `LANG=C` gives way to the preferred language), the
+  preferred language on the web and Android. `Region::from_setting` takes the app's saved choice
+  (`auto` or a tag like `pl-PL`). Paper and measurement follow CLDR's territory lists; tags may
+  carry `-u-ms-`, `-u-hc-`, `-u-rg-` and `-u-nu-` (Apple's `@numbers=`), and a chosen digit
+  system stays in the number locale.
+  Ported from WordCraft's `Region`.
 - **Pseudo locale** (`pseudo`, debug builds only, never in `languages()`): every lookup, `get`
   included, comes back as `⟦…⟧`, line by line, so text drawn without the marks never went through
   translation. `looked_up()` lists the source texts looked up so far, for an audit against a
