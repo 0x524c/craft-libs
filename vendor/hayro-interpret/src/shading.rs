@@ -828,13 +828,22 @@ where
 
             // Converting to triangles is lossy and can lead to gaps. To make this a bit better,
             // we slightly inflate the triangles.
-            let inflate = |mut triangle: Triangle| {
+            // Craft patch: the inflated triangle is built anew, so its stored dot products
+            // (and `kurbo_tri`) match its vertices; moving the points alone skewed the
+            // barycentric coordinates by about 5 %.
+            let inflate = |triangle: Triangle| {
                 let mid = triangle.kurbo_tri.centroid();
-                triangle.p0.point = inflate_point(triangle.p0.point, mid);
-                triangle.p1.point = inflate_point(triangle.p1.point, mid);
-                triangle.p2.point = inflate_point(triangle.p2.point, mid);
+                let Triangle {
+                    mut p0,
+                    mut p1,
+                    mut p2,
+                    ..
+                } = triangle;
+                p0.point = inflate_point(p0.point, mid);
+                p1.point = inflate_point(p1.point, mid);
+                p2.point = inflate_point(p2.point, mid);
 
-                triangle
+                Triangle::new(p0, p1, p2)
             };
 
             // PdfCraft patch (33): the second triangle takes the vertices the first copied.

@@ -51,11 +51,13 @@ pub(crate) fn decode(data: &[u8], params: &ImageDecodeParams) -> Option<FilterRe
     // every sample; the codestream's precision is that of the indices (1 bit, say), and rescaling
     // the colors to it kept only 0 or 255 per channel.
     let palette_resolved = settings.resolve_palette_indices && has_palette(data);
-    let bpc = params.bpc.unwrap_or(if palette_resolved {
+    // A `/BitsPerComponent` the dictionary gives (JPXDecode ignores it) can't apply to
+    // resolved colors either.
+    let bpc = if palette_resolved {
         8
     } else {
-        image.original_bit_depth()
-    });
+        params.bpc.unwrap_or(image.original_bit_depth())
+    };
     let cs = match image.color_space() {
         ColorSpace::Gray => ImageColorSpace::Gray,
         ColorSpace::RGB => ImageColorSpace::Rgb,
@@ -495,5 +497,13 @@ mod tests {
         }
         assert_eq!(bpc(&one_bit_jp2(&palette)), Some(8));
         assert_eq!(bpc(&one_bit_jp2(&[])), Some(1));
+        let one_bit = ImageDecodeParams {
+            bpc: Some(1),
+            ..params.clone()
+        };
+        let palette_bpc = decode(&one_bit_jp2(&palette), &one_bit)
+            .and_then(|r| r.image_data)
+            .map(|d| d.bits_per_component);
+        assert_eq!(palette_bpc, Some(8), "/BitsPerComponent 1 with a palette");
     }
 }

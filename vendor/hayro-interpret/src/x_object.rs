@@ -342,7 +342,9 @@ pub(crate) fn draw_image_xobject<'a, 'b>(
     device.set_blend_mode(BlendMode::default());
     // PdfCraft patch (46): the group just pushed applies the fill opacity, so a stencil mask's
     // paint (the fill color) must not carry it again: at `ca 0.5` a mask was drawn at a
-    // quarter of its opacity (#2975). The state is restored below.
+    // quarter of its opacity (#2975). The alpha is put back below: `restore_state` doesn't
+    // when the saved-state bound skipped the save.
+    let fill_alpha = context.get().graphics_state.non_stroke_alpha;
     context.get_mut().graphics_state.non_stroke_alpha = 1.0;
 
     let image = if x_object.is_mask {
@@ -361,6 +363,7 @@ pub(crate) fn draw_image_xobject<'a, 'b>(
     device.draw_image(image, transform);
     device.pop_transparency_group();
 
+    context.get_mut().graphics_state.non_stroke_alpha = fill_alpha;
     context.restore_state(device);
 
     if has_oc {

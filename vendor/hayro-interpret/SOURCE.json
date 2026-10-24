@@ -410,7 +410,7 @@
       "path": "src/shading.rs",
       "source_sha256": "5d541a2d52f69c88e87a40580bf28afa4b8a6a2d62a3385009087264384ead32",
       "source_git_blob": "2e619e47f2800d7fc7cbdae77c66c58f012c84c2",
-      "sha256": "a8f21185291afb336771581cb6d9cad848c79beef5f8e2b8809d7bd6773b939a"
+      "sha256": "861ad2a40d1d3f09dc1fdb4a240a36f2873ffe2b5bedf54bb601f6ac8e5b05bb"
     },
     {
       "path": "src/soft_mask.rs",
@@ -434,7 +434,7 @@
       "path": "src/x_object.rs",
       "source_sha256": "e1c51e96a335c32c122011b2d05c5020c36a33c2c73342ba173c28a3e2fe0219",
       "source_git_blob": "21b134ce8cd9604399cd0776febf923d69c02673",
-      "sha256": "f9cdf468e939f4b6eaf6c5ba89f538a77ee5cb7cf940878e176826a67b6c78b0"
+      "sha256": "6adbf88e6bcdde2321c517525c1291ce7ead55a7989c930757ed384c309589d4"
     }
   ],
   "compatibility_reference": {

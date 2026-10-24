@@ -293,6 +293,13 @@ and the digest that tells its profile from a document profile is still a hash of
 decoded profile bytes. PdfCraft's two raster tests are adapted in `tests/upstream_raster.rs`
 (`icc_profile_cache`).
 
+Local fixes on top of these ports, marked `Craft patch` or in the comments of the ported
+code: an inflated patch-mesh triangle is rebuilt with `Triangle::new`, so its stored dot
+products match its vertices (moving the points alone skewed barycentric coordinates by about
+5 %, in `covers` and in interpolation); a stencil image puts the fill alpha back itself, since
+`restore_state` doesn't when the saved-state bound skipped the save; and a resolved JP2
+palette decodes to 8 bits whatever `/BitsPerComponent` the dictionary gives.
+
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
 equivalence. The independent color oracles, backend tests and facade contracts cover
