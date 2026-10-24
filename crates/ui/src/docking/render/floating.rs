@@ -153,7 +153,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             && let Some(drag) = ui.ctx().data(|d| d.get_temp::<GroupDrag<P>>(self.id.with("group-drag")))
             && drag.gesture == GroupGesture::Window
             && let Some(pointer) = ui.ctx().pointer_interact_pos()
-            && !ui.input(|i| i.key_pressed(Key::Escape) || !i.focused)
+            && !ui.input(|i| i.key_pressed(Key::Escape))
+            && !crate::focus::lost(ui.ctx())
         {
             // From the press origin, so fractional pointer steps do not accumulate rounding.
             let moved = clamp_float(drag.source.translate(pointer - drag.origin), self.float_bounds);

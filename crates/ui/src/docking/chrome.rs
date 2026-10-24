@@ -180,7 +180,7 @@ impl<'a> FloatingFrame<'a> {
         let mut started = None;
         let mut responses = Vec::new();
         let limits = PanelLimits { min: self.limits.min.max(vec2(40.0, RESIZE_BAND + TITLE_HEIGHT + 20.0)).min(self.limits.max), ..self.limits };
-        let canceled = ui.input(|input| input.key_pressed(Key::Escape) || !input.focused);
+        let canceled = ui.input(|input| input.key_pressed(Key::Escape)) || crate::focus::lost(ui.ctx());
         for (name, handle, direction) in handles(rect) {
             if !super::targets::usable(handle) {
                 continue;
@@ -409,7 +409,7 @@ pub fn live_move(ctx: &Context, bar: &Response, rect: Rect, bounds: Rect) -> Opt
     }
     let (start, origin) = ctx.data(|data| data.get_temp::<(Rect, Pos2)>(key))?;
     let forget = || ctx.data_mut(|data| data.remove::<(Rect, Pos2)>(key));
-    if ctx.input(|input| input.key_pressed(Key::Escape) || !input.focused) {
+    if ctx.input(|input| input.key_pressed(Key::Escape)) || crate::focus::lost(ctx) {
         forget();
         return Some(MoveStep::Canceled(start));
     }

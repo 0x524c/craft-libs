@@ -84,7 +84,23 @@ impl Driver {
     }
 
     fn with(layout: Layout<u32>, content: TestContent, right_to_left: bool) -> Self {
-        let mut driver = Self { ctx: Context::default(), layout, content, focused: true, right_to_left, shapes: Vec::new(), time: 0.0 };
+        Self::start(Self { ctx: Context::default(), layout, content, focused: true, right_to_left, shapes: Vec::new(), time: 0.0 })
+    }
+
+    /// A window egui never heard has focus (macOS can make it key without a `Focused` event).
+    fn never_focused(layout: Layout<u32>) -> Self {
+        Self::start(Self {
+            ctx: Context::default(),
+            layout,
+            content: TestContent::default(),
+            focused: false,
+            right_to_left: false,
+            shapes: Vec::new(),
+            time: 0.0,
+        })
+    }
+
+    fn start(mut driver: Self) -> Self {
         // Floating areas settle after their sizing pass.
         for _ in 0..3 {
             driver.step(vec![]);
@@ -513,6 +529,31 @@ fn a_column_s_first_tab_dropped_on_its_own_column_edge_anchors_on_another_panel(
     let out = d.drag(d.tab(3).center(), pos2(484.0, 300.0));
     assert_eq!(out.actions, vec![]);
     assert_eq!(d.layout, layout);
+}
+
+#[test]
+fn a_window_that_never_reported_focus_drags_tabs_and_losing_focus_cancels_a_drag() {
+    let mut layout = docked(Side::Start, &[&[&[2]], &[&[3, 4]]]);
+    if let Some(Node::Split { size, .. }) = &mut layout.root {
+        *size = SplitSize::FixedFirst(480.0);
+    }
+    let to = pos2(484.0, 300.0);
+    let mut d = Driver::never_focused(layout.clone());
+    let out = d.drag(d.tab(3).center(), to);
+    assert_eq!(out.actions, vec![Action::Move { panel: 3, anchor: 4, placement: Placement::Column { after: true } }]);
+
+    // Focus that arrives during the drag and goes again ends it.
+    let mut d = Driver::never_focused(layout.clone());
+    d.hold(d.tab(3).center(), to);
+    d.focused = true;
+    d.step(vec![Event::WindowFocused(true)]);
+    assert!(is_dragging::<u32>(&d.ctx, Id::new(AREA)));
+    d.focused = false;
+    d.step(vec![Event::WindowFocused(false)]);
+    let out = d.step(vec![button(to, false)]);
+    assert!(out.actions.is_empty(), "{out:?}");
+    assert_eq!(d.layout, layout);
+    assert!(!is_dragging::<u32>(&d.ctx, Id::new(AREA)));
 }
 
 #[test]

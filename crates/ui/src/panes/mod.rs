@@ -559,7 +559,7 @@ impl PaneHost {
             memory.drag_out = Some(DragOut { pane: s.id, canceled: false });
         }
         let Some(mut drag) = memory.drag_out.filter(|d| d.pane == s.id) else { return };
-        if ctx.input(|input| input.key_pressed(Key::Escape) || !input.focused) {
+        if ctx.input(|input| input.key_pressed(Key::Escape)) || crate::focus::lost(ctx) {
             drag.canceled = true;
         }
         let near = rect.expand(DOCK_SNAP);

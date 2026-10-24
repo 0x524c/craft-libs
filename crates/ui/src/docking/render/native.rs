@@ -251,7 +251,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let focused = i.focused || infos().any(|v| v.focused == Some(true)) || infos().all(|v| v.focused.is_none());
             (focused, i.time)
         });
-        self.cross.focused = focused;
+        self.cross.focus_lost = crate::focus::turned_false(ctx, self.id.with("app-focus"), focused);
         let key = self.id.with("native-visibility");
         let (last, was) = ctx.data(|d| d.get_temp::<(f64, bool)>(key)).unwrap_or((now, true));
         let last = if focused { now } else { last };
@@ -525,7 +525,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             ui.ctx().send_viewport_cmd(ViewportCommand::OuterPosition(to - frame));
             r.cross.moved = Some(to);
         };
-        if pointer.escape || !self.cross.focused {
+        if pointer.escape || self.cross.focus_lost {
             if pointer.escape {
                 move_to(self, drag.start);
                 ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));

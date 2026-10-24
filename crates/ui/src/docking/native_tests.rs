@@ -941,6 +941,19 @@ fn escape_in_a_focused_native_window_cancels_a_main_window_drag() {
 }
 
 #[test]
+fn a_main_window_without_focus_still_drags_a_tab_into_another_group() {
+    let mut d = driver(layout(false));
+    d.host().focus = None;
+    d.settle();
+    let tab = d.hit(&Hit::Tab(1)).unwrap().center();
+    let over = d.hit(&Hit::Tab(3)).unwrap().center();
+    d.hold(tab, over);
+    assert!(super::is_dragging::<u32>(&d.ctx, d.id));
+    let out = d.release(over);
+    assert!(out.actions.iter().any(|a| matches!(a, Action::Move { panel: 1, .. })), "{:?}", out.actions);
+}
+
+#[test]
 fn focus_moving_to_a_native_window_mid_drag_keeps_the_drag() {
     let mut d = driver(two_windows());
     let viewport = d.viewport(window(&d, 7).id);
