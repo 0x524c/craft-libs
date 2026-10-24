@@ -677,6 +677,7 @@ struct Samples {
     data: Vec<u8>,
     size: (u32, u32),
     space: ImageColorspace,
+    device_n: Option<DeviceNSpace>,
 }
 
 impl CustomImage for Samples {
@@ -696,7 +697,10 @@ impl CustomImage for Samples {
         None
     }
     fn color_space(&self) -> ImageColorspace {
-        self.space.clone()
+        self.space
+    }
+    fn device_n_space(&self) -> Option<DeviceNSpace> {
+        self.device_n.clone()
     }
 }
 
@@ -730,7 +734,7 @@ fn colorant_names(cs: &Object<'_>) -> (String, Vec<String>) {
 fn device_n_image_writes_one_sample_per_colorant() {
     let space = DeviceNSpace::new([Colorant::Process(Process::Black), spot("Gold", gold())]).unwrap();
     let data = vec![0, 0, 128, 64, 255, 153];
-    let image = Image::from_custom(Samples { data: data.clone(), size: (3, 1), space: ImageColorspace::DeviceN(space) }, false).unwrap();
+    let image = Image::from_custom(Samples { data: data.clone(), size: (3, 1), space: ImageColorspace::DeviceN, device_n: Some(space) }, false).unwrap();
     let bytes = page_with(|surface| surface.draw_image(image, Size::from_wh(30.0, 10.0).unwrap()));
     let pdf = hayro_syntax::Pdf::new(Arc::new(bytes)).unwrap();
     let page = pdf.pages().iter().next().unwrap();
@@ -748,6 +752,14 @@ fn device_n_image_writes_one_sample_per_colorant() {
         assert_eq!(image.decoded().unwrap().as_ref(), data.as_slice());
     }
     assert_eq!(found, 1);
+}
+
+/// A DeviceN image needs its space from `CustomImage::device_n_space`.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn device_n_image_without_a_space_is_refused() {
+    let image = Samples { data: vec![0; 6], size: (3, 1), space: ImageColorspace::DeviceN, device_n: None };
+    assert!(Image::from_custom(image, false).is_err());
 }
 
 /// A shading's color space family and colorant names, function `/Range` length and

@@ -1,8 +1,8 @@
 diff --git a/src/graphics/image.rs b/src/graphics/image.rs
-index 24e9e22..dff3ba5 100644
+index d97b8b4..d3ffcad 100644
 --- a/src/graphics/image.rs
 +++ b/src/graphics/image.rs
-@@ -337,7 +337,7 @@ impl Image {
+@@ -356,7 +356,7 @@ impl Image {
          Self(Arc::new(ImageRepr {
              inner: Deferred::new(move || {
                  let (color_channel, alpha_channel, bits_per_component) =
@@ -11,7 +11,7 @@ index 24e9e22..dff3ba5 100644
  
                  Ok(Repr::Sampled(SampledRepr {
                      color_channel,
-@@ -533,6 +533,13 @@ fn png_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
+@@ -554,6 +554,13 @@ fn png_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
      let reader = decoder
          .read_info()
          .map_err(|e| e.to_string().to_ascii_lowercase())?;
@@ -25,7 +25,7 @@ index 24e9e22..dff3ba5 100644
      let info = reader.info();
  
      let size = (info.width, info.height);
-@@ -566,6 +573,11 @@ fn png_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
+@@ -588,6 +595,11 @@ fn png_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
      })
  }
  
@@ -37,7 +37,7 @@ index 24e9e22..dff3ba5 100644
  fn decode_png(data: &[u8]) -> Result<Repr, String> {
      let cursor = Cursor::new(data);
      let mut decoder = png::Decoder::new(cursor);
-@@ -573,7 +585,15 @@ fn decode_png(data: &[u8]) -> Result<Repr, String> {
+@@ -595,7 +607,15 @@ fn decode_png(data: &[u8]) -> Result<Repr, String> {
      let mut reader = decoder
          .read_info()
          .map_err(|e| e.to_string().to_ascii_lowercase())?;
@@ -54,7 +54,7 @@ index 24e9e22..dff3ba5 100644
      let _ = reader
          .next_frame(&mut img_data)
          .map_err(|e| e.to_string())?;
-@@ -588,8 +608,8 @@ fn decode_png(data: &[u8]) -> Result<Repr, String> {
+@@ -610,8 +630,8 @@ fn decode_png(data: &[u8]) -> Result<Repr, String> {
      };
  
      let (color_channel, alpha_channel, bits_per_component) = match bit_depth {
@@ -65,7 +65,7 @@ index 24e9e22..dff3ba5 100644
          _ => return Err("image has an unsupported bit-depth".to_string()),
      };
  
-@@ -674,7 +694,7 @@ fn decode_gif(data: Data) -> Result<Repr, String> {
+@@ -697,7 +717,7 @@ fn decode_gif(data: Data) -> Result<Repr, String> {
          .ok_or("GIF image seems to be empty".to_string())?;
  
      let (color_channel, alpha_channel, bits_per_component) =
@@ -74,7 +74,7 @@ index 24e9e22..dff3ba5 100644
  
      Ok(Repr::Sampled(SampledRepr {
          color_channel,
-@@ -730,7 +750,7 @@ fn decode_webp(data: Data) -> Result<Repr, String> {
+@@ -755,7 +775,7 @@ fn decode_webp(data: Data) -> Result<Repr, String> {
      };
  
      let (color_channel, alpha_channel, bits_per_component) =
@@ -83,7 +83,7 @@ index 24e9e22..dff3ba5 100644
  
      Ok(Repr::Sampled(SampledRepr {
          color_channel,
-@@ -739,9 +759,21 @@ fn decode_webp(data: Data) -> Result<Repr, String> {
+@@ -764,9 +784,21 @@ fn decode_webp(data: Data) -> Result<Repr, String> {
      }))
  }
  
@@ -107,7 +107,7 @@ index 24e9e22..dff3ba5 100644
      } else {
          Vec::new()
      };
-@@ -749,7 +781,7 @@ fn handle_u8_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, Bi
+@@ -774,7 +806,7 @@ fn handle_u8_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, Bi
      let color_channel = match cs {
          ColorSpace::RGB => deflate_encode(data),
          ColorSpace::RGBA => {
@@ -116,7 +116,7 @@ index 24e9e22..dff3ba5 100644
              data.chunks_exact(4).for_each(|data| {
                  buf.extend_from_slice(&data[0..3]);
                  alphas.push(data[3]);
-@@ -758,7 +790,7 @@ fn handle_u8_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, Bi
+@@ -783,7 +815,7 @@ fn handle_u8_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, Bi
          }
          ColorSpace::Luma => deflate_encode(data),
          ColorSpace::LumaA => {
@@ -125,7 +125,7 @@ index 24e9e22..dff3ba5 100644
              data.chunks_exact(2).for_each(|data| {
                  buf.push(data[0]);
                  alphas.push(data[1]);
-@@ -775,12 +807,12 @@ fn handle_u8_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, Bi
+@@ -800,12 +832,12 @@ fn handle_u8_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, Bi
          None
      };
  
@@ -141,7 +141,7 @@ index 24e9e22..dff3ba5 100644
      } else {
          Vec::new()
      };
-@@ -788,7 +820,7 @@ fn handle_u16_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, B
+@@ -813,7 +845,7 @@ fn handle_u16_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, B
      let encoded_image = match cs {
          ColorSpace::RGB => deflate_encode(data),
          ColorSpace::RGBA => {
@@ -150,7 +150,7 @@ index 24e9e22..dff3ba5 100644
              data.chunks_exact(8).for_each(|data| {
                  buf.extend_from_slice(&data[0..6]);
                  alphas.extend_from_slice(&data[6..]);
-@@ -797,7 +829,7 @@ fn handle_u16_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, B
+@@ -822,7 +854,7 @@ fn handle_u16_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, B
          }
          ColorSpace::Luma => deflate_encode(data),
          ColorSpace::LumaA => {
@@ -159,7 +159,7 @@ index 24e9e22..dff3ba5 100644
              data.chunks_exact(4).for_each(|data| {
                  buf.extend_from_slice(&data[0..2]);
                  alphas.extend_from_slice(&data[2..]);
-@@ -814,7 +846,7 @@ fn handle_u16_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, B
+@@ -839,7 +871,7 @@ fn handle_u16_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, B
          None
      };
  
@@ -167,8 +167,8 @@ index 24e9e22..dff3ba5 100644
 +    Ok((encoded_image, encoded_mask, BitsPerComponent::Sixteen))
  }
  
- fn get_icc_profile_type(data: &[u8], color_space: &ImageColorspace) -> Option<GenericICCProfile> {
-@@ -839,6 +871,54 @@ mod tests {
+ fn get_icc_profile_type(data: &[u8], color_space: ImageColorspace) -> Option<GenericICCProfile> {
+@@ -864,6 +896,54 @@ mod tests {
          assert!(e.is_err());
      }
  

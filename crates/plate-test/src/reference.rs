@@ -423,14 +423,14 @@ impl Resolver<'_, '_> {
                     data.push(channel(255.0 * (edge / radius.max(f32::EPSILON)).min(1.0)));
                 }
             }
-            Synthetic { data, size: (px, py), space: ImageColorspace::Luma }
+            Synthetic { data, size: (px, py), space: ImageColorspace::Luma, device_n: None }
         } else {
             let (pair, ramp) = match (&source.ramp, &source.split) {
                 (Some(pair), _) => (pair, true),
                 (_, Some(pair)) => (pair, false),
                 _ => return Err(self.bad("image needs ramp, split or feather")),
             };
-            let (space, a, b) = match (ink_tints(&pair[0]), ink_tints(&pair[1])) {
+            let (space, device_n, a, b) = match (ink_tints(&pair[0]), ink_tints(&pair[1])) {
                 // Spot and DeviceN paints: one DeviceN image of every ink either names.
                 (Some(a), Some(b)) => {
                     let space = self.device_n_space(a.keys().chain(b.keys()))?;
@@ -438,7 +438,7 @@ impl Resolver<'_, '_> {
                         space.colorants().iter().map(|c| inks.get(c.name()).copied().unwrap_or(0.0) * 2.55).collect()
                     };
                     let (a, b) = (samples(&a), samples(&b));
-                    (ImageColorspace::DeviceN(space), a, b)
+                    (ImageColorspace::DeviceN, Some(space), a, b)
                 }
                 _ => {
                     let (space, a) = self.components(&pair[0])?;
@@ -446,7 +446,7 @@ impl Resolver<'_, '_> {
                     if space != space_b {
                         return Err(self.bad("image paints must share a color space"));
                     }
-                    (space, a, b)
+                    (space, None, a, b)
                 }
             };
             let mut data = Vec::with_capacity(width * height * a.len());
@@ -456,7 +456,7 @@ impl Resolver<'_, '_> {
                     data.extend(a.iter().zip(&b).map(|(a, b)| channel(a + (b - a) * t)));
                 }
             }
-            Synthetic { data, size: (px, py), space }
+            Synthetic { data, size: (px, py), space, device_n }
         };
         Image::from_custom(image, false).map_err(|e| self.bad(&e))
     }
@@ -576,6 +576,7 @@ struct Synthetic {
     data: Vec<u8>,
     size: (u32, u32),
     space: ImageColorspace,
+    device_n: Option<DeviceNSpace>,
 }
 
 impl CustomImage for Synthetic {
@@ -595,7 +596,10 @@ impl CustomImage for Synthetic {
         None
     }
     fn color_space(&self) -> ImageColorspace {
-        self.space.clone()
+        self.space
+    }
+    fn device_n_space(&self) -> Option<DeviceNSpace> {
+        self.device_n.clone()
     }
 }
 

@@ -197,9 +197,12 @@ inks. Gradient stops must share one color space: a stop that mixes a spot with p
 inks, or two spots, has no space to go in, and stops from different spaces fail an
 assertion while writing.
 
-- `ImageColorspace::DeviceN(DeviceNSpace)` for `CustomImage`: one sample per colorant, in
-  the space's colorant order, 0 = no ink. The image's `/ColorSpace` is the cached DeviceN
-  space from patch 06; an ICC profile is ignored. `ImageColorspace` is no longer `Copy`.
+- `ImageColorspace::DeviceN` for `CustomImage`, with the space from the new
+  `CustomImage::device_n_space` (default `None`): one sample per colorant, in the space's
+  colorant order, 0 = no ink. `Image::from_custom` refuses a DeviceN image without a space.
+  The image's `/ColorSpace` is the cached DeviceN space from patch 06; an ICC profile is
+  ignored. `ImageColorspace` stays `Copy`, so the new variant breaks only exhaustive
+  matches.
 - Gradient stops (linear, radial, sweep) in different ink-based spaces are rewritten into
   one space when the shading function is created. Ink-based: CMYK, gray (as black), a
   Separation with a named colorant, DeviceN. A process colorant takes part when a stop has
