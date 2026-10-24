@@ -33,7 +33,8 @@ The vendored source patch and per-file hashes are recorded in `vendor/krilla/REA
 
 ## Assets retained with the optional PDF reader
 
-The shared reader centralizes the five patched Hayro source trees from PdfCraft.
+The shared reader centralizes the five patched Hayro source trees from PdfCraft and the
+patched crates.io `hayro-postscript` 0.1.0 scanner, which bundles no assets.
 The standard-14 fonts, CMYK profile and generated metrics listed below remain byte-identical
 in `vendor/hayro-interpret`, and the CMaps in `vendor/hayro-cmap/assets`; no application
 document fonts are added. The removed upstream LAB.icc profile is not restored. Source hashes

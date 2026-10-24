@@ -14,6 +14,17 @@ come with it. One local patch: a binary `usecmap` counts against the 16-level ne
 as a text one does, so a self-referencing binary CMap stops instead of overflowing the stack.
 Consuming workspaces need a `hayro-cmap` patch entry beside the other Hayro entries.
 
+`hayro-postscript` 0.1.0 is the crates.io package (upstream revision
+a2354aebaf86f5ab13e5fd6b6b0521306488bf9d), the PostScript token scanner `hayro-cmap` uses
+to parse the CMap streams PDFs embed. One local patch: the scanner, which does not parse
+dictionaries yet, skips runs of `<<` and `>>` in a loop and returns the next object, instead
+of recursing once per delimiter, so a long run of `<` or `>` bytes no longer overflows the
+stack. Tests: `object::tests::long_open_dict_run_does_not_overflow`,
+`object::tests::long_close_dict_run_does_not_overflow`, `object::tests::dict_delimiters_are_skipped`
+and `object::tests::nested_dict_delimiters_are_skipped`. Its `SOURCE.json` records the
+registry hashes. Consuming workspaces need a `hayro-postscript` patch entry beside the other
+Hayro entries.
+
 The shared snapshot adds immutable per-document ordinary decode limits, threaded through
 initial xrefs, object streams, fallback and repair. Existing constructors retain their
 previous default. Known-size image budgets and streaming content budgets remain distinct.
