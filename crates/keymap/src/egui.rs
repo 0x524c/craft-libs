@@ -8,6 +8,7 @@ use ::egui::{Context, Event, InputState, Key as EguiKey, KeyboardShortcut, Modif
 use crate::chord::{Chord, Key, Mods, Platform, Trigger};
 use crate::command::CommandRef;
 use crate::keymap::{Keymap, Lookup};
+use crate::layout::{KeyInput, Layout};
 use crate::scope::Active;
 
 /// The platform to build a keymap for in this context. Unlike [`Platform::current`], a web build
@@ -89,22 +90,25 @@ impl Chord {
     }
 }
 
-/// Base keys and the key egui reports for them with Shift held on a US layout.
-const SHIFTED: &[(Key, Key)] = &[
-    (Key::Semicolon, Key::Colon),
-    (Key::Slash, Key::Questionmark),
-    (Key::Backslash, Key::Pipe),
-    (Key::OpenBracket, Key::OpenCurlyBracket),
-    (Key::CloseBracket, Key::CloseCurlyBracket),
-    (Key::Equals, Key::Plus),
-    (Key::Num1, Key::Exclamationmark),
-];
-
-fn without_shift(m: Mods) -> Mods {
-    Mods { shift: false, ..m }
+impl KeyInput {
+    /// What an egui key press reports: the logical key as typed and the physical key. On a layout
+    /// that is not Latin, the suite's egui-winit reports the Latin layout's letter as the logical
+    /// key (Linux, Windows, and macOS with ⌘ held), and crates.io egui the physical key, so
+    /// [`Layout::resolve`] takes a letter there before the position. The Latin layout's character
+    /// comes from the frame's input ([`Dispatcher::dispatch`] fills it in). egui reports no Shift
+    /// level, so [`Layout`] infers it. `None` for events other than key presses and releases.
+    pub fn from_egui(event: &Event, platform: Platform) -> Option<KeyInput> {
+        let Event::Key { key, physical_key, modifiers, .. } = event else { return None };
+        let mut input = KeyInput::new(Mods::from_egui(modifiers, platform));
+        input.typed = Key::from_egui(*key);
+        input.physical = physical_key.and_then(Key::from_egui);
+        Some(input)
+    }
 }
 
-/// Whether a key press egui reported triggers `binding` on `platform`.
+/// Whether a key press egui reported triggers `binding` on `platform`, on a layout about which
+/// nothing is known, for a press whose physical key is unknown. [`Layout::matches`] takes the
+/// whole press and the layout.
 ///
 /// Besides an exact match:
 /// - Shift with a base key matches the shifted key egui reports (`Shift+;` matches `:`).
@@ -113,47 +117,7 @@ fn without_shift(m: Mods) -> Mods {
 ///   `Shift+=`, so zoom keys work with and without Shift.
 pub fn matches(binding: &Chord, key: EguiKey, mods: &Modifiers, platform: Platform) -> bool {
     let Some(pressed) = Key::from_egui(key) else { return false };
-    matches_press(binding, pressed, Mods::from_egui(mods, platform), platform)
-}
-
-fn matches_press(binding: &Chord, pressed: Key, held: Mods, platform: Platform) -> bool {
-    let want = binding.effective(platform);
-    if pressed == want.key && held == want.mods {
-        return true;
-    }
-    let same_but_shift = without_shift(held) == without_shift(want.mods);
-    if !same_but_shift {
-        return false;
-    }
-    let shifted_of = |base: Key| SHIFTED.iter().find(|(b, _)| *b == base).map(|&(_, s)| s);
-    let is_shifted_symbol = SHIFTED.iter().any(|&(_, s)| s == want.key);
-    match (want.key, pressed) {
-        (Key::Equals, Key::Plus) => !want.mods.shift || held.shift,
-        (Key::Plus, Key::Equals) => held.shift && !want.mods.shift,
-        (w, p) if w == p => is_shifted_symbol && !want.mods.shift && held.shift,
-        (w, p) => want.mods.shift && held.shift && shifted_of(w) == Some(p),
-    }
-}
-
-/// The chords a press can stand for, most specific first: the press itself, then those that keep
-/// Shift (`Shift+;` for `:`), then those without it (`=` for `+`). Each one [`matches`] the press.
-fn candidates(pressed: Key, held: Mods, platform: Platform) -> Vec<Chord> {
-    let base = SHIFTED.iter().find(|&&(_, s)| s == pressed).map(|&(b, _)| b);
-    let swap = match pressed {
-        Key::Plus => Some(Key::Equals),
-        Key::Equals => Some(Key::Plus),
-        _ => None,
-    };
-    let mut out = Vec::with_capacity(6);
-    for mods in [held, without_shift(held)] {
-        for key in [Some(pressed), base, swap].into_iter().flatten() {
-            let chord = Chord::new(mods, key);
-            if !out.contains(&chord) && matches_press(&chord, pressed, held, platform) {
-                out.push(chord);
-            }
-        }
-    }
-    out
+    Layout::new().matches(binding, &KeyInput::new(Mods::from_egui(mods, platform)).with_typed(pressed), platform)
 }
 
 /// Seconds within which a second press of the same chord counts as a double press.
@@ -170,9 +134,10 @@ pub struct Hit {
     pub cycle: Vec<CommandRef>,
     /// The chord whose binding matched, with `double` set when the double binding ran.
     pub trigger: Trigger,
-    /// Whether `trigger` is the press itself. `false` when the press matched through a stand-in:
-    /// the shifted key for a Shift binding (`:` for `Shift+;`), Shift held to type a symbol, or
-    /// `+` and `=` standing for each other.
+    /// Whether `trigger` is the chord the press means ([`Layout::resolve`]), the one the shortcut
+    /// recorder records. `false` when the press matched through a stand-in: a Shift binding on the
+    /// US base key (`Shift+;` for `:`), `+` and `=` standing for each other, or a digit-row
+    /// position's digit.
     pub exact: bool,
     /// The text of the Paste event that ran the command, or on the web of the Paste event that
     /// came with the press that ran it.
@@ -236,6 +201,10 @@ pub struct Dispatcher {
     /// Whether a press's Text event comes before it when no text field has focus, as eframe's
     /// web build sends them.
     text_first: bool,
+    layout: Layout,
+    /// Whether right Alt is held. egui-winit reports AltGr with neither Ctrl nor Alt, so its
+    /// presses would otherwise teach the layout as plain ones.
+    right_alt: bool,
 }
 
 /// eframe's web build sends a press's Text event first when no text field has focus.
@@ -243,7 +212,7 @@ const TEXT_FIRST: bool = cfg!(target_arch = "wasm32");
 
 impl Default for Dispatcher {
     fn default() -> Dispatcher {
-        Dispatcher { last: None, repeat: false, clipboard: false, text_first: TEXT_FIRST }
+        Dispatcher { last: None, repeat: false, clipboard: false, text_first: TEXT_FIRST, layout: Layout::new(), right_alt: false }
     }
 }
 
@@ -272,6 +241,26 @@ impl Dispatcher {
         self
     }
 
+    /// Starts from what the platform reports about the keyboard layout. The dispatcher also
+    /// learns from what plain presses type ([`Layout::observe`]), and takes whether the layout
+    /// is Latin from egui when the integration reports it (egui-winit on Linux, with the suite's
+    /// egui).
+    pub fn with_layout(mut self, layout: Layout) -> Dispatcher {
+        self.layout = layout;
+        self
+    }
+
+    /// The keyboard layout as known so far, for the shortcut recorder and labels
+    /// ([`Chord::display_for`]).
+    pub fn layout(&self) -> &Layout {
+        &self.layout
+    }
+
+    /// For reporting a layout switch ([`Layout::set_latin`]).
+    pub fn layout_mut(&mut self) -> &mut Layout {
+        &mut self.layout
+    }
+
     /// The commands this frame's key presses run with `active` focus, in press order.
     ///
     /// A chord pressed again within [`DOUBLE_PRESS`] in the same panel runs its double binding
@@ -292,17 +281,20 @@ impl Dispatcher {
         let mut kept = Vec::with_capacity(input.events.len());
         let events = std::mem::take(&mut input.events);
         let text_of = text_of_press(&events, self.text_first && !active.typing);
+        self.report_latin(input.keyboard_layout_is_latin());
+        self.learn(&events, &text_of, platform);
         let mut drop = vec![false; events.len()];
         // The web build sends both a clipboard key press and the clipboard event it causes. The
         // press decides: its event goes with it when it runs a command and stays otherwise.
-        let causes = clipboard_event_follows(&events, platform);
+        let causes = clipboard_event_follows(&events, &self.layout, platform, input);
         let mut caused_taken: Vec<Option<bool>> = vec![None; events.len()];
         for (i, event) in events.into_iter().enumerate() {
             match &event {
-                Event::Key { key, pressed: true, repeat, modifiers, .. } if !*repeat || self.repeat => {
-                    let held = Mods::from_egui(modifiers, platform);
-                    if let Some(key) = Key::from_egui(*key) {
-                        let plain_clip = is_plain_clipboard(key, held);
+                Event::Key { pressed: true, repeat, .. } if !*repeat || self.repeat => {
+                    let input = key_input(&event, platform, input);
+                    let held = input.mods;
+                    if let Some(chord) = self.layout.resolve(&input) {
+                        let plain_clip = is_plain_clipboard(chord.key, chord.mods);
                         let keep =
                             if active.typing { text_of[i].is_some() || plain_clip } else { !self.clipboard && plain_clip && causes[i].is_some() };
                         if keep {
@@ -313,7 +305,7 @@ impl Dispatcher {
                             continue;
                         }
                         let caused = causes[i].clone();
-                        let hit = self.press(key, held, *repeat, now, keymap, active).map(|mut hit| {
+                        let hit = self.press(&input, *repeat, now, keymap, active).map(|mut hit| {
                             hit.pasted = caused.as_ref().and_then(|(_, text)| text.clone());
                             hit
                         });
@@ -344,7 +336,7 @@ impl Dispatcher {
                         let (key, held) = clipboard_chord(&event, frame_mods);
                         // A focused text field copies and pastes on the plain chords itself.
                         let look = !is_plain_clipboard(key, held) || (self.clipboard && !active.typing);
-                        let hit = if look { self.press(key, held, false, now, keymap, active) } else { None };
+                        let hit = if look { self.press(&KeyInput::new(held).with_typed(key), false, now, keymap, active) } else { None };
                         if let Some(mut hit) = hit {
                             if let Event::Paste(text) = &event {
                                 hit.pasted = Some(text.clone());
@@ -364,12 +356,37 @@ impl Dispatcher {
         hits
     }
 
-    fn press(&mut self, key: Key, held: Mods, repeat: bool, now: f64, keymap: &Keymap, active: &Active) -> Option<Hit> {
-        let chords = candidates(key, held, keymap.platform());
+    /// Takes the platform's answer on whether the layout is Latin. `None` (not reported) leaves
+    /// the layout as it is, so an earlier report or typing decides.
+    fn report_latin(&mut self, reported: Option<bool>) {
+        if reported.is_some() {
+            self.layout.set_latin(reported);
+        }
+    }
+
+    /// Teaches the layout what this frame's presses typed.
+    fn learn(&mut self, events: &[Event], text_of: &[Option<usize>], platform: Platform) {
+        for (event, text) in events.iter().zip(text_of) {
+            match event {
+                Event::Key { physical_key: Some(EguiKey::AltRight), pressed, .. } => self.right_alt = *pressed,
+                Event::WindowFocused(false) => self.right_alt = false,
+                _ => {}
+            }
+            if self.right_alt {
+                continue;
+            }
+            let Some(Event::Text(text)) = text.and_then(|j| events.get(j)) else { continue };
+            if let Some(KeyInput { mods, physical: Some(physical), .. }) = KeyInput::from_egui(event, platform) {
+                self.layout.observe(physical, mods, text);
+            }
+        }
+    }
+
+    fn press(&mut self, input: &KeyInput, repeat: bool, now: f64, keymap: &Keymap, active: &Active) -> Option<Hit> {
+        let chords = self.layout.candidates(input);
         let first = *chords.first()?;
-        let pressed = Chord::new(held, key);
         let find = |double: bool| {
-            chords.iter().find_map(|&chord| Hit::from_lookup(keymap.lookup(&chord, double, active), Trigger { chord, double }, chord == pressed))
+            chords.iter().find_map(|&chord| Hit::from_lookup(keymap.lookup(&chord, double, active), Trigger { chord, double }, chord == first))
         };
         if repeat {
             return find(false);
@@ -394,14 +411,50 @@ enum Clip {
 
 /// For each clipboard key press whose clipboard event comes later in the frame, as the web build
 /// sends them: the index of that event, and the text of a Paste event.
-fn clipboard_event_follows(events: &[Event], platform: Platform) -> Vec<Option<(usize, Option<String>)>> {
+/// The suite's egui fork has an inherent `InputState::keyboard_layout_is_latin`; crates.io egui
+/// has neither the method nor the field. A method call picks an inherent method over a trait
+/// method of the same name, so [`Dispatcher::dispatch`] reaches egui's method on the fork and
+/// this `None` everywhere else.
+#[allow(dead_code, reason = "unused when egui has the inherent method")]
+trait KeyboardLayoutIsLatin {
+    fn keyboard_layout_is_latin(&self) -> Option<bool> {
+        None
+    }
+}
+
+impl KeyboardLayoutIsLatin for InputState {}
+
+/// The suite's egui fork has an inherent `InputState::latin_layout_char`, the character a key
+/// pressed this frame types on the Latin layout shortcuts follow; crates.io egui reports none.
+/// Reached as [`KeyboardLayoutIsLatin`] is.
+#[allow(dead_code, reason = "unused when egui has the inherent method")]
+trait LatinLayoutChar {
+    fn latin_layout_char(&self, _physical_key: EguiKey) -> Option<char> {
+        None
+    }
+}
+
+impl LatinLayoutChar for InputState {}
+
+/// A press as [`KeyInput::from_egui`] reads it, with the Latin layout's character `input` reports
+/// for its key.
+fn key_input(event: &Event, platform: Platform, input: &InputState) -> KeyInput {
+    let mut key = KeyInput::from_egui(event, platform).unwrap_or_default();
+    if let Event::Key { physical_key: Some(physical), .. } = event {
+        key.latin = input.latin_layout_char(*physical);
+    }
+    key
+}
+
+fn clipboard_event_follows(events: &[Event], layout: &Layout, platform: Platform, input: &InputState) -> Vec<Option<(usize, Option<String>)>> {
     let mut out = vec![None; events.len()];
     let mut ahead: [Option<usize>; 3] = [None; 3];
     for (i, event) in events.iter().enumerate().rev() {
         if let Some(seen) = event_clip(event).and_then(|c| ahead.get_mut(c as usize)) {
             *seen = Some(i);
-        } else if let Event::Key { key, pressed: true, modifiers, .. } = event {
-            let clip = Key::from_egui(*key).and_then(|k| clipboard_kind(k, Mods::from_egui(modifiers, platform)));
+        } else if let Event::Key { pressed: true, .. } = event {
+            let chord = layout.resolve(&key_input(event, platform, input));
+            let clip = chord.and_then(|c| clipboard_kind(c.key, c.mods));
             if let Some(j) = clip.and_then(|c| ahead.get_mut(c as usize)).and_then(Option::take) {
                 let text = if let Some(Event::Paste(text)) = events.get(j) { Some(text.clone()) } else { None };
                 out[i] = Some((j, text));
@@ -506,5 +559,41 @@ mod tests {
         let hits = d.dispatch(&mut input, &km, &Active::NONE);
         assert_eq!(hits.len(), 1);
         assert_eq!(input.events, [Event::Text("q".into()), press(EguiKey::Q)]);
+    }
+
+    #[test]
+    fn the_platforms_latin_report_overrides_typing() {
+        /// Stands in for the fork's `InputState`, whose inherent method wins over the fallback.
+        struct ForkInput(Option<bool>);
+        impl ForkInput {
+            fn keyboard_layout_is_latin(&self) -> Option<bool> {
+                self.0
+            }
+        }
+        impl KeyboardLayoutIsLatin for ForkInput {}
+
+        let km = Keymap::new(vec![], Scopes::new(), Platform::Windows);
+        let typing = |text: &str| {
+            let mut input = InputState::default();
+            let key = Event::Key { key: EguiKey::C, physical_key: Some(EguiKey::C), pressed: true, repeat: false, modifiers: Modifiers::NONE };
+            input.events = vec![key, Event::Text(text.into())];
+            input
+        };
+
+        // crates.io egui reports nothing, so typing decides.
+        let mut d = Dispatcher::new();
+        assert_eq!(InputState::default().keyboard_layout_is_latin(), None);
+        d.dispatch(&mut typing("с"), &km, &Active::NONE);
+        assert!(!d.layout().is_latin());
+
+        // A report wins over typing, and frames without one keep it.
+        d.report_latin(ForkInput(Some(true)).keyboard_layout_is_latin());
+        assert!(d.layout().is_latin());
+        d.report_latin(ForkInput(None).keyboard_layout_is_latin());
+        d.dispatch(&mut typing("с"), &km, &Active::NONE);
+        assert!(d.layout().is_latin());
+        d.report_latin(ForkInput(Some(false)).keyboard_layout_is_latin());
+        d.dispatch(&mut typing("c"), &km, &Active::NONE);
+        assert!(!d.layout().is_latin());
     }
 }

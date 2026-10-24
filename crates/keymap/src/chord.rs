@@ -7,6 +7,8 @@ use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::layout::Layout;
+
 pub mod foreign;
 
 /// The longest chord or trigger text [`Chord::parse`] and [`Trigger::parse`] accept, in bytes.
@@ -136,6 +138,77 @@ impl Key {
             .copied()
             .find(|k| k.name().eq_ignore_ascii_case(name) || k.variant_name().eq_ignore_ascii_case(name))
             .or_else(|| KEY_ALIASES.iter().find(|(alias, _)| alias.eq_ignore_ascii_case(name)).map(|&(_, k)| k))
+    }
+
+    /// `A` to `Z`.
+    pub const fn is_letter(self) -> bool {
+        matches!(
+            self,
+            Key::A
+                | Key::B
+                | Key::C
+                | Key::D
+                | Key::E
+                | Key::F
+                | Key::G
+                | Key::H
+                | Key::I
+                | Key::J
+                | Key::K
+                | Key::L
+                | Key::M
+                | Key::N
+                | Key::O
+                | Key::P
+                | Key::Q
+                | Key::R
+                | Key::S
+                | Key::T
+                | Key::U
+                | Key::V
+                | Key::W
+                | Key::X
+                | Key::Y
+                | Key::Z
+        )
+    }
+
+    /// `0` to `9`.
+    pub const fn is_digit(self) -> bool {
+        matches!(self, Key::Num0 | Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 | Key::Num5 | Key::Num6 | Key::Num7 | Key::Num8 | Key::Num9)
+    }
+
+    /// Punctuation and symbol keys: `-`, `=`, `+`, brackets, `\`, `;`, `'`, `` ` ``, `,`, `.`,
+    /// `/` and the shifted symbols `:`, `|`, `?`, `!`, `{`, `}`.
+    pub const fn is_symbol(self) -> bool {
+        matches!(
+            self,
+            Key::Minus
+                | Key::Equals
+                | Key::Plus
+                | Key::OpenBracket
+                | Key::CloseBracket
+                | Key::Backslash
+                | Key::Semicolon
+                | Key::Quote
+                | Key::Backtick
+                | Key::Comma
+                | Key::Period
+                | Key::Slash
+                | Key::Colon
+                | Key::Pipe
+                | Key::Questionmark
+                | Key::Exclamationmark
+                | Key::OpenCurlyBracket
+                | Key::CloseCurlyBracket
+        )
+    }
+
+    /// The letter, digit or symbol key for a typed character, ignoring case.
+    pub fn from_char(c: char) -> Option<Key> {
+        let mut buf = [0; 4];
+        let text: &str = c.encode_utf8(&mut buf);
+        Key::ALL.iter().copied().find(|k| (k.is_letter() || k.is_digit() || k.is_symbol()) && k.name().eq_ignore_ascii_case(text))
     }
 
     /// `F1` to `F35`.
@@ -430,6 +503,17 @@ impl Chord {
 
     /// Text for menus and settings: `⌃⌥⇧⌘K` on macOS, `Ctrl+Alt+Shift+K` elsewhere.
     pub fn display(&self, platform: Platform) -> String {
+        self.display_key(platform, None)
+    }
+
+    /// [`display`](Self::display) for the keys of `layout`: a punctuation key shows the character
+    /// the layout types at its position when that character has no key of its own (`Ctrl+Ü` for
+    /// Ctrl+[ on German). Letters and digits show as in `display`.
+    pub fn display_for(&self, platform: Platform, layout: &Layout) -> String {
+        self.display_key(platform, layout.key_label(self.key).as_deref())
+    }
+
+    fn display_key(&self, platform: Platform, key_text: Option<&str>) -> String {
         let m = self.mods.effective(platform);
         let mut s = String::new();
         if platform.is_mac() {
@@ -438,14 +522,14 @@ impl Chord {
                     s.push_str(glyph);
                 }
             }
-            s.push_str(self.key.mac_symbol());
+            s.push_str(key_text.unwrap_or(self.key.mac_symbol()));
         } else {
             for (on, name) in [(m.cmd, "Ctrl+"), (m.alt, "Alt+"), (m.shift, "Shift+")] {
                 if on {
                     s.push_str(name);
                 }
             }
-            s.push_str(self.key.text_name());
+            s.push_str(key_text.unwrap_or(self.key.text_name()));
         }
         s
     }
@@ -552,6 +636,12 @@ impl Trigger {
     /// [`Chord::display`], twice with a space between for a double press.
     pub fn display(&self, platform: Platform) -> String {
         let one = self.chord.display(platform);
+        if self.double { format!("{one} {one}") } else { one }
+    }
+
+    /// [`Chord::display_for`], twice with a space between for a double press.
+    pub fn display_for(&self, platform: Platform, layout: &Layout) -> String {
+        let one = self.chord.display_for(platform, layout);
         if self.double { format!("{one} {one}") } else { one }
     }
 }
