@@ -73,7 +73,7 @@ fn ppm16(bytes: &[u8]) -> (u32, u32, u32, Vec<u16>) {
     let num = |s: &str| s.parse::<u32>().unwrap_or_else(|e| panic!("PPM header {s}: {e}"));
     let (w, h, maxval) = (num(&fields[1]), num(&fields[2]), num(&fields[3]));
     let data = &bytes[at + 1..];
-    let px: Vec<u16> = data.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+    let px: Vec<u16> = data.as_chunks::<2>().0.iter().map(|&c| u16::from_be_bytes(c)).collect();
     assert_eq!(px.len(), (w * h * 3) as usize);
     (w, h, maxval, px)
 }
