@@ -193,15 +193,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     /// Under the pointer while a drag offers a docking target: which modifier floats the drop
-    /// instead.
+    /// instead. With native windows, the window under the pointer draws it, beside its preview.
     pub(super) fn paint_float_hint(&self, ctx: &Context, pointer: Pos2) {
         if !self.style.float_hint || self.style.float_hint_label.is_empty() {
-            return;
-        }
-        // A window other than the drag's source: the source shows the hint.
-        #[cfg(feature = "native-windows")]
-        if self.cross.quiet {
-            self.cross.offered.set(true);
             return;
         }
         let key = if ctx.os() == egui::os::OperatingSystem::Mac { "⌘" } else { "Ctrl" };

@@ -286,7 +286,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if let Some((action, line)) = self.dock_group_proposal(drag, pointer) {
             if action.is_some() {
                 self.paint_dock_line(ctx, line);
-                self.paint_float_hint(ctx, pointer);
+                if drag.gesture != GroupGesture::Window {
+                    self.paint_float_hint(ctx, pointer);
+                }
             }
             return;
         }

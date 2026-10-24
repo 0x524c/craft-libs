@@ -559,6 +559,54 @@ fn the_preview_is_drawn_in_the_window_under_the_pointer() {
     assert!(matches!(out.actions.as_slice(), [Action::Move { panel: 1, anchor: 7, .. }]), "{:?}", out.actions);
 }
 
+/// The texts drawn in `shapes`.
+fn texts(shapes: &[ClippedShape]) -> Vec<String> {
+    fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+            egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    shapes.iter().for_each(|clipped| walk(&clipped.shape, &mut out));
+    out
+}
+
+#[test]
+fn the_undock_hint_is_drawn_in_the_window_under_the_pointer() {
+    let key = if egui::os::OperatingSystem::from_target_os() == egui::os::OperatingSystem::Mac { "⌘" } else { "Ctrl" };
+    let hint = format!("Hold {key} to undock");
+    let hinted = |shapes: &[ClippedShape]| texts(shapes).contains(&hint);
+    let driver = || {
+        DockDriver::new(two_windows(), Content::default())
+            .with_style(|s| {
+                s.command_press_floats = true;
+                s.float_hint = true;
+            })
+            .with_native_host(ORIGIN)
+    };
+
+    // Tab 1 of the main window over window [7]'s body.
+    let mut d = driver();
+    let viewport = d.viewport(window(&d, 7).id);
+    let tab = d.hit(&Hit::Tab(1)).unwrap().center();
+    let body = d.host().windows[&viewport].rect.center() - ORIGIN.to_vec2();
+    d.hold(tab, body);
+    d.move_to(body);
+    assert!(hinted(&d.host().windows[&viewport].shapes), "{:?}", texts(&d.host().windows[&viewport].shapes));
+    assert!(!hinted(d.shapes()), "not in the source");
+
+    // Tab 5 of window [5, 6] over frame [1, 2] of the main window.
+    let mut d = driver();
+    let id = window(&d, 5).id;
+    let viewport = d.viewport(id);
+    let local = d.window_local(id, ORIGIN + vec2(100.0, 300.0)).unwrap();
+    d.window_hold(id, pos2(15.0, TAB_ROW), local);
+    assert!(hinted(d.shapes()), "{:?}", texts(d.shapes()));
+    assert!(!hinted(&d.host().windows[&viewport].shapes), "not in the source");
+}
+
 /// Zone outlines: closed 1 pt paths without a fill.
 fn zone_outlines(shapes: &[ClippedShape]) -> usize {
     shapes

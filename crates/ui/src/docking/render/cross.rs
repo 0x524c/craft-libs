@@ -8,7 +8,7 @@
 //! frame, with the targets it drew. The release is resolved at the end of the main window's
 //! frame, after every native window has drawn.
 
-use std::{cell::Cell, fmt::Debug, hash::Hash};
+use std::{fmt::Debug, hash::Hash};
 
 use egui::{Context, Key, Pos2, Rect, Ui, Vec2, vec2};
 
@@ -22,8 +22,6 @@ use crate::docking::{Action, Drag, DropTarget, Floating, GroupDrag, GroupGesture
 
 /// Key of [`DragPointer`] in the context's data, under the area's id.
 pub(super) const POINTER: &str = "drag-pointer";
-/// Key of whether a target was offered last frame, for the source window's undock hint.
-const OFFERED: &str = "drag-offered";
 /// Key of an Escape that reached one of the application's windows other than the drag's
 /// owner. Keys go to the window with keyboard focus, which need not be the one dragging.
 const ESCAPE: &str = "drag-escape";
@@ -93,12 +91,8 @@ pub(in crate::docking) struct Cross<P> {
     pub pointer: Option<DragPointer>,
     /// A bar drag released this frame.
     pub release: Option<(WindowDrag, DragPointer)>,
-    /// Drawing for a window other than the drag's source: the undock hint is the source's.
-    pub quiet: bool,
     /// Resolving a native window's bar drag over the main window: frame edge zones count.
     pub bar: bool,
-    /// A target was offered while `quiet`.
-    pub offered: Cell<bool>,
     /// Where the native window drawing now was told to move its content this frame.
     pub moved: Option<Pos2>,
     /// Resolving a window move that docks whatever `title_bar_docks` says.
@@ -115,9 +109,7 @@ impl<P> Default for Cross<P> {
             surfaces: Vec::new(),
             pointer: None,
             release: None,
-            quiet: false,
             bar: false,
-            offered: Cell::new(false),
             moved: None,
             docks: false,
         }
@@ -173,27 +165,25 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     /// Run `f` with a native window's targets and bounds in place of the main window's.
-    /// `quiet` leaves the undock hint to the drag's source window.
-    fn within<R>(&mut self, surface: &mut Surface<P>, quiet: bool, f: impl FnOnce(&mut Self) -> R) -> R {
+    fn within<R>(&mut self, surface: &mut Surface<P>, f: impl FnOnce(&mut Self) -> R) -> R {
         std::mem::swap(&mut self.targets, &mut surface.targets);
         std::mem::swap(&mut self.dock_targets, &mut surface.dock_targets);
         std::mem::swap(&mut self.frame.windows, &mut surface.windows);
         let bounds = std::mem::replace(&mut self.float_bounds, surface.bounds);
         let blockers = std::mem::take(&mut self.blockers);
-        let was = std::mem::replace(&mut self.cross.quiet, quiet);
         let result = f(self);
         std::mem::swap(&mut self.targets, &mut surface.targets);
         std::mem::swap(&mut self.dock_targets, &mut surface.dock_targets);
         std::mem::swap(&mut self.frame.windows, &mut surface.windows);
-        (self.float_bounds, self.blockers, self.cross.quiet) = (bounds, blockers, was);
+        (self.float_bounds, self.blockers) = (bounds, blockers);
         result
     }
 
     /// [`Self::within`] the native window `window` drawn this frame.
-    fn within_window<R>(&mut self, window: u64, quiet: bool, f: impl FnOnce(&mut Self) -> R) -> Option<R> {
+    fn within_window<R>(&mut self, window: u64, f: impl FnOnce(&mut Self) -> R) -> Option<R> {
         let index = self.cross.surfaces.iter().position(|s| s.window == window)?;
         let mut surface = self.cross.surfaces.swap_remove(index);
-        let result = self.within(&mut surface, quiet, f);
+        let result = self.within(&mut surface, f);
         self.cross.surfaces.push(surface);
         Some(result)
     }
@@ -214,7 +204,6 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// drag in the main window's coordinates and the input to finish it with; elsewhere it
     /// docks in another window or floats a new one on release.
     pub(super) fn cross_tab(&mut self, ctx: &Context, drag: &Drag<P>, input: DragInput) -> Option<(Drag<P>, DragInput)> {
-        self.cross.quiet = false;
         let Some(pointer) = self.cross.pointer.filter(|p| self.cross.on && p.window.is_none() && p.local.is_some()) else {
             return Some((drag.clone(), input));
         };
@@ -227,15 +216,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         match self.destination(&pointer, None)? {
             Dest::Main(local) if !floats_out => {
                 let shift = self.shift(&pointer, self.cross.main.map(|m| m.min));
-                self.cross.quiet = pointer.owner.is_some();
                 let drag = Drag { origin: drag.origin + shift, source: drag.source.translate(shift), ..drag.clone() };
                 return Some((drag, DragInput { pointer: Some(local), ..input }));
             }
-            _ if !pointer.released => self.source_hint(ctx, &pointer),
+            _ if !pointer.released => {}
             Dest::Window(window, local) if !float_only => {
                 let shift = self.shift(&pointer, self.origin_of(window));
                 let drag = Drag { origin: drag.origin + shift, source: drag.source.translate(shift), ..drag.clone() };
-                let action = self.within_window(window, true, |r| {
+                let action = self.within_window(window, |r| {
                     let proposal = r.tab_proposal(&drag.panel, local).filter(|p| !p.noop && local.distance(drag.origin) >= 2.0)?;
                     Some(Action::Move { panel: drag.panel.clone(), anchor: proposal.anchor, placement: proposal.placement })
                 });
@@ -258,7 +246,6 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 
     /// A group or column drag at the end of the main window's frame, like [`Self::cross_tab`].
     pub(super) fn cross_group(&mut self, ui: &Ui, drag: &GroupDrag<P>, input: DragInput) -> Option<(GroupDrag<P>, DragInput)> {
-        self.cross.quiet = false;
         let Some(pointer) = self.cross.pointer.filter(|p| self.cross.on && p.window.is_none() && p.local.is_some()) else {
             return Some((drag.clone(), input));
         };
@@ -274,15 +261,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         match self.destination(&pointer, None)? {
             Dest::Main(local) if !floats_out => {
                 let shift = self.shift(&pointer, self.cross.main.map(|m| m.min));
-                self.cross.quiet = pointer.owner.is_some();
                 let drag = GroupDrag { origin: drag.origin + shift, source: drag.source.translate(shift), ..drag.clone() };
                 return Some((drag, DragInput { pointer: Some(local), ..input }));
             }
-            _ if !pointer.released => self.source_hint(ctx, &pointer),
+            _ if !pointer.released => {}
             Dest::Window(window, local) if !pointer.command => {
                 let shift = self.shift(&pointer, self.origin_of(window));
                 let drag = GroupDrag { origin: drag.origin + shift, source: drag.source.translate(shift), ..drag.clone() };
-                let action = self.within_window(window, true, |r| {
+                let action = self.within_window(window, |r| {
                     let proposal = r.group_proposal(&drag, local).filter(|p| !p.noop && local.distance(drag.origin) >= 2.0)?;
                     Some(group_action(&drag, Target::At { anchor: proposal.anchor, placement: proposal.placement }))
                 });
@@ -305,7 +291,6 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// A bar drag of a native window, at the end of the main window's frame: the preview
     /// over the main window, and the release.
     pub(in crate::docking) fn finish_window_drag(&mut self, ui: &Ui) {
-        self.cross.quiet = false;
         if let Some((drag, pointer)) = self.cross.release.take() {
             self.drop_native_window(drag.window, &pointer);
             return;
@@ -313,9 +298,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let Some(pointer) = self.cross.pointer.filter(|p| p.window.is_some() && !p.released) else { return };
         let Some(drag) = pointer.window.and_then(|w| self.window_group_drag(w)) else { return };
         if let Some(Dest::Main(local)) = self.destination(&pointer, None) {
-            (self.cross.quiet, self.cross.bar, self.cross.docks) = (true, true, pointer.docks);
+            (self.cross.bar, self.cross.docks) = (true, pointer.docks);
             self.paint_group_drag(ui, &drag, local, pointer.command);
-            (self.cross.quiet, self.cross.bar, self.cross.docks) = (false, false, false);
+            (self.cross.bar, self.cross.docks) = (false, false);
         }
     }
 
@@ -330,7 +315,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 (self.cross.bar, self.cross.docks) = (false, false);
             }
             Some(Dest::Window(target, local)) => {
-                let action = self.within_window(target, true, |r| {
+                let action = self.within_window(target, |r| {
                     let proposal = r.group_proposal(&drag, local).filter(|p| !p.noop)?;
                     Some(group_action(&drag, Target::At { anchor: proposal.anchor, placement: proposal.placement }))
                 });
@@ -350,23 +335,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         Some(GroupDrag { panel, original: window.rect, gesture: GroupGesture::Window, members, origin: Pos2::ZERO, source: Rect::NOTHING })
     }
 
-    /// At the end of a native window's frame: the drop preview when the drag's pointer is
-    /// over this window, or the undock hint when this window is the drag's source and a target
-    /// elsewhere was offered last frame.
+    /// At the end of a native window's frame: the drop preview, and its undock hint, when the
+    /// drag's pointer is over this window.
     pub(super) fn paint_cross(&mut self, ui: &Ui, surface: &mut Surface<P>) {
         let ctx = ui.ctx();
         let Some(pointer) = ctx.data(|d| d.get_temp::<DragPointer>(self.id.with(POINTER))).filter(|p| !p.released && p.down) else { return };
-        let source = pointer.owner == Some(surface.window);
-        match self.destination(&pointer, Some(&*surface)) {
-            Some(Dest::Window(window, local)) if window == surface.window => {
-                let shift = self.shift(&pointer, surface.origin);
-                self.within(surface, !source, |r| r.paint_drop(ui, &pointer, local, shift));
-            }
-            _ if source && ctx.data(|d| d.get_temp::<bool>(self.id.with(OFFERED))).unwrap_or(false) => {
-                let Some(local) = pointer.local else { return };
-                self.within(surface, false, |r| r.paint_float_hint(ctx, local));
-            }
-            _ => {}
+        if let Some(Dest::Window(window, local)) = self.destination(&pointer, Some(&*surface))
+            && window == surface.window
+        {
+            let shift = self.shift(&pointer, surface.origin);
+            self.within(surface, |r| r.paint_drop(ui, &pointer, local, shift));
         }
     }
 
@@ -397,19 +375,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
     }
 
-    /// The undock hint in the main window, when it is the source and another window offered a
-    /// target this frame.
-    fn source_hint(&self, ctx: &Context, pointer: &DragPointer) {
-        if pointer.owner.is_none()
-            && self.cross.offered.get()
-            && let Some(local) = pointer.local
-        {
-            self.paint_float_hint(ctx, local);
-        }
-    }
-
-    /// End of the main window's frame: remember whether a target was offered for the source
-    /// window's hint, and forget the pointer of a finished drag.
+    /// End of the main window's frame: forget the pointer of a finished drag.
     pub(in crate::docking) fn end_cross(&mut self, ctx: &Context) {
         let id = self.id;
         let active = ctx.data(|d| {
@@ -417,12 +383,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 || d.get_temp::<GroupDrag<P>>(id.with("group-drag")).is_some()
                 || d.get_temp::<WindowDrag>(id.with("window-drag")).is_some()
         });
-        ctx.data_mut(|d| {
-            d.insert_temp(id.with(OFFERED), self.cross.offered.get());
-            if !active {
-                d.remove::<DragPointer>(id.with(POINTER));
-            }
-        });
+        if !active {
+            ctx.data_mut(|d| d.remove::<DragPointer>(id.with(POINTER)));
+        }
     }
 
     /// The drag's input as its owner saw it, at `pointer` in the coordinates of the window
