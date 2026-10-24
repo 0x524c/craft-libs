@@ -1,0 +1,100 @@
+# craft-jpeg
+
+A clean-room JPEG decoder for the Craft apps, written from ITU-T T.81 (ISO/IEC 10918-1). It
+covers the processes that common Rust JPEG decoders skip: 12-bit samples and arithmetic coding.
+No `unsafe`, no panics on malformed input, and it builds for `wasm32-unknown-unknown`. The only
+dependency is `thiserror`.
+
+```toml
+craft-jpeg = { git = "https://github.com/storytold/craft-libs", rev = "<commit>" }
+```
+
+## What it decodes
+
+| Frame | Process | Precision |
+|---|---|---|
+| SOF0, SOF1 | sequential DCT, Huffman coded | 8 or 12-bit |
+| SOF9 | extended sequential DCT, arithmetic coded | 8 or 12-bit |
+| SOF10 | progressive DCT, arithmetic coded | 8 or 12-bit |
+
+Every other frame returns `Error::Unsupported`: progressive Huffman (SOF2), lossless (SOF3,
+SOF11), hierarchical (SOF5 to SOF7, SOF13 to SOF15), other precisions, more than one frame, and
+a height given only in a DNL marker. Images have 1, 3 or 4 components with any sampling factors
+and restart intervals.
+
+## Use
+
+```rust
+use craft_jpeg::{decode, Limits, Samples};
+
+let img = decode(&bytes, &Limits::default(), adobe_transform)?;
+match img.samples {
+    Samples::U8(px) => { /* 8-bit frames */ }
+    Samples::U16(px) => { /* 12-bit frames, scaled to 16 bits */ }
+}
+if img.damaged { /* warn: part of the image is missing */ }
+```
+
+- `decode(bytes, &Limits, adobe_transform: Option<u8>) -> Result<Decoded, Error>`.
+  `adobe_transform` is the transform byte of the APP14 `Adobe` segment, when the app found one.
+- `frame(bytes) -> Option<FrameKind>` reads the headers up to the first SOFn marker and returns
+  that marker and the declared sample precision, without decoding.
+- `Error` is `Malformed`, `Unsupported` or `LimitExceeded`, each with a message.
+
+## Output
+
+`Decoded` has `width`, `height`, `components`, `samples` and `damaged`.
+
+- `samples` is interleaved by pixel, rows top to bottom: `Samples::U8` for 8-bit frames,
+  `Samples::U16` for 12-bit frames, scaled to the full 16-bit range
+  (`round(v × 65535 / 4095)`).
+- `components` is 1 (gray), 3 (RGB) or 4 (CMYK).
+  - 3 components are converted from YCbCr to RGB (JFIF, T.871), unless the Adobe transform is
+    0 or the component IDs are `R`, `G`, `B`.
+  - 4 components are ink amounts (0 = no ink). The stored values are taken to follow Adobe's
+    inverted convention (maximum = no ink) and are inverted back. With Adobe transform 2 (YCCK),
+    C, M and Y are converted from YCbCr, which yields ink amounts directly, and K is inverted.
+- `damaged` is set when entropy-coded data was cut short or corrupt after at least one MCU had
+  decoded, or the stream had more than 500 scans. The rest of that scan is left out; those
+  blocks keep what earlier scans decoded. A stream with no decodable image data is an error.
+
+## Limits
+
+`Limits { max_pixels, max_alloc }` is checked against the frame header before anything is
+allocated: `width × height` against `max_pixels`, and both the output buffer and the decoder's
+own coefficient and sample buffers against `max_alloc`. The defaults are 2³⁰ pixels and 8 GiB on
+64-bit targets, 1 GiB on 32-bit ones (wasm32). Fields are public, so an app sets one and keeps
+the other default:
+
+```rust
+let limits = craft_jpeg::Limits { max_alloc: 512 << 20, ..Default::default() };
+```
+
+## Routing
+
+An app that decodes baseline JPEG with another decoder keeps its own rule for which files come
+here, built on `frame`. PhotoCraft sends arithmetic-coded files (SOF9 to SOF11) and SOF0/SOF1
+files whose precision is not 8 bits:
+
+```rust
+fn use_craft_jpeg(bytes: &[u8]) -> bool {
+    match craft_jpeg::frame(bytes) {
+        Some(f) if (0xC9..=0xCB).contains(&f.marker) => true,
+        Some(f) if matches!(f.marker, 0xC0 | 0xC1) => f.precision != 8,
+        _ => false,
+    }
+}
+```
+
+SOF11 (lossless) falls in that range and returns `Unsupported`.
+
+## Boundaries
+
+- In scope: decoding the frames above into samples.
+- Out of scope: metadata. The decoder skips every APPn and COM segment. ICC profiles, EXIF,
+  XMP, Photoshop resources, resolution and the APP14 `Adobe` segment are the app's to read.
+  Color management and encoding also stay in the apps.
+
+## Credits
+
+The decoder was written by Michael Higgins (Higgs32584) for PhotoCraft.
