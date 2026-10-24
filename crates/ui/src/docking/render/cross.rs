@@ -81,8 +81,8 @@ enum Dest {
 pub(in crate::docking) struct Cross<P> {
     /// Viewports are native: drags cross windows.
     pub on: bool,
-    /// One of the application's windows has focus.
-    pub focused: bool,
+    /// The application's windows lost focus this pass: one had it on the last pass, none now.
+    pub focus_lost: bool,
     /// The main window's content on the desktop, where known.
     pub main: Option<Rect>,
     /// Shown native windows' desktop rects, front first.
@@ -109,7 +109,7 @@ impl<P> Default for Cross<P> {
     fn default() -> Self {
         Self {
             on: false,
-            focused: true,
+            focus_lost: false,
             main: None,
             windows: Vec::new(),
             surfaces: Vec::new(),
@@ -432,7 +432,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             pointer: at,
             down: pointer.down,
             released: pointer.released,
-            focused: self.cross.focused,
+            focused: !self.cross.focus_lost,
             gone: false,
             escape: pointer.escape,
             command: pointer.command,

@@ -3,7 +3,7 @@
 
 use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, Vec2, ViewportCommand, epaint::ClippedShape, pos2, vec2};
 
-use super::render::{DragPointer, WindowDrag, floats_shown, resize_bands, resized};
+use super::render::{APPKIT_CORNER, DragPointer, MACOS_CLOSE, WindowDrag, appkit_resize_areas, close_rects, floats_shown, resize_bands};
 use super::testing::DockDriver;
 use super::{Action, DockContent, Floating, Hit, Layout, Monitor, Node, Permissions, Placement, Target};
 use crate::layout::{SplitAxis, SplitSize};
@@ -941,6 +941,19 @@ fn escape_in_a_focused_native_window_cancels_a_main_window_drag() {
 }
 
 #[test]
+fn a_main_window_without_focus_still_drags_a_tab_into_another_group() {
+    let mut d = driver(layout(false));
+    d.host().focus = None;
+    d.settle();
+    let tab = d.hit(&Hit::Tab(1)).unwrap().center();
+    let over = d.hit(&Hit::Tab(3)).unwrap().center();
+    d.hold(tab, over);
+    assert!(super::is_dragging::<u32>(&d.ctx, d.id));
+    let out = d.release(over);
+    assert!(out.actions.iter().any(|a| matches!(a, Action::Move { panel: 1, .. })), "{:?}", out.actions);
+}
+
+#[test]
 fn focus_moving_to_a_native_window_mid_drag_keeps_the_drag() {
     let mut d = driver(two_windows());
     let viewport = d.viewport(window(&d, 7).id);
@@ -1000,10 +1013,12 @@ fn a_drag_ends_when_its_native_window_or_panel_goes() {
 }
 
 /// Press at `from` in the native window of panel 5, move the pointer by `by` on the desktop
-/// and release. Returns the window's OS rect and the driver.
-fn resize_by(from: Pos2, by: Vec2) -> (Rect, DockDriver<u32, Content>) {
+/// and release. Returns the window's OS rect, the resize the window handed to the window
+/// system, and the driver.
+fn press_and_drag(from: Pos2, by: Vec2) -> (Rect, Option<egui::ResizeDirection>, DockDriver<u32, Content>) {
     let mut d = driver(layout(true));
     let id = window(&d, 5).id;
+    let viewport = d.viewport(id);
     let press = os_window(&d, 5).map_or(Pos2::ZERO, |(rect, _)| rect.min) + from.to_vec2();
     d.window_step(id, vec![Event::PointerMoved(from), button(from, true)]);
     // The pointer is where it was moved on the desktop, wherever the window is now.
@@ -1015,53 +1030,57 @@ fn resize_by(from: Pos2, by: Vec2) -> (Rect, DockDriver<u32, Content>) {
     let pos = local(&d, by);
     d.window_step(id, vec![Event::PointerMoved(pos), button(pos, false)]);
     d.step(vec![]);
-    (os_window(&d, 5).map_or(Rect::NOTHING, |(rect, _)| rect), d)
+    let resize = d.host().commands.iter().find_map(|(v, c)| match c {
+        ViewportCommand::BeginResize(direction) if *v == viewport => Some(*direction),
+        _ => None,
+    });
+    (os_window(&d, 5).map_or(Rect::NOTHING, |(rect, _)| rect), resize, d)
 }
 
 #[test]
 fn the_bars_close_button_wins_over_the_resize_bands() {
+    use egui::ResizeDirection as D;
     let mut d = driver(layout(true));
     let id = window(&d, 5).id;
     let viewport = d.viewport(id);
-    // The × of the 240 pt wide window spans 217..235 across and the whole bar down. Its top
+    // The × of the 240 pt wide window spans 215..233 across and the whole bar down. Its top
     // right is next to the window's top-right corner, but it closes the window.
-    let out = d.window_click(id, pos2(234.0, 1.0));
+    let out = d.window_click(id, pos2(232.0, 1.0));
     assert!(out.actions.contains(&Action::CloseWindow { panel: 5 }), "{:?}", out.actions);
-    assert!(!d.host().commands.iter().any(|(v, c)| *v == viewport && matches!(c, ViewportCommand::InnerSize(_))), "not resized");
+    assert!(!d.host().commands.iter().any(|(v, c)| *v == viewport && matches!(c, ViewportCommand::BeginResize(_))), "not resized");
 
-    // Beside it, at the window's edges, the bands resize the window from (400, 130), 240 by
-    // 300, keeping the opposite edges.
-    let rect = |x0: f32, y0: f32, x1: f32, y1: f32| Rect::from_min_max(pos2(x0, y0), pos2(x1, y1));
-    let (resized, d) = resize_by(pos2(238.0, 2.0), vec2(20.0, 20.0));
-    assert_eq!(resized, rect(400.0, 150.0, 660.0, 430.0), "the top-right corner");
-    assert_eq!(window(&d, 5).native, Some([400.0, 150.0, 260.0, 280.0]), "the layout follows");
-    assert_eq!(resize_by(pos2(238.0, 15.0), vec2(20.0, 20.0)).0, rect(400.0, 130.0, 660.0, 430.0), "the right edge beside the ×");
-    assert_eq!(resize_by(pos2(120.0, 1.0), vec2(20.0, -20.0)).0, rect(400.0, 110.0, 640.0, 430.0), "the top edge above the bar");
-    assert_eq!(resize_by(pos2(2.0, 298.0), vec2(-20.0, 20.0)).0, rect(380.0, 130.0, 640.0, 450.0), "the bottom-left corner");
-    assert_eq!(resize_by(pos2(2.0, 150.0), vec2(200.0, 0.0)).0, rect(480.0, 130.0, 640.0, 430.0), "no narrower than 160");
+    // Beside it, at the window's edges, the bands hand the resize to the window system.
+    let resize = |from: Pos2| press_and_drag(from, vec2(20.0, 20.0)).1;
+    assert_eq!(resize(pos2(238.0, 2.0)), Some(D::NorthEast), "the top-right corner");
+    assert_eq!(resize(pos2(237.0, 15.0)), Some(D::NorthEast), "the corner beside the ×");
+    assert_eq!(resize(pos2(237.0, 100.0)), Some(D::East), "the right edge");
+    assert_eq!(resize(pos2(120.0, 1.0)), Some(D::North), "the top edge above the bar");
+    assert_eq!(resize(pos2(2.0, 298.0)), Some(D::SouthWest), "the bottom-left corner");
     // Inside a corner's L, the bar moves the window.
-    let (moved, _) = resize_by(pos2(10.0, 10.0), vec2(20.0, 20.0));
-    assert_eq!(moved, rect(420.0, 150.0, 660.0, 450.0));
+    let rect = |x0: f32, y0: f32, x1: f32, y1: f32| Rect::from_min_max(pos2(x0, y0), pos2(x1, y1));
+    let (moved, resize, _) = press_and_drag(pos2(10.0, 10.0), vec2(20.0, 20.0));
+    assert_eq!((moved, resize), (rect(420.0, 150.0, 660.0, 450.0), None));
 }
 
 #[test]
 fn resize_bands_are_a_few_points_deep_and_leave_out_the_bar_buttons() {
     let rect = Rect::from_min_size(Pos2::ZERO, vec2(240.0, 300.0));
-    let close = Rect::from_center_size(pos2(226.0, 9.0), vec2(18.0, 18.0));
+    let close = Rect::from_center_size(pos2(224.0, 9.0), vec2(18.0, 18.0));
     let bands = resize_bands(rect, &[close]);
     let at = |p: Pos2| bands.iter().find(|(_, band)| band.contains(p)).map(|(direction, _)| *direction);
     for (_, band) in &bands {
         assert!(!band.intersect(close).is_positive(), "{band:?} covers the ×");
-        assert!(band.width().min(band.height()) <= 4.0, "{band:?} is deeper than an edge band");
+        assert!(band.width().min(band.height()) <= 6.0, "{band:?} is deeper than an edge band");
     }
-    // Each edge resizes along its whole length, outside the ×, from 12 pt corners.
+    // Each edge resizes along its whole length, outside the ×, from 16 pt corners.
     use egui::ResizeDirection as D;
     // Which of an edge's three parts `v` is in: the first corner, the edge, the last corner.
-    let part = |v: f32, length: f32| usize::from(v >= 12.0) + usize::from(v > length - 12.0);
+    let part = |v: f32, length: f32| usize::from(v >= 16.0) + usize::from(v > length - 16.0);
     for i in 0..240 {
         let x = i as f32 + 0.5;
         let top = [D::NorthWest, D::North, D::NorthEast][part(x, 240.0)];
         assert_eq!(at(pos2(x, 0.5)), (!close.contains(pos2(x, 0.5))).then_some(top), "top at {x}");
+        assert_eq!(at(pos2(x, 5.5)), (!close.contains(pos2(x, 5.5))).then_some(top), "6 pt down at {x}");
         assert_eq!(at(pos2(x, 299.5)), Some([D::SouthWest, D::South, D::SouthEast][part(x, 240.0)]), "bottom at {x}");
     }
     for i in 0..300 {
@@ -1069,20 +1088,44 @@ fn resize_bands_are_a_few_points_deep_and_leave_out_the_bar_buttons() {
         assert_eq!(at(pos2(0.5, y)), Some([D::NorthWest, D::West, D::SouthWest][part(y, 300.0)]), "left at {y}");
         assert_eq!(at(pos2(239.5, y)), Some([D::NorthEast, D::East, D::SouthEast][part(y, 300.0)]), "right at {y}");
     }
-    assert_eq!(at(pos2(6.0, 6.0)), None, "a corner is an L along its edges");
-    assert_eq!(at(pos2(120.0, 4.5)), None, "the bar below the top band");
+    assert_eq!(at(pos2(10.0, 10.0)), None, "a corner is an L along its edges");
+    assert_eq!(at(pos2(120.0, 6.5)), None, "the bar below the top band");
 }
 
 #[test]
-fn a_manual_resize_keeps_the_opposite_edges_and_the_minimum_size() {
-    use egui::ResizeDirection as D;
-    let (start, min) = ([100.0, 50.0, 300.0, 200.0], [160.0, 100.0]);
-    // Right edge 400, bottom 250.
-    assert_eq!(resized(start, D::NorthWest, vec2(-20.0, -10.0), min), [80.0, 40.0, 320.0, 210.0]);
-    assert_eq!(resized(start, D::East, vec2(30.0, 99.0), min), [100.0, 50.0, 330.0, 200.0]);
-    assert_eq!(resized(start, D::South, vec2(30.0, -20.0), min), [100.0, 50.0, 300.0, 180.0]);
-    assert_eq!(resized(start, D::SouthWest, vec2(500.0, -500.0), min), [240.0, 50.0, 160.0, 100.0]);
-    assert_eq!(resized(start, D::NorthEast, vec2(-500.0, 500.0), min), [100.0, 150.0, 160.0, 100.0]);
+fn on_macos_the_close_glyph_sits_by_the_corner_and_its_hit_area_reaches_away_from_it() {
+    use crate::docking::chrome::{ChromeStyle, TitleBar};
+    use crate::docking::placement::BAR_HEIGHT;
+    let ctx = egui::Context::default();
+    let full = Rect::from_min_size(Pos2::ZERO, vec2(240.0, 300.0));
+    let bar = Rect::from_min_size(full.min, vec2(full.width(), BAR_HEIGHT));
+    for right_to_left in [false, true] {
+        let (hit, glyph) = close_rects(bar, MACOS_CLOSE, right_to_left);
+        // Distances from the corner the × sits by: across from the trailing edge, and down.
+        let across = |x: f32| if right_to_left { x - full.left() } else { full.right() - x };
+        let (glyph_near, glyph_far) = (across(glyph.right()).min(across(glyph.left())), across(glyph.right()).max(across(glyph.left())));
+        assert_eq!((glyph_near, glyph.top(), glyph.width(), glyph.height()), (8.0, 4.5, 9.0, 9.0), "the glyph by the corner");
+        let (hit_near, hit_far) = (across(hit.right()).min(across(hit.left())), across(hit.right()).max(across(hit.left())));
+        assert_eq!(hit_near, glyph_near, "the hit area reaches no closer to the corner than the glyph");
+        assert_eq!(hit_far, glyph_far + 10.0, "the hit area reaches away from the corner");
+        assert_eq!((hit.top(), hit.bottom()), (glyph.top(), BAR_HEIGHT), "the hit area reaches down to the bar's bottom, not below");
+        // AppKit's corner area takes the presses nearest the corner; the rest reach the ×.
+        let [top_left, top_right, ..] = appkit_resize_areas(full);
+        let corner = if right_to_left { top_left } else { top_right };
+        assert_eq!(corner.width(), APPKIT_CORNER);
+        assert!(hit_far - APPKIT_CORNER >= 10.0, "{hit:?} has too little room outside {corner:?}");
+
+        let mut shown = None;
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+            let style = ChromeStyle { right_to_left, ..ChromeStyle::from_ui(ui) };
+            let response = TitleBar::new(egui::Id::new("bar"), "Move").title("Panel").close("Close").close_at(hit, glyph).show(ui, bar, &style);
+            shown = response.close.map(|close| (close.rect, response.bar.rect));
+        });
+        output.textures_delta.clear();
+        let (close, drag) = shown.unwrap_or((Rect::NOTHING, Rect::NOTHING));
+        assert_eq!(close, hit, "the bar takes clicks for the × in its hit area");
+        assert!(!drag.intersect(hit).is_positive(), "the bar's drag area {drag:?} leaves the × alone");
+    }
 }
 
 /// [`layout`] built anew, its window with id 7 when `with_id`.

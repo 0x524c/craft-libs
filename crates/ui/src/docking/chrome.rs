@@ -180,7 +180,7 @@ impl<'a> FloatingFrame<'a> {
         let mut started = None;
         let mut responses = Vec::new();
         let limits = PanelLimits { min: self.limits.min.max(vec2(40.0, RESIZE_BAND + TITLE_HEIGHT + 20.0)).min(self.limits.max), ..self.limits };
-        let canceled = ui.input(|input| input.key_pressed(Key::Escape) || !input.focused);
+        let canceled = ui.input(|input| input.key_pressed(Key::Escape)) || crate::focus::lost(ui.ctx());
         for (name, handle, direction) in handles(rect) {
             if !super::targets::usable(handle) {
                 continue;
@@ -282,7 +282,7 @@ pub(super) fn truncated(ui: &Ui, text: WidgetText, width: f32, font: FontId) -> 
     ui.painter().layout_job(job)
 }
 
-/// A title bar: an optional title, an optional ▾ menu button and an optional ×, 10 pt
+/// A title bar: an optional title, an optional ▾ menu button and an optional ×, by default 10 pt
 /// in from the right edge, mirrored when [`ChromeStyle::right_to_left`] is set. The bar senses
 /// clicks and drags; double-clicks are the caller's.
 pub struct TitleBar<'a> {
@@ -291,6 +291,8 @@ pub struct TitleBar<'a> {
     title: Option<WidgetText>,
     menu: Option<&'a str>,
     close: Option<&'a str>,
+    /// The ×'s hit area and glyph, where the caller places them.
+    close_at: Option<(Rect, Rect)>,
     movable: bool,
 }
 
@@ -306,7 +308,7 @@ impl<'a> TitleBar<'a> {
     /// `id` is the bar's own; the buttons use `id.with("menu")` and `id.with("close")`.
     /// `move_label` names the bar for accessibility.
     pub fn new(id: Id, move_label: &'a str) -> Self {
-        Self { id, move_label, title: None, menu: None, close: None, movable: true }
+        Self { id, move_label, title: None, menu: None, close: None, close_at: None, movable: true }
     }
 
     /// Text at the leading edge, cut with '…' to fit.
@@ -324,6 +326,14 @@ impl<'a> TitleBar<'a> {
     /// Show a × button with this accessibility label.
     pub fn close(mut self, label: &'a str) -> Self {
         self.close = Some(label);
+        self
+    }
+
+    /// Place the × at `glyph`, taking clicks in `hit`: rects as drawn, already mirrored in a
+    /// right-to-left layout. By default the × is a square the bar's height, its center 10 pt
+    /// in from the trailing edge.
+    pub fn close_at(mut self, hit: Rect, glyph: Rect) -> Self {
+        self.close_at = Some((hit, glyph));
         self
     }
 
@@ -345,7 +355,10 @@ impl<'a> TitleBar<'a> {
                 r
             }
         };
-        let close_rect = self.close.map(|_| Rect::from_center_size(pos2(rect.right() - 10.0, rect.center().y), vec2(side, side)));
+        let close_rect = self.close.map(|_| match self.close_at {
+            Some((hit, _)) => mirror(hit),
+            None => Rect::from_center_size(pos2(rect.right() - 10.0, rect.center().y), vec2(side, side)),
+        });
         let menu_right = close_rect.map_or(rect.right() - 3.0, |close| close.left() - 2.0);
         let menu_rect = self.menu.map(|_| Rect::from_min_max(pos2(menu_right - side, rect.top()), pos2(menu_right, rect.bottom())));
         let buttons = menu_rect.or(close_rect).map_or(rect.right(), |r| r.left());
@@ -376,7 +389,7 @@ impl<'a> TitleBar<'a> {
         });
         let close = close_rect.zip(self.close).map(|(close_rect, label)| {
             let (response, stroke) = button(ui, close_rect, "close", label);
-            let r = Rect::from_center_size(close_rect.center(), Vec2::splat((side * 0.5).max(4.0)));
+            let r = self.close_at.map_or_else(|| Rect::from_center_size(close_rect.center(), Vec2::splat((side * 0.5).max(4.0))), |(_, glyph)| glyph);
             painter.line_segment([r.left_top(), r.right_bottom()], stroke);
             painter.line_segment([r.right_top(), r.left_bottom()], stroke);
             response
@@ -409,7 +422,7 @@ pub fn live_move(ctx: &Context, bar: &Response, rect: Rect, bounds: Rect) -> Opt
     }
     let (start, origin) = ctx.data(|data| data.get_temp::<(Rect, Pos2)>(key))?;
     let forget = || ctx.data_mut(|data| data.remove::<(Rect, Pos2)>(key));
-    if ctx.input(|input| input.key_pressed(Key::Escape) || !input.focused) {
+    if ctx.input(|input| input.key_pressed(Key::Escape)) || crate::focus::lost(ctx) {
         forget();
         return Some(MoveStep::Canceled(start));
     }

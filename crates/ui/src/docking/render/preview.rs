@@ -27,6 +27,7 @@ pub(super) struct DragInput {
     pub pointer: Option<Pos2>,
     pub down: bool,
     pub released: bool,
+    /// The window kept its focus: false on the pass it loses it (see [`crate::focus`]).
     pub focused: bool,
     /// The pointer left the window.
     pub gone: bool,
@@ -41,11 +42,12 @@ impl DragInput {
     /// This window's own input.
     fn of(ctx: &Context) -> Self {
         let command = float_only(ctx);
+        let focus_lost = crate::focus::lost(ctx);
         ctx.input(|i| Self {
             pointer: i.pointer.interact_pos().filter(|p| p.is_finite()),
             down: i.pointer.primary_down(),
             released: i.pointer.primary_released(),
-            focused: i.focused,
+            focused: !focus_lost,
             gone: !i.pointer.has_pointer(),
             escape: i.key_pressed(Key::Escape),
             command,
