@@ -36,6 +36,29 @@ Byte transfer-function samples use rounded 8-bit values; failed or non-finite ev
 leave the sample unchanged. Historical source hashes remain in each `SOURCE.json`,
 alongside local hashes and the compatibility reference.
 
+The JBIG2 segment parser caps the long-form referred-to-segment count at `u16::MAX`
+and rejects a larger claim as an invalid count before any retention-flag or
+referred-to-number bytes are consumed, so a crafted header cannot turn
+`Vec::with_capacity` into a multi-gigabyte reservation that aborts on allocation
+failure.
+
+Hostile-input bounds (CodeRabbit findings):
+
+- An xref-stream subsection must be backed by its decoded bytes: all-zero `/W` widths
+  are refused, and a declared count longer than the data is refused before any entry is
+  inserted, so a tiny stream cannot declare billions of entries.
+- Each object stream's `/N` header pairs are parsed once per document and cached beside its
+  decoded data, instead of on every compressed-object lookup.
+- An embedded JBIG2 page over 2^28 pixels is refused before the output buffer is allocated,
+  and that buffer is reserved fallibly (`Bitmap::reinitialize` allocates before touching the
+  existing bitmap, so a failed reservation leaves it intact). A `JBIG2Globals` stream with an image filter is
+  ignored, so globals cannot recurse through further globals.
+- At most 4096 graphics states, holding at most 64 MiB together, are saved; a `q` past
+  either limit is counted but not copied, and its `Q` still removes the clips added since.
+- An xref-stream `/W` type field wider than one byte is read at its full width (big-endian)
+  instead of only its first byte, and `/W[0]` over 8 bytes is refused like `/W[1]`.
+  A dash array over 256 entries strokes solid.
+
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
 equivalence. The independent color oracles, backend tests and facade contracts cover

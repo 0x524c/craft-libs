@@ -20,8 +20,8 @@ include!(concat!(env!("OUT_DIR"), "/craft_i18n.rs")); // pub static CRAFT_I18N: 
 
 pub static I18N: LazyLock<craft_i18n::I18n> = LazyLock::new(|| {
     let offered: Vec<&str> = LANGUAGES.iter().map(|l| l.code).collect(); // the app's own list
-    let (i18n, problems) = craft_i18n::I18n::new(CRAFT_I18N, &offered);
-    problems.iter().for_each(|p| log::warn!("translation catalog: {p}; that string shows in English"));
+    let (i18n, problems) = craft_i18n::I18n::new(CRAFT_I18N, &offered); // parses nothing yet
+    problems.iter().for_each(|p| log::warn!("translation catalog: {p}"));
     i18n
 });
 
@@ -62,23 +62,29 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   `strip_isolates`.
 - **Bad rows** (malformed, an unknown `@` context, a wrong plural form count, a row defined twice,
   of which the first is kept) and bad locales (`en`, `pseudo`, a code embedded twice in any case)
-  are skipped and returned by `I18n::new` for the app to log; craft-i18n's CI rejects them before
-  they ship.
+  are skipped; craft-i18n's CI rejects them before they ship. `I18n::new` parses nothing: it
+  returns the bad locales, and each locale's rows are parsed (and its bad rows logged with
+  `log::warn!`) on the first lookup that reaches it, including as a fallback. `I18n::check_all()`
+  parses every locale and returns all problems (`<locale>/<common|app>: line N: …`), for a test.
 - **Plurals:** forms are listed in CLDR order (zero, one, two, few, many, other) for the categories
   whole numbers 0 to 1000 reach, from `intl_pluralrules`; a count in any other category takes the
   last form. CLDR's `pt` is Brazilian, so `pt` uses `pt-PT`'s rules (0 is plural) and `pt-br`
   `pt`'s. `intl_pluralrules` is pinned to the version craft-i18n's checker uses, and
   `plural_form_counts` holds the same counts.
-- **Names:** a language's name comes from its shared catalog's `@id language.name` row, else its
-  code; English is "English".
-- **Right to left:** `rtl` is true for `ar`, `ckb`, `dv`, `fa`, `he`, `ps`, `sd`, `ug`, `ur` and
-  `yi`; putting text into display order is the app's job.
+- **Names:** a language's name comes from the app catalog's `@id language.name` row, else the
+  shared catalog's, else its code; English is "English".
+- **Scripts and direction:** for any language tag, `scripts` lists the ISO 15924 scripts its
+  interface text is written in (`ja` → Hani, Hira, Kana; `sr-latn` → Latn; `pa-PK` → Arab),
+  `direction` is right to left when the main script is (Arabic, Hebrew, Syriac, Thaana), and `han`
+  gives the regional forms of its Han characters for picking a CJK face: `zh-CN`/`zh-SG`/`zh-Hans` →
+  SC, `zh-TW`/`zh-US`/`zh-Hant` → TC, `zh-HK`/`zh-MO` → HK, `ja` → JP, `ko` → KR. `I18n::rtl` is
+  `direction` of the language's code; putting text into display order is the app's job.
 - **System locale:** `system_lang` matches the system's list once and caches it: on desktop Unix
   `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` and `LANG`, read raw; elsewhere `sys-locale`'s (macOS and
-  Windows preferred languages, the browser's on the web). `fr_CA.UTF-8` → `fr`, `zh-TW` →
-  `zh-hant`, `pt-PT` → `pt-br` when that is the only Portuguese, `C`/`POSIX` → English. A script
-  is never crossed: `sr_RS@latin` and `sr-Latn-RS` pick `sr-latn`, never `sr`, while `sr-Cyrl-RS`
-  picks `sr`.
+  Windows preferred languages, the browser's on the web). `fr_CA.UTF-8` → `fr`, `zh-TW` → `zh-hant`,
+  `pt-PT` → `pt-br` when that is the only Portuguese, `C`/`POSIX` → English. A script is never
+  crossed: `sr_RS@latin` and `sr-Latn-RS` pick `sr-latn`, never `sr`, while `sr-Cyrl-RS` picks `sr`.
+  A region that implies a script counts as that script: `pa-PK` picks `pa-arab`, not Gurmukhi `pa`.
 - **Pseudo locale** (`pseudo`, debug builds only, never in `languages()`): every lookup, `get`
   included, comes back as `⟦…⟧`, line by line, so text drawn without the marks never went through
   translation. `looked_up()` lists the source texts looked up so far, for an audit against a

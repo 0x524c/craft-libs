@@ -8,6 +8,11 @@ use crate::matroska::track::{AudioInfo, Color, ContentEncoding, MasteringMetadat
 
 // A malformed Matroska file may contain arbitrarily deep ChapterAtom and SimpleTag chains.
 const MAX_META_DEPTH: usize = 64;
+/// Longest header-stripping prefix accepted. It is copied in front of every frame, laced
+/// zero-length frames included, so its length multiplies what a small file can make a reader
+/// produce. Real files strip a few bytes of codec header; a longer one is treated as an
+/// unsupported compression and its frames are not reconstructed.
+const MAX_STRIPPED_HEADER: usize = 256;
 /// Largest accepted `TimestampScale` (about 4.3 s per tick). It keeps tick to nanosecond
 /// arithmetic on 64-bit timestamps within `i128`.
 const MAX_TIMESTAMP_SCALE: u64 = 1 << 32;
@@ -403,8 +408,8 @@ fn parse_video(d: &[u8]) -> VideoInfo {
             FIELD_ORDER => v.field_order = Some(u),
             STEREO_MODE => v.stereo_mode = Some(u),
             ALPHA_MODE => v.alpha_mode = u,
-            COLOR_SPACE => v.color_space = e.data.try_into().ok(),
-            COLOR => v.color = Some(parse_color(e.data)),
+            COLOUR_SPACE => v.color_space = e.data.try_into().ok(),
+            COLOUR => v.color = Some(parse_color(e.data)),
             PROJECTION => {
                 let mut p = Projection::default();
                 for x in Children::new(e.data) {
@@ -466,7 +471,7 @@ fn parse_encodings(d: &[u8]) -> Vec<ContentEncoding> {
             ContentEncoding::Encryption { scope }
         } else {
             let (algo, settings) = comp.unwrap_or((0, Vec::new()));
-            if algo == 3 {
+            if algo == 3 && settings.len() <= MAX_STRIPPED_HEADER {
                 ContentEncoding::HeaderStripping { bytes: settings, scope }
             } else {
                 ContentEncoding::Compression { algo, settings, scope }
@@ -542,14 +547,18 @@ pub(crate) fn parse_tracks(d: &[u8], timestamp_scale: u64) -> Vec<Track> {
             t.audio = Some(AudioInfo::default());
         }
         // CodecPrivate may itself be header-stripped (scope bit 2 = private data)
-        for enc in &t.encodings {
+        // Prepends in list order, built in one pass: a hostile entry can list millions.
+        let mut prefix = Vec::new();
+        for enc in t.encodings.iter().rev() {
             if let ContentEncoding::HeaderStripping { bytes, scope } = enc
                 && scope & 2 != 0
             {
-                let mut p = bytes.clone();
-                p.extend_from_slice(&t.codec_private);
-                t.codec_private = p;
+                prefix.extend_from_slice(bytes);
             }
+        }
+        if !prefix.is_empty() {
+            prefix.extend_from_slice(&t.codec_private);
+            t.codec_private = prefix;
         }
         t.codec = map_codec(&t.codec_id, &t.codec_private, t.audio.as_ref());
         out.push(t);
@@ -560,6 +569,56 @@ pub(crate) fn parse_tracks(d: &[u8], timestamp_scale: u64) -> Vec<Track> {
 #[cfg(test)]
 mod metadata_depth_tests {
     use super::*;
+    use crate::matroska::mux::{el, el_uint};
+
+    fn header_stripping(bytes: &[u8]) -> Vec<ContentEncoding> {
+        let mut comp = Vec::new();
+        el_uint(&mut comp, CONTENT_COMP_ALGO, 3);
+        el(&mut comp, CONTENT_COMP_SETTINGS, bytes);
+        let mut enc = Vec::new();
+        el(&mut enc, CONTENT_COMPRESSION, &comp);
+        let mut encs = Vec::new();
+        el(&mut encs, CONTENT_ENCODING, &enc);
+        parse_encodings(&encs)
+    }
+
+    #[test]
+    fn a_long_stripped_header_is_not_put_in_front_of_frames() {
+        let kept = header_stripping(&[7; MAX_STRIPPED_HEADER]);
+        assert!(matches!(&kept[..], [ContentEncoding::HeaderStripping { bytes, .. }] if bytes.len() == MAX_STRIPPED_HEADER));
+        let refused = header_stripping(&[7; MAX_STRIPPED_HEADER + 1]);
+        assert!(matches!(&refused[..], [ContentEncoding::Compression { algo: 3, .. }]), "{refused:?}");
+    }
+
+    fn track_with_private(private: &[u8], strips: &[(&[u8], u64)]) -> Track {
+        let mut encs = Vec::new();
+        for &(bytes, scope) in strips {
+            let mut comp = Vec::new();
+            el_uint(&mut comp, CONTENT_COMP_ALGO, 3);
+            el(&mut comp, CONTENT_COMP_SETTINGS, bytes);
+            let mut enc = Vec::new();
+            el_uint(&mut enc, CONTENT_ENCODING_SCOPE, scope);
+            el(&mut enc, CONTENT_COMPRESSION, &comp);
+            el(&mut encs, CONTENT_ENCODING, &enc);
+        }
+        let mut te = Vec::new();
+        el_uint(&mut te, TRACK_NUMBER, 1);
+        el(&mut te, CODEC_ID, b"V_TEST");
+        el(&mut te, CODEC_PRIVATE, private);
+        el(&mut te, CONTENT_ENCODINGS, &encs);
+        let mut tracks = Vec::new();
+        el(&mut tracks, TRACK_ENTRY, &te);
+        let mut parsed = parse_tracks(&tracks, 1_000_000);
+        assert_eq!(parsed.len(), 1);
+        parsed.remove(0)
+    }
+
+    #[test]
+    fn codec_private_stripped_headers_are_restored_in_reverse_order() {
+        let strips: [(&[u8], u64); 4] = [(b"first", 2), (b"", 2), (b"second", 2), (b"frame", 1)];
+        assert_eq!(track_with_private(b"private", &strips).codec_private, b"secondfirstprivate");
+        assert_eq!(track_with_private(b"private", &[(b"frame", 1)]).codec_private, b"private");
+    }
 
     #[test]
     fn deeply_nested_chapters_stop_at_depth_limit() {
