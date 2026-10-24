@@ -122,31 +122,49 @@ impl Enc {
         for _ in 0..self.stacked {
             self.emit(0xFF);
         }
+        // Trailing zero bytes are dropped, as libjpeg's encoder does; the decoder supplies
+        // zeros at the marker. A zero right after `FF` is stuffing and stays.
+        while self.out.last() == Some(&0) && self.out.len().checked_sub(2).map(|i| self.out[i]) != Some(0xFF) {
+            self.out.pop();
+        }
         self.out
     }
 }
 
+/// Arithmetic conditioning of one entropy table: DC (L, U) and AC Kx (F.1.4.4).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Cond {
+    l: u8,
+    u: u8,
+    kx: u8,
+}
+
+/// The conditioning in force without a DAC segment (B.2.4.3).
+const DEFAULT_COND: Cond = Cond { l: 0, u: 1, kx: 5 };
+
+/// Statistics per entropy table, DC prediction and context per scan component.
 struct EncScan {
-    dc: [u8; 64],
-    ac: [u8; 256],
-    ctx: usize,
-    pred: i32,
+    dc: [[u8; 64]; 4],
+    ac: [[u8; 256]; 4],
+    ctx: [usize; 4],
+    pred: [i32; 4],
+    cond: [Cond; 4],
 }
 
 impl EncScan {
-    fn new() -> Self {
-        EncScan { dc: [0; 64], ac: [0; 256], ctx: 0, pred: 0 }
+    fn new(cond: [Cond; 4]) -> Self {
+        EncScan { dc: [[0; 64]; 4], ac: [[0; 256]; 4], ctx: [0; 4], pred: [0; 4], cond }
     }
 
-    /// Encode_DC_DIFF with the default conditioning (L = 0, U = 1).
-    fn dc(&mut self, e: &mut Enc, value: i32) {
-        let diff = value - self.pred;
-        self.pred = value;
-        let st = &mut self.dc;
-        let s0 = self.ctx;
+    /// Encode_DC_DIFF of scan component `sc` with DC table `t`.
+    fn dc(&mut self, e: &mut Enc, sc: usize, t: usize, value: i32) {
+        let diff = value - self.pred[sc];
+        self.pred[sc] = value;
+        let st = &mut self.dc[t];
+        let s0 = self.ctx[sc];
         if diff == 0 {
             e.code(&mut st[s0], 0);
-            self.ctx = 0;
+            self.ctx[sc] = 0;
             return;
         }
         e.code(&mut st[s0], 1);
@@ -154,11 +172,12 @@ impl EncScan {
         e.code(&mut st[s0 + 1], sign);
         let sp = s0 + 2 + usize::from(sign);
         let sz = diff.unsigned_abs() - 1;
+        let mut m = 0u32;
         if sz == 0 {
             e.code(&mut st[sp], 0);
         } else {
             e.code(&mut st[sp], 1);
-            let mut m = 1u32;
+            m = 1;
             let mut s = 20;
             while m << 1 <= sz {
                 e.code(&mut st[s], 1);
@@ -172,13 +191,23 @@ impl EncScan {
                 bit >>= 1;
             }
         }
-        let mag = diff.unsigned_abs();
-        self.ctx = if mag <= 2 { 4 + 4 * usize::from(sign) } else { 12 + 4 * usize::from(sign) };
+        // Conditioning category as libjpeg's jcarith.c computes it, from the magnitude
+        // category `m` rather than the difference.
+        let Cond { l, u, .. } = self.cond[t];
+        self.ctx[sc] = if m < (1 << l) >> 1 {
+            0
+        } else if m > (1 << u) >> 1 {
+            12 + 4 * usize::from(sign)
+        } else {
+            4 + 4 * usize::from(sign)
+        };
     }
 
-    /// Encode_AC_coefficients over `ss..=se` of the coefficients scaled down by `al` (Kx = 5).
-    fn ac(&mut self, e: &mut Enc, blk: &[i32; 64], ss: usize, se: usize, al: u8) {
-        let st = &mut self.ac;
+    /// Encode_AC_coefficients with AC table `t` over `ss..=se` of the coefficients scaled down
+    /// by `al`.
+    fn ac(&mut self, e: &mut Enc, t: usize, blk: &[i32; 64], ss: usize, se: usize, al: u8) {
+        let kx = usize::from(self.cond[t].kx);
+        let st = &mut self.ac[t];
         let v = |k: usize| if blk[k] < 0 { -((-blk[k]) >> al) } else { blk[k] >> al };
         let last = (ss..=se).rev().find(|&k| v(k) != 0);
         let mut k = ss;
@@ -205,7 +234,7 @@ impl EncScan {
                 } else {
                     e.code(&mut st[sp], 1);
                     let mut m = 2u32;
-                    let mut s = if k <= 5 { 189 } else { 217 };
+                    let mut s = if k <= kx { 189 } else { 217 };
                     while m << 1 <= sz {
                         e.code(&mut st[s], 1);
                         m <<= 1;
@@ -223,9 +252,9 @@ impl EncScan {
         }
     }
 
-    /// Successive approximation of AC coefficients: bit `al` of each (G.1.3.3).
-    fn ac_refine(&mut self, e: &mut Enc, blk: &[i32; 64], ss: usize, se: usize, al: u8) {
-        let st = &mut self.ac;
+    /// Successive approximation of AC coefficients with table `t`: bit `al` of each (G.1.3.3).
+    fn ac_refine(&mut self, e: &mut Enc, t: usize, blk: &[i32; 64], ss: usize, se: usize, al: u8) {
+        let st = &mut self.ac[t];
         let prior = |k: usize| blk[k].unsigned_abs() >> (al + 1) != 0;
         let now = |k: usize| blk[k].unsigned_abs() >> al != 0;
         let eob_prev = (ss..=se).rev().find(|&k| prior(k)).map_or(ss, |k| k + 1);
@@ -293,51 +322,149 @@ fn segment(out: &mut Vec<u8>, marker: u8, body: &[u8]) {
     out.extend_from_slice(body);
 }
 
+/// A component of a test frame: id, sampling factors, quantization table slot, and the
+/// coefficients of its block grid padded to whole MCUs, row-major.
+struct TestComp {
+    id: u8,
+    h: usize,
+    v: usize,
+    tq: u8,
+    blocks: Vec<[i32; 64]>,
+}
+
+/// A scan of a test frame: frame component indexes, `(ss, se, ah, al)`, and segments
+/// written just before its header.
+struct TestScan {
+    comps: Vec<usize>,
+    band: (usize, usize, u8, u8),
+    before: Vec<u8>,
+}
+
+/// An arithmetic-coded frame (SOF9, or SOF10 when `progressive`). Component `ci` uses entropy
+/// tables `min(ci, 1)`, as libjpeg's defaults do; a DAC segment is written for the tables
+/// whose `cond` isn't the default, and quantization slot 0 holds all ones until a scan's
+/// `before` replaces it.
+struct TestFrame {
+    precision: u8,
+    progressive: bool,
+    width: usize,
+    height: usize,
+    comps: Vec<TestComp>,
+    cond: [Cond; 4],
+    ri: usize,
+    scans: Vec<TestScan>,
+}
+
+impl TestFrame {
+    fn encode(&self) -> Vec<u8> {
+        let mut s = vec![0xFF, 0xD8];
+        let mut dqt = vec![0u8];
+        dqt.extend([1u8; 64]);
+        segment(&mut s, 0xDB, &dqt);
+        let mut sof = vec![self.precision];
+        sof.extend((self.height as u16).to_be_bytes());
+        sof.extend((self.width as u16).to_be_bytes());
+        sof.push(self.comps.len() as u8);
+        for c in &self.comps {
+            sof.extend([c.id, (c.h << 4 | c.v) as u8, c.tq]);
+        }
+        segment(&mut s, if self.progressive { 0xCA } else { 0xC9 }, &sof);
+        let mut dac = Vec::new();
+        for (t, c) in self.cond.iter().enumerate().filter(|(_, c)| **c != DEFAULT_COND) {
+            dac.extend([t as u8, c.l | c.u << 4, 0x10 | t as u8, c.kx]);
+        }
+        if !dac.is_empty() {
+            segment(&mut s, 0xCC, &dac);
+        }
+        if self.ri > 0 {
+            segment(&mut s, 0xDD, &(self.ri as u16).to_be_bytes());
+        }
+        let hmax = self.comps.iter().map(|c| c.h).max().unwrap();
+        let vmax = self.comps.iter().map(|c| c.v).max().unwrap();
+        let mcux = self.width.div_ceil(8 * hmax);
+        let mcuy = self.height.div_ceil(8 * vmax);
+        for scan in &self.scans {
+            s.extend(&scan.before);
+            let (ss, se, ah, al) = scan.band;
+            let mut sos = vec![scan.comps.len() as u8];
+            for &ci in &scan.comps {
+                let t = ci.min(1) as u8;
+                sos.extend([self.comps[ci].id, t << 4 | t]);
+            }
+            sos.extend([ss as u8, se as u8, ah << 4 | al]);
+            segment(&mut s, 0xDA, &sos);
+            // Blocks in coding order (A.2): `(scan component, block)` for each MCU.
+            let mut mcus: Vec<Vec<(usize, &[i32; 64])>> = Vec::new();
+            if let [ci] = scan.comps[..] {
+                let c = &self.comps[ci];
+                let bw = mcux * c.h;
+                let (cw, ch) = ((self.width * c.h).div_ceil(hmax), (self.height * c.v).div_ceil(vmax));
+                for by in 0..ch.div_ceil(8) {
+                    for bx in 0..cw.div_ceil(8) {
+                        mcus.push(vec![(0, &c.blocks[by * bw + bx])]);
+                    }
+                }
+            } else {
+                for my in 0..mcuy {
+                    for mx in 0..mcux {
+                        let mut mcu = Vec::new();
+                        for (sc, &ci) in scan.comps.iter().enumerate() {
+                            let c = &self.comps[ci];
+                            for by in my * c.v..(my + 1) * c.v {
+                                for bx in mx * c.h..(mx + 1) * c.h {
+                                    mcu.push((sc, &c.blocks[by * mcux * c.h + bx]));
+                                }
+                            }
+                        }
+                        mcus.push(mcu);
+                    }
+                }
+            }
+            let mut e = Enc::new();
+            let mut st = EncScan::new(self.cond);
+            let mut rst = 0u8;
+            for (n, mcu) in mcus.iter().enumerate() {
+                if self.ri > 0 && n > 0 && n % self.ri == 0 {
+                    s.extend(std::mem::replace(&mut e, Enc::new()).finish());
+                    s.extend([0xFF, 0xD0 + rst]);
+                    rst = (rst + 1) & 7;
+                    st = EncScan::new(self.cond);
+                }
+                for &(sc, blk) in mcu {
+                    let t = scan.comps[sc].min(1);
+                    match (self.progressive, ss, ah) {
+                        (false, _, _) => {
+                            st.dc(&mut e, sc, t, blk[0]);
+                            st.ac(&mut e, t, blk, 1, 63, 0);
+                        }
+                        (true, 0, 0) => st.dc(&mut e, sc, t, blk[0] >> al),
+                        (true, 0, _) => e.code_fixed(((blk[0] >> al) & 1) as u8),
+                        (true, _, 0) => st.ac(&mut e, t, blk, ss, se, al),
+                        (true, _, _) => st.ac_refine(&mut e, t, blk, ss, se, al),
+                    }
+                }
+            }
+            s.extend(e.finish());
+        }
+        s.extend([0xFF, 0xD9]);
+        s
+    }
+}
+
 /// A gray SOF9 stream (SOF10 when there are several scans) holding `blocks` (`bw` × `bh`),
 /// with the scans `(ss, se, ah, al)` and restart interval `ri` (in MCUs).
 fn arith_stream(precision: u8, bw: usize, bh: usize, blocks: &[[i32; 64]], scans: &[(usize, usize, u8, u8)], ri: usize) -> Vec<u8> {
-    let progressive = scans.len() > 1;
-    let mut s = vec![0xFF, 0xD8];
-    let mut dqt = vec![0u8];
-    dqt.extend([1u8; 64]);
-    segment(&mut s, 0xDB, &dqt);
-    let (w, h) = ((bw * 8) as u16, (bh * 8) as u16);
-    let mut sof = vec![precision];
-    sof.extend(h.to_be_bytes());
-    sof.extend(w.to_be_bytes());
-    sof.extend([1, 1, 0x11, 0]);
-    segment(&mut s, if progressive { 0xCA } else { 0xC9 }, &sof);
-    if ri > 0 {
-        segment(&mut s, 0xDD, &(ri as u16).to_be_bytes());
+    TestFrame {
+        precision,
+        progressive: scans.len() > 1,
+        width: bw * 8,
+        height: bh * 8,
+        comps: vec![TestComp { id: 1, h: 1, v: 1, tq: 0, blocks: blocks.to_vec() }],
+        cond: [DEFAULT_COND; 4],
+        ri,
+        scans: scans.iter().map(|&band| TestScan { comps: vec![0], band, before: Vec::new() }).collect(),
     }
-    for &(ss, se, ah, al) in scans {
-        segment(&mut s, 0xDA, &[1, 1, 0x00, ss as u8, se as u8, (ah << 4) | al]);
-        let mut e = Enc::new();
-        let mut st = EncScan::new();
-        let mut rst = 0u8;
-        for (n, blk) in blocks.iter().enumerate() {
-            if ri > 0 && n > 0 && n % ri == 0 {
-                s.extend(std::mem::replace(&mut e, Enc::new()).finish());
-                s.extend([0xFF, 0xD0 + rst]);
-                rst = (rst + 1) & 7;
-                st = EncScan::new();
-            }
-            match (ss, ah) {
-                (0, 0) => {
-                    st.dc(&mut e, blk[0] >> al);
-                    if !progressive {
-                        st.ac(&mut e, blk, 1, 63, 0);
-                    }
-                }
-                (0, _) => e.code_fixed(((blk[0] >> al) & 1) as u8),
-                (_, 0) => st.ac(&mut e, blk, ss, se, al),
-                _ => st.ac_refine(&mut e, blk, ss, se, al),
-            }
-        }
-        s.extend(e.finish());
-    }
-    s.extend([0xFF, 0xD9]);
-    s
+    .encode()
 }
 
 fn decoded_blocks(stream: &[u8]) -> Vec<[i32; 64]> {
@@ -363,6 +490,37 @@ fn arithmetic_progressive_round_trips_coefficients() {
         let stream = arith_stream(8, 3, 2, &blocks, &scans, ri);
         assert_eq!(decoded_blocks(&stream), blocks, "ri={ri}");
     }
+}
+
+/// Each component dequantizes with the table in its slot at its first scan, not the one the
+/// slot holds when the stream ends.
+#[test]
+fn quantization_tables_are_latched_at_the_first_scan() {
+    // DC-only blocks: sample = DC × q₀ / 8 + 128.
+    let mut blk = [0i32; 64];
+    blk[0] = 40;
+    let dqt = |q0: u8| {
+        let mut body = vec![0u8, q0];
+        body.extend([1u8; 63]);
+        let mut seg = Vec::new();
+        segment(&mut seg, 0xDB, &body);
+        seg
+    };
+    let stream = TestFrame {
+        precision: 8,
+        progressive: false,
+        width: 16,
+        height: 16,
+        comps: b"RGB".iter().map(|&id| TestComp { id, h: 1, v: 1, tq: 0, blocks: vec![blk; 4] }).collect(),
+        cond: [DEFAULT_COND; 4],
+        ri: 0,
+        scans: [2, 4, 8].iter().enumerate().map(|(ci, &q0)| TestScan { comps: vec![ci], band: (0, 63, 0, 0), before: dqt(q0) }).collect(),
+    }
+    .encode();
+    let img = decode_default(&stream).unwrap();
+    assert!(!img.damaged);
+    let Samples::U8(px) = &img.samples else { panic!("16-bit samples") };
+    assert!(px.chunks(3).all(|p| p == [138, 148, 168]), "{:?}", &px[..3]);
 }
 
 #[test]

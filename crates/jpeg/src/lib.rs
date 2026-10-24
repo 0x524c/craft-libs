@@ -260,6 +260,10 @@ struct Component {
     bh: usize,
     /// Quantized coefficients, one block per entry, in zigzag order.
     coefs: Vec<[i32; 64]>,
+    /// Table `tq` as it was at the component's first scan. B.2.2 lets a DQT redefine the slot
+    /// once every scan of the component is done; libjpeg latches it the same way
+    /// (`latch_quant_tables`).
+    quant: Option<[u16; 64]>,
 }
 
 struct Frame {
@@ -404,7 +408,18 @@ fn parse_frame(marker: u8, seg: &[u8], limits: &Limits) -> Result<Frame, Error> 
     for (id, h, v, tq) in raw {
         let (bw, bh) = (mcux * h, mcuy * v);
         let blocks = bw.checked_mul(bh).ok_or_else(|| Error::LimitExceeded("too many blocks".into()))?;
-        comps.push(Component { id, h, v, tq, cw: (width * h).div_ceil(hmax), ch: (height * v).div_ceil(vmax), bw, bh, coefs: vec![[0; 64]; blocks] });
+        comps.push(Component {
+            id,
+            h,
+            v,
+            tq,
+            cw: (width * h).div_ceil(hmax),
+            ch: (height * v).div_ceil(vmax),
+            bw,
+            bh,
+            coefs: vec![[0; 64]; blocks],
+            quant: None,
+        });
     }
     Ok(Frame { arithmetic, progressive, precision, width, height, hmax, vmax, mcux, mcuy, comps })
 }
@@ -1023,6 +1038,13 @@ fn parse_scan(seg: &[u8], frame: &Frame) -> Result<Scan, Error> {
 
 /// Decode one scan's entropy-coded data `d`, counting the decoded MCUs in `done`.
 fn decode_scan(frame: &mut Frame, tables: &Tables, scan: &Scan, d: &[u8], done: &mut usize) -> Result<(), Error> {
+    for &(ci, _, _) in &scan.comps {
+        let comp = frame.comps.get_mut(ci).ok_or_else(|| err("bad scan component"))?;
+        if comp.quant.is_none() {
+            let q = tables.quant.get(comp.tq).copied().flatten().ok_or_else(|| err("scan uses an undefined quantization table"))?;
+            comp.quant = Some(q);
+        }
+    }
     if frame.arithmetic {
         let mode = match (frame.progressive, scan.ss, scan.ah) {
             (false, _, _) => ArithMode::Sequential,
@@ -1217,8 +1239,10 @@ fn render(frame: Frame, tables: &Tables, adobe_transform: Option<u8>) -> Result<
     let (w, h) = (frame.width, frame.height);
     let mut planes = Vec::with_capacity(frame.comps.len());
     for comp in &frame.comps {
-        let q = tables.quant.get(comp.tq).and_then(Option::as_ref).ok_or_else(|| err("component uses an undefined quantization table"))?;
-        let plane = reconstruct(comp, q, &basis, max);
+        // A component no scan reached has only zero coefficients; any defined table will do.
+        let q = comp.quant.or_else(|| tables.quant.get(comp.tq).copied().flatten());
+        let q = q.ok_or_else(|| err("component uses an undefined quantization table"))?;
+        let plane = reconstruct(comp, &q, &basis, max);
         let xs = upsample_map(w, comp.cw, comp.h, frame.hmax);
         let ys = upsample_map(h, comp.ch, comp.v, frame.vmax);
         planes.push((plane, comp.bw * 8, xs, ys));
