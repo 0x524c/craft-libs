@@ -176,6 +176,16 @@ raster tests are adapted in `tests/upstream_raster.rs` and the text contracts in
 `tests/upstream_text.rs`. (P8)'s PdfCraft test needs a Japanese substitute font and is not
 ported.
 
+Fixes from the [PdfCraft revision 0b670caf4a090e9d83a7f41a84b4cb2144a2d33e ledger](https://github.com/storytold/pdfcraft/blob/0b670caf4a090e9d83a7f41a84b4cb2144a2d33e/vendor/README.md),
+by its item ids, each marked `PdfCraft patch` in the source. hayro-syntax (24), PdfCraft
+#2400: `xref::prev_offset` reads a trailer `/Prev` written as a reference `N G R` as the
+offset that object holds when the section's own entries place it (iText's
+`indirectPrev.pdf`), and otherwise as offset N (tiff2pdf), so the earlier sections' pages
+are seen. Each section's entries are read before its `Prev` is followed; the local
+xref-stream bounds above apply to them unchanged. Tests:
+`xref::tests::prev_as_reference_reaches_the_earlier_section` and
+`xref::tests::prev_as_reference_to_an_object_holding_the_offset_reads_that_offset`.
+
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
 equivalence. The independent color oracles, backend tests and facade contracts cover
