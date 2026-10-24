@@ -3,7 +3,7 @@
 
 use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, Vec2, ViewportCommand, epaint::ClippedShape, pos2, vec2};
 
-use super::render::{APPKIT_CORNER, DragPointer, WindowDrag, appkit_resize_areas, buttons_rect, floats_shown, resize_bands};
+use super::render::{APPKIT_CORNER, DragPointer, MACOS_CLOSE, WindowDrag, appkit_resize_areas, close_rects, floats_shown, resize_bands};
 use super::testing::DockDriver;
 use super::{Action, DockContent, Floating, Hit, Layout, Monitor, Node, Permissions, Placement, Target};
 use crate::layout::{SplitAxis, SplitSize};
@@ -1093,31 +1093,38 @@ fn resize_bands_are_a_few_points_deep_and_leave_out_the_bar_buttons() {
 }
 
 #[test]
-fn on_macos_the_bars_buttons_keep_clear_of_appkits_corner_resize_areas() {
+fn on_macos_the_close_glyph_sits_by_the_corner_and_its_hit_area_reaches_away_from_it() {
     use crate::docking::chrome::{ChromeStyle, TitleBar};
+    use crate::docking::placement::BAR_HEIGHT;
     let ctx = egui::Context::default();
+    let full = Rect::from_min_size(Pos2::ZERO, vec2(240.0, 300.0));
+    let bar = Rect::from_min_size(full.min, vec2(full.width(), BAR_HEIGHT));
     for right_to_left in [false, true] {
-        let mut buttons = Vec::new();
-        let full = Rect::from_min_size(Pos2::ZERO, vec2(240.0, 300.0));
-        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
-            let style = ChromeStyle { right_to_left, ..ChromeStyle::from_ui(ui) };
-            let bar = Rect::from_min_size(full.min, vec2(full.width(), crate::docking::placement::BAR_HEIGHT));
-            let shown = TitleBar::new(egui::Id::new("bar"), "Move").title("Panel").menu("Menu").close("Close").show(
-                ui,
-                buttons_rect(bar, right_to_left, true),
-                &style,
-            );
-            buttons.extend(shown.close.iter().chain(&shown.menu).map(|r| r.rect));
-        });
-        output.textures_delta.clear();
-        assert_eq!(buttons.len(), 2);
+        let (hit, glyph) = close_rects(bar, MACOS_CLOSE, right_to_left);
+        // Distances from the corner the × sits by: across from the trailing edge, and down.
+        let across = |x: f32| if right_to_left { x - full.left() } else { full.right() - x };
+        let (glyph_near, glyph_far) = (across(glyph.right()).min(across(glyph.left())), across(glyph.right()).max(across(glyph.left())));
+        assert_eq!((glyph_near, glyph.top(), glyph.width(), glyph.height()), (8.0, 4.5, 9.0, 9.0), "the glyph by the corner");
+        let (hit_near, hit_far) = (across(hit.right()).min(across(hit.left())), across(hit.right()).max(across(hit.left())));
+        assert_eq!(hit_near, glyph_near, "the hit area reaches no closer to the corner than the glyph");
+        assert_eq!(hit_far, glyph_far + 10.0, "the hit area reaches away from the corner");
+        assert_eq!((hit.top(), hit.bottom()), (glyph.top(), BAR_HEIGHT), "the hit area reaches down to the bar's bottom, not below");
+        // AppKit's corner area takes the presses nearest the corner; the rest reach the ×.
         let [top_left, top_right, ..] = appkit_resize_areas(full);
         let corner = if right_to_left { top_left } else { top_right };
         assert_eq!(corner.width(), APPKIT_CORNER);
-        for button in buttons {
-            // The × keeps 4 pt clear across; the bar, 18 pt high, cannot keep it below.
-            assert!(corner.expand2(vec2(4.0, 0.0)).intersect(button).width() <= 0.0, "{button:?} reaches into {corner:?}");
-        }
+        assert!(hit_far - APPKIT_CORNER >= 10.0, "{hit:?} has too little room outside {corner:?}");
+
+        let mut shown = None;
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+            let style = ChromeStyle { right_to_left, ..ChromeStyle::from_ui(ui) };
+            let response = TitleBar::new(egui::Id::new("bar"), "Move").title("Panel").close("Close").close_at(hit, glyph).show(ui, bar, &style);
+            shown = response.close.map(|close| (close.rect, response.bar.rect));
+        });
+        output.textures_delta.clear();
+        let (close, drag) = shown.unwrap_or((Rect::NOTHING, Rect::NOTHING));
+        assert_eq!(close, hit, "the bar takes clicks for the × in its hit area");
+        assert!(!drag.intersect(hit).is_positive(), "the bar's drag area {drag:?} leaves the × alone");
     }
 }
 

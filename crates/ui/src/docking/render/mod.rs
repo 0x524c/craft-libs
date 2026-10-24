@@ -17,7 +17,7 @@ mod native;
 #[cfg(all(test, feature = "native-windows"))]
 pub(in crate::docking) use {
     cross::DragPointer,
-    native::{APPKIT_CORNER, WindowDrag, appkit_resize_areas, buttons_rect, floats_shown, resize_bands},
+    native::{APPKIT_CORNER, MACOS_CLOSE, WindowDrag, appkit_resize_areas, close_rects, floats_shown, resize_bands},
 };
 
 /// The viewport of the native window `window` of the dock area `area`.

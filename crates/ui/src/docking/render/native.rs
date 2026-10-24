@@ -45,8 +45,47 @@ pub(in crate::docking) const APPKIT_CORNER: f32 = 15.0;
 /// How far AppKit's edge resize area reaches into the content between the corners: a few
 /// points; most of it lies outside the window.
 const APPKIT_EDGE: f32 = 4.0;
-/// Room between AppKit's corner area and the bar's buttons.
-const CORNER_MARGIN: f32 = 4.0;
+
+/// Where the × of a native window's bar sits and where it takes clicks, in points from the
+/// window's top and trailing edges, mirrored in a right-to-left layout.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::docking) struct CloseLayout {
+    /// From the window's top edge to the top of the glyph.
+    pub glyph_top: f32,
+    /// From the window's trailing edge to the glyph's trailing side.
+    pub glyph_trailing: f32,
+    /// Width and height of the glyph.
+    pub glyph_size: f32,
+    /// How far the hit area reaches past the glyph to the left (to the right when mirrored).
+    pub hit_left: f32,
+    /// How far the hit area reaches past the glyph to the right (to the left when mirrored).
+    pub hit_right: f32,
+    /// How far the hit area reaches above the glyph.
+    pub hit_up: f32,
+    /// How far the hit area reaches below the glyph. Past the bar's bottom it takes clicks
+    /// from the tab strip under the bar.
+    pub hit_down: f32,
+}
+
+/// The × on macOS, where macOS puts the close button of its own windows: centered in the
+/// 18 pt bar, its trailing side 8 pt in. AppKit's corner resize area ([`APPKIT_CORNER`])
+/// covers its trailing half and takes presses there, so the hit area reaches away from the
+/// corner: left of the glyph, and down to the bar's bottom.
+pub(in crate::docking) const MACOS_CLOSE: CloseLayout =
+    CloseLayout { glyph_top: 4.5, glyph_trailing: 8.0, glyph_size: 9.0, hit_left: 10.0, hit_right: 0.0, hit_up: 0.0, hit_down: 4.5 };
+
+/// The × elsewhere: an 18 pt square the height of the bar, its trailing side 7 pt in so the
+/// side's resize band ([`EDGE`]) and the corner's grab run down beside it, with the glyph at
+/// its center.
+pub(in crate::docking) const OTHER_CLOSE: CloseLayout =
+    CloseLayout { glyph_top: 4.5, glyph_trailing: 11.5, glyph_size: 9.0, hit_left: 4.5, hit_right: 4.5, hit_up: 4.5, hit_down: 4.5 };
+
+/// Whether native windows outline their ×'s hit area, and on macOS AppKit's resize areas:
+/// `CRAFT_DOCK_DEBUG_CLOSE=1`, read once.
+fn debug_close() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("CRAFT_DOCK_DEBUG_CLOSE").is_ok_and(|v| v == "1"))
+}
 
 /// A drag of a native window's bar, in the context's data under the area's `"window-drag"`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -336,6 +375,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             let buttons = self.native_bar(ui, window);
             let body = Rect::from_min_max(pos2(full.left(), (full.top() + BAR_HEIGHT).min(full.bottom())), full.max);
             self.floating_body(ui, window, body, full);
+            if debug_close() {
+                debug_outlines(ui, full, &buttons);
+            }
             // An embedded fallback reads the main window's input: its close request, place,
             // keys and resizes are not this window's.
             if !matches!(class, ViewportClass::Immediate | ViewportClass::Deferred) {
@@ -430,7 +472,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let style = ChromeStyle::from_dock(self.style);
         let rect = Rect::from_min_size(full.min, vec2(full.width(), BAR_HEIGHT.min(full.height())));
         ui.painter().rect_filled(rect, 0.0, style.title_background);
-        let rect = buttons_rect(rect, style.right_to_left, OS_RESIZES);
+        let (close_hit, close_glyph) = close_rects(rect, if OS_RESIZES { MACOS_CLOSE } else { OTHER_CLOSE }, style.right_to_left);
         let movable = window.panels().all(|p| self.permissions(p).movable);
         let closable = self.style.close_button && window.panels().all(|p| self.permissions(p).closable);
         let (move_label, close_label) = (self.style.move_window_label.clone(), self.style.close_window_label.clone());
@@ -439,7 +481,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         // cover its ends and top edge, and a cursor set over them flickers with AppKit's.
         let mut bar = TitleBar::new(self.id.with(("native-bar", window.id)), &move_label).title(title).movable(movable && !OS_RESIZES);
         if closable {
-            bar = bar.close(&close_label);
+            bar = bar.close(&close_label).close_at(close_hit, close_glyph);
         }
         let response = bar.show(ui, rect, &style);
         if response.close.as_ref().is_some_and(|close| close.clicked()) {
@@ -637,14 +679,34 @@ pub(in crate::docking) fn appkit_resize_areas(rect: Rect) -> [Rect; 8] {
     ]
 }
 
-/// The part of a native window's bar `rect` its buttons are laid out in, its trailing end
-/// pulled in. Where AppKit resizes the window (`os_resizes`) the buttons keep clear of its
-/// corner area, which takes presses from the content; the bar is too short to keep them below
-/// it. Elsewhere they keep clear of the side's resize band, so the corner's grab runs down
-/// beside them.
-pub(in crate::docking) fn buttons_rect(rect: Rect, right_to_left: bool, os_resizes: bool) -> Rect {
-    let inset = if os_resizes { APPKIT_CORNER + CORNER_MARGIN } else { EDGE };
-    if right_to_left { rect.with_min_x(rect.left() + inset) } else { rect.with_max_x(rect.right() - inset) }
+/// Over a native window's content `full`: its bar's `buttons` outlined in red and, on macOS,
+/// AppKit's resize areas in orange.
+fn debug_outlines(ui: &Ui, full: Rect, buttons: &[Rect]) {
+    let stroke = |color| egui::Stroke::new(1.0, color);
+    for button in buttons {
+        ui.painter().rect_stroke(*button, 0.0, stroke(egui::Color32::RED), egui::StrokeKind::Inside);
+    }
+    if OS_RESIZES {
+        for area in appkit_resize_areas(full) {
+            ui.painter().rect_stroke(area, 0.0, stroke(egui::Color32::ORANGE), egui::StrokeKind::Inside);
+        }
+    }
+}
+
+/// The hit area and glyph of the × in a native window's bar `bar`, laid out by `layout` from
+/// the bar's top and trailing edges.
+pub(in crate::docking) fn close_rects(bar: Rect, layout: CloseLayout, right_to_left: bool) -> (Rect, Rect) {
+    let l = layout;
+    let glyph = Rect::from_min_size(pos2(bar.right() - l.glyph_trailing - l.glyph_size, bar.top() + l.glyph_top), Vec2::splat(l.glyph_size));
+    let hit = Rect::from_min_max(glyph.min - vec2(l.hit_left, l.hit_up), glyph.max + vec2(l.hit_right, l.hit_down));
+    let mirror = |r: Rect| {
+        if right_to_left {
+            Rect::from_x_y_ranges((bar.left() + bar.right() - r.right())..=(bar.left() + bar.right() - r.left()), r.y_range())
+        } else {
+            r
+        }
+    };
+    (mirror(hit), mirror(glyph))
 }
 
 /// The bands along the edges of a native window's content `rect` that resize it: an L at each
