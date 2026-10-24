@@ -67,7 +67,13 @@ fn unsupported(m: impl Into<String>) -> Error {
 
 /// Decompression-bomb guards, checked against the frame header before any image buffer is
 /// allocated.
+///
+/// ```
+/// let mut limits = craft_jpeg::Limits::default();
+/// limits.max_alloc = 512 << 20;
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Limits {
     /// Maximum `width * height`.
     pub max_pixels: u64,

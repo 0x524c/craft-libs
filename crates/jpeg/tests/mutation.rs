@@ -18,7 +18,12 @@ const INPUTS: [(&str, usize); 8] = [
 ];
 
 /// Room for the 227×149 fixtures, too little for a mutated frame header that grows them much.
-const LIMITS: Limits = Limits { max_pixels: 1 << 16, max_alloc: 1 << 20 };
+fn test_limits() -> Limits {
+    let mut limits = Limits::default();
+    limits.max_pixels = 1 << 16;
+    limits.max_alloc = 1 << 20;
+    limits
+}
 
 struct Rng(u64);
 
@@ -95,23 +100,24 @@ fn mutate(rng: &mut Rng, original: &[u8]) -> Vec<u8> {
 #[test]
 fn mutated_streams_never_panic_and_stay_within_limits() {
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+    let limits = test_limits();
     let (mut ok, mut errors) = (0, 0);
     for (name, cases) in INPUTS {
         let path = format!("{}/{name}", env!("CARGO_MANIFEST_DIR"));
         let original = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
-        assert!(decode(&original, &LIMITS, None).is_ok(), "{name} must decode within the test limits");
+        assert!(decode(&original, &limits, None).is_ok(), "{name} must decode within the test limits");
         for case in 0..cases {
             let bytes = mutate(&mut rng, &original);
             let _ = frame(&bytes);
-            match decode(&bytes, &LIMITS, None) {
+            match decode(&bytes, &limits, None) {
                 Ok(img) => {
                     let pixels = u64::from(img.width) * u64::from(img.height);
                     let (len, width) = match &img.samples {
                         Samples::U8(v) => (v.len() as u64, 1),
                         Samples::U16(v) => (v.len() as u64, 2),
                     };
-                    assert!(pixels <= LIMITS.max_pixels, "{name} case {case}: {pixels} pixels");
-                    assert!(len * width <= LIMITS.max_alloc, "{name} case {case}: {} bytes", len * width);
+                    assert!(pixels <= limits.max_pixels, "{name} case {case}: {pixels} pixels");
+                    assert!(len * width <= limits.max_alloc, "{name} case {case}: {} bytes", len * width);
                     assert_eq!(len, pixels * u64::from(img.components), "{name} case {case}");
                     ok += 1;
                 }

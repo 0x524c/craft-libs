@@ -64,14 +64,15 @@ if img.damaged { /* warn: part of the image is missing */ }
 
 ## Limits
 
-`Limits { max_pixels, max_alloc }` is checked against the frame header before anything is
-allocated: `width × height` against `max_pixels`, and the output buffer plus the decoder's own
-coefficient and sample buffers, together, against `max_alloc`. The defaults are 2³⁰ pixels and 8 GiB on
-64-bit targets, 1 GiB on 32-bit ones (wasm32). Fields are public, so an app sets one and keeps
-the other default:
+`Limits` (fields `max_pixels`, `max_alloc`) is checked against the frame header before anything
+is allocated: `width × height` against `max_pixels`, and the output buffer plus the decoder's
+own coefficient and sample buffers, together, against `max_alloc`. The defaults are 2³⁰ pixels
+and 8 GiB on 64-bit targets, 1 GiB on 32-bit ones (wasm32). The struct is `#[non_exhaustive]`:
+start from the defaults and set the fields you change:
 
 ```rust
-let limits = craft_jpeg::Limits { max_alloc: 512 << 20, ..Default::default() };
+let mut limits = craft_jpeg::Limits::default();
+limits.max_alloc = 512 << 20;
 ```
 
 A file of under a hundred bytes can declare a frame that fills the default limits, and
