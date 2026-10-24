@@ -1,6 +1,6 @@
 [package]
 name = "craft-i18n"
-description = "Translations for the Craft apps: the embedded craft-i18n catalogs, lookup with fallback, plurals, language names and the system locale."
+description = "Translations for the Craft apps: the embedded craft-i18n catalogs, lookup with fallback, plurals, language names, the system locale, search folding and locale sorting."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,6 +12,15 @@ intl_pluralrules = "=7.0.2"
 unic-langid = "0.9"
 log = "0.4"
 sys-locale = "0.3"
+icu_normalizer = "~2.3"
+icu_properties = "~2.3"
+# Generated data fits one ICU4X minor version; data/generate-collation.sh names its datagen.
+icu_collator = { version = "~2.3.1", default-features = false, features = ["serde"], optional = true }
+icu_provider = { version = "~2.3", features = ["serde"], optional = true }
+icu_provider_blob = { version = "~2.3", features = ["alloc"], optional = true }
+icu_provider_adapters = { version = "~2.3", optional = true }
+icu_locale_core = { version = "2.3", optional = true }
+icu_locale_fallback = { version = "~2.3", features = ["compiled_data"], optional = true }
 unicode-bidi = "0.3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -24,6 +33,17 @@ windows-registry = "0.6"
 # The current locale (Region::system); already in the apps' Cargo.lock through eframe.
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSDateFormatter", "NSFormatter", "NSLocale", "NSString"] }
+
+[features]
+# Locale sorting (`collate`), with ICU4X collation data for the suite's locales embedded.
+collate = [
+  "dep:icu_collator",
+  "dep:icu_locale_core",
+  "dep:icu_locale_fallback",
+  "dep:icu_provider",
+  "dep:icu_provider_adapters",
+  "dep:icu_provider_blob",
+]
 
 [lints]
 workspace = true

@@ -6,6 +6,9 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod catalog;
+#[cfg(feature = "collate")]
+mod collate;
+mod fold;
 mod region;
 mod scripts;
 mod size;
@@ -17,6 +20,9 @@ use intl_pluralrules::{PluralCategory, PluralRuleType, PluralRules};
 use unic_langid::LanguageIdentifier;
 use unicode_bidi::{BidiClass, bidi_class};
 
+#[cfg(feature = "collate")]
+pub use collate::Collator;
+pub use fold::{Folded, Folder};
 pub use region::{HourCycle, Measurement, Paper, Region};
 pub use scripts::{Direction, Han, Script, base_direction, direction, han, scripts};
 pub use size::{FileSize, SizeUnit};
