@@ -35,7 +35,9 @@ pub struct Group<P> {
     /// Only the tab strip shows. `height` is kept for when the group expands again.
     #[cfg_attr(feature = "serde", serde(default))]
     pub minimized: bool,
-    /// Preferred height in points; `None` shares the free height of the column or stack.
+    /// Preferred height in points, set when the user resizes the group; `None` shares the free
+    /// height of the column or stack, or in a dock column takes
+    /// [`DockContent::dock_heights`](crate::docking::DockContent::dock_heights).
     #[cfg_attr(feature = "serde", serde(default))]
     pub height: Option<f32>,
 }

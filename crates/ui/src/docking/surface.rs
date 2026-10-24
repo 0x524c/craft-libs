@@ -464,6 +464,43 @@ impl PanelLimits {
     }
 }
 
+/// Body heights a panel asks for in a dock column while the user has not resized its group
+/// (`Group::height` is `None`). Like [`PanelLimits`] they exclude the tab strip. A group takes
+/// the largest of each among its panels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct DockHeights {
+    /// The height the group gets when the column has room.
+    pub default: f32,
+    /// The height it gives way down to, so the group that fills the column keeps its `fill`.
+    pub compact: f32,
+    /// The height it asks for when it fills the column: groups at their default shrink towards
+    /// `compact` before it gets less.
+    pub fill: f32,
+}
+
+impl DockHeights {
+    /// A `default` height that does not give way (`compact` is `default`) and, filling the
+    /// column, asks for no more than its minimum (`fill` is 0).
+    pub fn new(default: f32) -> Self {
+        Self { default, compact: default, fill: 0.0 }
+    }
+
+    pub fn compact(mut self, compact: f32) -> Self {
+        self.compact = compact;
+        self
+    }
+
+    pub fn fill(mut self, fill: f32) -> Self {
+        self.fill = fill;
+        self
+    }
+
+    pub(super) fn valid(self) -> bool {
+        [self.default, self.compact, self.fill].iter().all(|h| h.is_finite() && *h >= 0.0 && *h <= 1_000_000.0)
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct Drag<P> {
     pub(super) panel: P,
@@ -556,6 +593,17 @@ pub trait DockContent<P> {
     }
     fn limits(&self, _panel: &P) -> PanelLimits {
         PanelLimits::default()
+    }
+    /// How the panel's group sizes itself in a dock column until the user resizes it. Groups
+    /// with a [`DockHeights::fill`] above 0 share the column's free height. `None` (the
+    /// default) shares it with the other groups that have none when no group asks for a fill,
+    /// and takes the group's minimum when one does.
+    /// Groups at their [`DockHeights::default`] give way down to their `compact` height, the one
+    /// nearest the filler first, so the group that fills the column gets its `fill` height; when
+    /// the column is still too short,
+    /// every group gives way down to its minimum. A height the user set is kept.
+    fn dock_heights(&self, _panel: &P) -> Option<DockHeights> {
+        None
     }
     /// Preferred floating size, independent of the current dock geometry: the width of a
     /// floated panel and the most height it takes. A floated panel or group, and a flyout, fit
@@ -650,6 +698,9 @@ impl<P, C: DockContent<P> + ?Sized> DockContent<P> for Overrides<'_, P, C> {
     }
     fn limits(&self, panel: &P) -> PanelLimits {
         (self.limits)(panel)
+    }
+    fn dock_heights(&self, panel: &P) -> Option<DockHeights> {
+        self.inner.dock_heights(panel)
     }
     fn floating_size(&self, panel: &P) -> Option<Vec2> {
         self.inner.floating_size(panel)

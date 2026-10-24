@@ -34,7 +34,7 @@ pub(in crate::docking) use iconic::Iconic;
 pub use iconic::{close_flyout, flyout, open_flyout};
 
 #[cfg(test)]
-pub(in crate::docking) use dock::fit_widths;
+pub(in crate::docking) use dock::{GroupSize, fit_widths, group_heights};
 pub(in crate::docking) use floating::RESIZE_HANDLES;
 mod group;
 mod preview;

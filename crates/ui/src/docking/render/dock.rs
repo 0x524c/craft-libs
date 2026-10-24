@@ -10,7 +10,7 @@ use egui::{Context, Key, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, p
 
 use super::{GroupKind, Renderer, RowItem, row_drag, row_range};
 use crate::docking::{
-    Action, Column, DockEvent, DockStyle, Group, GroupDrag, GroupGesture, Node, Placement, Side, Target,
+    Action, Column, DockEvent, DockHeights, DockStyle, Group, GroupDrag, GroupGesture, Node, Placement, Side, Target,
     dock_model::Unit,
     targets::{DockDrop, DockTarget, column_edge, horizontal_line, resolve_dock, usable, vertical_line},
 };
@@ -70,49 +70,106 @@ pub(in crate::docking) fn column_width<P>(column: &Column<P>, style: &DockStyle)
     if column.iconic { column.iconic_width.unwrap_or(style.iconic_width).clamp(style.iconic_width, style.iconic_max_width) } else { column.width }
 }
 
-/// Heights of stacked groups in a column body `room` high. Each entry is (minimized, saved
-/// height, minimum). Minimized groups take `strip`, groups with a saved height keep it, and the
-/// rest share what is left; when every open group has a height, the last one takes the rest.
-/// Saved heights shrink towards their minimums before the column overflows and scrolls.
-pub(in crate::docking) fn group_heights(groups: &[(bool, Option<f32>, f32)], strip: f32, room: f32) -> Vec<f32> {
-    let open: Vec<usize> = (0..groups.len()).filter(|i| groups.get(*i).is_some_and(|g| !g.0)).collect();
-    let mut shared: Vec<usize> = open.iter().copied().filter(|i| groups.get(*i).is_some_and(|g| g.1.is_none_or(|h| !h.is_finite()))).collect();
+/// A group of a column, as [`group_heights`] sizes it. Heights include the tab strip.
+#[derive(Clone, Copy, Debug, Default)]
+pub(in crate::docking) struct GroupSize {
+    pub(in crate::docking) minimized: bool,
+    /// `Group::height`: set by the user; `None` or not finite when never resized.
+    pub(in crate::docking) saved: Option<f32>,
+    pub(in crate::docking) min: f32,
+    /// The content's [`DockHeights`](crate::docking::DockHeights), the strip added (to a
+    /// `fill` above 0 only, so 0 still means the group does not ask to fill).
+    pub(in crate::docking) content: Option<DockHeights>,
+}
+
+/// Heights of stacked groups in a column body `room` high. Minimized groups take `strip`,
+/// groups with a saved height keep it, and groups the user never resized whose content asks
+/// for a fill height share what is left. Without those, the groups without content heights
+/// share it, and when every open group has a height, the last one takes the rest. Other
+/// groups take their content's default height, or their minimum. Default heights shrink towards their compact heights until the
+/// filling groups get their content's fill height, then every height shrinks towards its
+/// minimum before the column overflows and scrolls. Default heights give way nearest the
+/// filling groups first; saved and default heights then shrink in proportion to their room.
+pub(in crate::docking) fn group_heights(groups: &[GroupSize], strip: f32, room: f32) -> Vec<f32> {
+    let saved = |g: &GroupSize| g.saved.filter(|h| h.is_finite());
+    let open: Vec<usize> = (0..groups.len()).filter(|i| groups.get(*i).is_some_and(|g| !g.minimized)).collect();
+    let unsaved = |i: &usize, test: fn(Option<DockHeights>) -> bool| groups.get(*i).is_some_and(|g| saved(g).is_none() && test(g.content));
+    let mut shared: Vec<usize> = open.iter().copied().filter(|i| unsaved(i, |c| c.is_some_and(|c| c.fill > 0.0))).collect();
+    if shared.is_empty() {
+        shared = open.iter().copied().filter(|i| unsaved(i, |c| c.is_none())).collect();
+    }
     if shared.is_empty() {
         shared.extend(open.last());
     }
+    let sized: Vec<usize> = open.iter().copied().filter(|i| !shared.contains(i)).collect();
+    let mut defaulted: Vec<usize> = sized.iter().copied().filter(|i| groups.get(*i).is_some_and(|g| saved(g).is_none())).collect();
     let mut heights: Vec<f32> = groups
         .iter()
         .enumerate()
-        .map(|(i, (minimized, height, min))| {
-            if *minimized {
+        .map(|(i, g)| {
+            if g.minimized {
                 strip
             } else if shared.contains(&i) {
                 0.0
             } else {
-                height.unwrap_or(*min).max(*min)
+                saved(g).or(g.content.map(|c| c.default)).unwrap_or(g.min).max(g.min)
             }
         })
         .collect();
-    let mins: Vec<f32> = groups.iter().map(|g| if g.0 { strip } else { g.2 }).collect();
-    let shared_min: f32 = shared.iter().filter_map(|i| mins.get(*i)).sum();
-    let deficit = heights.iter().sum::<f32>() + shared_min - room;
-    let slack: f32 = open.iter().filter(|i| !shared.contains(i)).filter_map(|i| Some(heights.get(*i)? - mins.get(*i)?)).sum();
-    if deficit > 0.0 && slack > 0.0 {
-        let take = deficit.min(slack) / slack;
-        for i in open.iter().filter(|i| !shared.contains(i)) {
-            if let (Some(height), Some(min)) = (heights.get_mut(*i), mins.get(*i)) {
-                *height -= (*height - min) * take;
-            }
+    let mins: Vec<f32> = groups.iter().map(|g| if g.minimized { strip } else { g.min }).collect();
+    let compacts: Vec<f32> = groups.iter().zip(&mins).map(|(g, min)| g.content.map_or(*min, |c| c.compact).max(*min)).collect();
+    let fill: f32 = shared.iter().filter_map(|i| groups.get(*i)).map(|g| g.content.map_or(g.min, |c| c.fill).max(g.min)).sum();
+    // Nearest the filling groups first: one group gives way to its compact height before the next.
+    defaulted.sort_by_key(|i| shared.iter().map(|s| s.abs_diff(*i)).min());
+    let mut deficit = heights.iter().sum::<f32>() + fill - room;
+    for i in defaulted {
+        if deficit <= 0.0 {
+            break;
+        }
+        if let (Some(height), Some(floor)) = (heights.get_mut(i), compacts.get(i)) {
+            let give = (*height - floor).clamp(0.0, deficit);
+            *height -= give;
+            deficit -= give;
         }
     }
+    let shared_min: f32 = shared.iter().filter_map(|i| mins.get(*i)).sum();
+    give_way(&mut heights, &sized, &mins, shared_min - room);
     let free = (room - heights.iter().sum::<f32>()).max(0.0);
-    let share = free / shared.len().max(1) as f32;
+    // The shared groups split what is left evenly, each at least its minimum: groups whose
+    // minimum is above the even share take their minimum and the rest split the remainder.
+    let mut floors: Vec<f32> = shared.iter().filter_map(|i| mins.get(*i).copied()).collect();
+    floors.sort_by(|a, b| b.total_cmp(a));
+    let (mut rest, mut count) = (free, floors.len());
+    for floor in floors {
+        if count > 1 && floor > rest / count as f32 {
+            rest -= floor;
+            count -= 1;
+        } else {
+            break;
+        }
+    }
+    let share = rest / count.max(1) as f32;
     for i in &shared {
         if let (Some(height), Some(min)) = (heights.get_mut(*i), mins.get(*i)) {
             *height = share.max(*min);
         }
     }
     heights
+}
+
+/// Shrink the `which` heights in proportion towards their `floors` until the column's heights
+/// plus `extra` fit, or every one is at its floor.
+fn give_way(heights: &mut [f32], which: &[usize], floors: &[f32], extra: f32) {
+    let deficit = heights.iter().sum::<f32>() + extra;
+    let slack: f32 = which.iter().filter_map(|i| Some((heights.get(*i)? - floors.get(*i)?).max(0.0))).sum();
+    if deficit > 0.0 && slack > 0.0 {
+        let take = deficit.min(slack) / slack;
+        for i in which {
+            if let (Some(height), Some(floor)) = (heights.get_mut(*i), floors.get(*i)) {
+                *height -= (*height - floor).max(0.0) * take;
+            }
+        }
+    }
 }
 
 /// Column widths that fit `room`. Each entry is (width, floor); a column with a floor shrinks
@@ -274,6 +331,21 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         self.style.tab_height + body
     }
 
+    /// The largest of each of the group's panels' [`DockHeights`], the tab strip added.
+    fn dock_heights(&self, group: &Group<P>) -> Option<DockHeights> {
+        let strip = self.style.tab_height;
+        group
+            .panels
+            .iter()
+            .filter_map(|p| self.content.dock_heights(p).filter(|h| h.valid()))
+            .reduce(|a, b| DockHeights { default: a.default.max(b.default), compact: a.compact.max(b.compact), fill: a.fill.max(b.fill) })
+            .map(|h| DockHeights {
+                default: h.default + strip,
+                compact: h.compact.min(h.default) + strip,
+                fill: if h.fill > 0.0 { h.fill + strip } else { 0.0 },
+            })
+    }
+
     fn column(&mut self, ui: &mut Ui, column: &Column<P>, first: &P, rect: Rect, edge: Edge) {
         if !usable(rect) {
             return;
@@ -289,7 +361,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             ui.painter().rect_stroke(rect, 0.0, self.style.border, StrokeKind::Inside);
             return;
         }
-        let sizes: Vec<_> = column.groups.iter().map(|g| (g.minimized, g.height, self.group_min(g))).collect();
+        let sizes: Vec<_> = column
+            .groups
+            .iter()
+            .map(|g| GroupSize { minimized: g.minimized, saved: g.height, min: self.group_min(g), content: self.dock_heights(g) })
+            .collect();
         let heights = group_heights(&sizes, self.style.tab_height, body.height());
         let total: f32 = heights.iter().sum();
         let start = self.targets.len();
