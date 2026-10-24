@@ -11,6 +11,7 @@ use writeable::{Part, PartsWrite, Writeable};
 
 use crate::Region;
 use crate::data::{self, PERCENT};
+use crate::number::Marks;
 
 /// Which digits numbers are written in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -33,6 +34,8 @@ pub struct Format {
     group: Option<String>,
     point: Option<String>,
     percent: (&'static str, &'static str),
+    /// The marks [`Format::parse`] reads.
+    pub(crate) marks: Marks,
 }
 
 impl Format {
@@ -44,7 +47,7 @@ impl Format {
             locale.extensions.unicode.keywords.set(key!("nu"), value!("latn"));
         }
         let decimal = data::provider().and_then(|p| DecimalFormatter::try_new_with_buffer_provider(p, (&locale).into(), Default::default()).ok());
-        let mut format = Format { decimal, group: None, point: None, percent: ("", "%") };
+        let mut format = Format { decimal, group: None, point: None, percent: ("", "%"), marks: Marks::default() };
         // The locale's own separators and digits, read from a number that shows them all.
         let probe = format.parts(&Decimal::try_from_str("-1234567.5").unwrap_or_default());
         let latin = probe.integer.starts_with(|c: char| c.is_ascii_digit());
@@ -65,6 +68,15 @@ impl Format {
             }
         }
         format.percent = percent_affixes(&region.numbers, latin);
+        let point = format.point.clone().unwrap_or(probe.point);
+        let group = format.group.clone().unwrap_or(probe.group);
+        // Latin digits typed into an Arabic-Indic format take the locale's Latin marks.
+        let comma = match (latin, digits) {
+            (true, _) => point == "," || group == ".",
+            (false, Digits::Locale) => !Format::new(region, Digits::Latin).marks.point,
+            (false, Digits::Latin) => false,
+        };
+        format.marks = Marks::new(&point, &group, !comma);
         format
     }
 

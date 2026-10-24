@@ -82,6 +82,16 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   gives the regional forms of its Han characters for picking a CJK face: `zh-CN`/`zh-SG`/`zh-Hans` →
   SC, `zh-TW`/`zh-US`/`zh-Hant` → TC, `zh-HK`/`zh-MO` → HK, `ja` → JP, `ko` → KR. `I18n::rtl` is
   `direction` of the language's code; putting text into display order is the app's job.
+- **Reading numbers:** `Format::parse(text)` reads what the format writes (its digits, decimal
+  and grouping separators, the system's included) and what people type or paste: any Unicode
+  decimal digits (ASCII, Arabic-Indic, Persian, Devanagari, Bengali, Thai, full-width, …) from one
+  set; `٫` as a decimal mark everywhere; grouping by the locale's other mark of `.` and `,`, spaces
+  (NBSP, narrow NBSP), `'`, `’` or `٬`, in threes or the Indian 2-2-3; a leading `-`, `−` or `+`;
+  bidi marks ignored. A lone `.` in a comma locale is decimal when it can't be grouping (`1.5`,
+  `0.250`, `1234.5`), while `1.234` stays 1234 in German; the same holds for `,` in a point
+  locale. Percent signs and units (`50 %`, `12 px`) are not read: strip them first. Other input
+  that doesn't fit is an error, never a guess. `parse_number(text, locale)` is the same for
+  `Format::from_tag(locale)`.
 - **System locale:** `system_lang` matches the system's list once and caches it: on desktop Unix
   `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` and `LANG`, read raw; elsewhere `sys-locale`'s (macOS and
   Windows preferred languages, the browser's on the web). `fr_CA.UTF-8` → `fr`, `zh-TW` → `zh-hant`,
