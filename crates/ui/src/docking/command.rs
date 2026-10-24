@@ -501,7 +501,8 @@ impl<P: Clone + Eq + Hash> DockCommand<P> {
 
     /// Apply the command to `workspace`, all or nothing, and return the panels it closed so
     /// the application can release their state. Showing a hidden panel restores its last
-    /// location; Lock sets [`Workspace::locked`]. Application-owned commands
+    /// location, and a panel never laid out opens as [`Action::Open`] without an anchor does
+    /// ([`Workspace::set_visible`]); Lock sets [`Workspace::locked`]. Application-owned commands
     /// ([`Self::is_app_owned`]) return [`DockError::NotAllowed`] and change nothing.
     /// `space` is where `window.panel.float` floats, as for [`Self::to_actions`].
     pub fn apply(

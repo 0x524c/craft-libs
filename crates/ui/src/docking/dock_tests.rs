@@ -616,6 +616,48 @@ fn screen_reader_values_follow_the_column_width_on_either_edge() {
     }
 }
 
+#[test]
+fn an_unanchored_open_prefers_the_end_dock_and_an_edge_frame_takes_a_quarter() {
+    let start = Node::Dock { side: Side::Start, columns: vec![Column::new(vec![group(&[1])], 240.0)] };
+    let end = docked(Side::End, &[&[&[2]]]).root.unwrap();
+    let mut layout = Layout {
+        root: Some(Node::Split { axis: SplitAxis::Horizontal, size: SplitSize::FixedFirst(240.0), first: Box::new(start), second: Box::new(end) }),
+        floating: Vec::new(),
+    };
+    layout.apply(Action::Open { panel: 9, anchor: None }).unwrap();
+    assert_eq!(columns(&layout, Side::End), vec![vec![vec![2, 9]]]);
+    assert_eq!(columns(&layout, Side::Start), vec![vec![vec![1]]]);
+    // A minimized group and an iconic column are passed over: the panel would not show there.
+    let start = Node::Dock { side: Side::Start, columns: vec![Column::new(vec![group(&[1])], 240.0)] };
+    let mut end = docked(Side::End, &[&[&[2]]]).root.unwrap();
+    if let Node::Split { second, .. } = &mut end
+        && let Node::Dock { columns, .. } = second.as_mut()
+    {
+        columns[0].groups[0].minimized = true;
+    }
+    let mut layout = Layout {
+        root: Some(Node::Split { axis: SplitAxis::Horizontal, size: SplitSize::FixedFirst(240.0), first: Box::new(start), second: Box::new(end) }),
+        floating: Vec::new(),
+    };
+    let mut iconic = layout.clone();
+    layout.apply(Action::Open { panel: 9, anchor: None }).unwrap();
+    assert_eq!(columns(&layout, Side::Start), vec![vec![vec![1, 9]]]);
+    if let Some(Node::Split { first, .. }) = &mut iconic.root
+        && let Node::Dock { columns, .. } = first.as_mut()
+    {
+        columns[0].iconic = true;
+    }
+    iconic.apply(Action::Open { panel: 9, anchor: None }).unwrap();
+    assert!(matches!(iconic.place(&9), Some(dock_model::Place::Node(_))), "{iconic:?}");
+
+    // No dock: a frame at the right edge, a quarter of the width.
+    let mut layout = Layout { root: Some(Node::Tabs { panels: vec![0], active: 0 }), floating: Vec::new() };
+    layout.apply(Action::Open { panel: 9, anchor: None }).unwrap();
+    let Some(Node::Split { axis: SplitAxis::Horizontal, size, second, .. }) = &layout.root else { panic!("{layout:?}") };
+    assert_eq!(*size, SplitSize::Ratio(0.75));
+    assert_eq!(**second, Node::Tabs { panels: vec![9], active: 0 });
+}
+
 /// Panels 1-3 as a creative app's Color, Properties and Layers: Layers fills the column and asks
 /// for room for about ten rows.
 struct Creative;

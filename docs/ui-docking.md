@@ -72,6 +72,10 @@ layout.apply(Action::Move {
 
 - `Move`, `MovePanel`, `Float` and `Close` act on one panel. `MoveGroup`, `MoveColumn` and
   `MoveWindow` move a group, a dock column or a floating window, named by any panel in it.
+- `Open` reveals an absent panel as the last tab of its `anchor`'s group. Without an anchor it
+  becomes the root of an empty layout, else joins the first dock group that accepts tabs and is
+  shown, not minimized or in an iconic column (the end-side dock's first), else gets a new frame a quarter wide at the right edge of the docked
+  area. `OpenAt` takes any placement.
 - A `Target` is `At { anchor, placement }`, `Float { rect }` or `NewDock { side }`.
 - A `Placement` is a tab position, a split zone, a new group above or below (with an optional
   preferred `height`), a new column, or a new frame on an outer edge.
@@ -109,7 +113,7 @@ an optional saved arrangement for Reset, and `locked`.
 | Method | Does |
 |---|---|
 | `apply`, `apply_all` | Apply actions all or none, with the app's permissions. Closed panels are recorded in `hidden`. While `locked`, moving, floating and closing are refused; `SetNative`, which records the OS windows, still applies. |
-| `set_visible(panel, visible, fallback, permissions)` | Hide a panel that may close, or show it at its recorded place, else beside `fallback`. |
+| `set_visible(panel, visible, fallback, permissions)` | Hide a panel that may close, or show it at its recorded place, else as `Open` beside `fallback`, or where `Open` without an anchor puts it. |
 | `reconcile(registered, permissions, default)` | Fit a loaded workspace to the panels the app has now. Unknown panels move to `hidden`, so they come back when registered again. A registered panel that cannot close, such as the canvas, is always shown. |
 | `reset(default)` | Return to the saved arrangement, or to `default` for a built-in workspace. |
 | `validate` | Check a loaded workspace before use. |
@@ -316,6 +320,8 @@ let closed = command.apply(&mut app.workspace, style.right_to_left, &space, |pan
   a new dock; when it already is that dock's last column, the command does nothing.
 - `window.panel.dock` with `left`, `right`, `top` or `bottom` and no `anchor` or `side` makes a
   new frame on that outer edge (`Placement::Edge`). A hidden panel is shown first.
+- Showing a panel (`activate`, `dock` without a destination, `ui.dock` `open`) restores a hidden
+  panel's place; a panel never laid out opens as `Open` without an anchor does.
 - `window.panel.float` without a rect floats what it moves at the size a drag floats it at (see
   Floating size). It goes
   inside the dock area, 24 points from its top-left corner, so it stays clear of the menu bar.

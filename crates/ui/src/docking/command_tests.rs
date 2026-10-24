@@ -420,3 +420,27 @@ fn dock_to_the_side_a_panel_already_leads_the_last_column_of() {
     // The whole column already is the last one: nothing to do.
     assert_eq!(actions(json!({"command": "window.panel.dock", "panel": "layers", "column": true, "side": "Start"})), vec![]);
 }
+
+#[test]
+fn showing_a_panel_never_laid_out_opens_it_in_the_first_dock_group_or_at_an_edge() {
+    // "brushes" is in neither the layout nor `hidden`.
+    for params in [
+        json!({"command": "window.panel.activate", "panel": "brushes"}),
+        json!({"command": "window.panel.dock", "panel": "brushes"}),
+        json!({"command": "ui.dock", "operation": "open", "panel": "brushes"}),
+    ] {
+        let (shown, _) = applied(params.clone());
+        assert!(
+            matches!(shown.layout.place(&s("brushes")), Some(dock_model::Place::Dock { column: 0, group: 0, .. })),
+            "{params}: {:?}",
+            shown.layout
+        );
+        assert_eq!(shown.layout.panel_state(&s("brushes")), PanelState::Front, "{params}");
+    }
+    // No dock, and the only frame is a protected canvas: a new frame at the edge, not a tab.
+    let mut workspace = Workspace::new(Layout { root: Some(Node::Tabs { panels: vec![s("canvas")], active: 0 }), floating: Vec::new() });
+    let command = parse(json!({"command": "window.panel.activate", "panel": "brushes"})).unwrap();
+    command.apply(&mut workspace, false, &space(), permissions).unwrap();
+    assert!(matches!(workspace.layout.place(&s("brushes")), Some(dock_model::Place::Node(_))), "{:?}", workspace.layout);
+    assert_ne!(workspace.layout.place(&s("brushes")), workspace.layout.place(&s("canvas")));
+}
