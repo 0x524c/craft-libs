@@ -218,7 +218,7 @@
       "path": "src/font/cid.rs",
       "source_sha256": "c1dbe7fe5b7f7092d97b84063008df54aebf87db4ba1fdb3a179fab9fe6674b8",
       "source_git_blob": "b99dcbc116ca1169df3a229eafd05ee5b9204626",
-      "sha256": "c1dbe7fe5b7f7092d97b84063008df54aebf87db4ba1fdb3a179fab9fe6674b8"
+      "sha256": "df194fbcaf7811ad1833038b97bcfed51bd11593d1a4ed96125cb2035630c000"
     },
     {
       "path": "src/font/generated/glyph_names.rs",

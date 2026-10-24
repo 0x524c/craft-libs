@@ -6,6 +6,14 @@ The upstream [patch ledger](https://github.com/storytold/pdfcraft/blob/7437bde37
 describes the inherited patches. Source manifests record every transferred Git blob and
 SHA-256 alongside the local hash. The source manifests themselves are not self-hashed.
 
+`hayro-cmap` 0.1.0 is transferred from [PdfCraft revision a2ec27b4775f53c40cad3456936d9406611e3a8d](https://github.com/storytold/pdfcraft/tree/a2ec27b4775f53c40cad3456936d9406611e3a8d/vendor/hayro-cmap)
+with its malformed-CMap patch (PdfCraft #3177): bad `bfchar` or `bfrange` entries, an
+unresolvable `usecmap` and an unparseable tail are skipped instead of discarding the whole
+CMap. Its tests `tests::bad_bfchar_entry_is_skipped` and `tests::unresolvable_usecmap_is_skipped`
+come with it. One local patch: a binary `usecmap` counts against the 16-level nesting limit
+as a text one does, so a self-referencing binary CMap stops instead of overflowing the stack.
+Consuming workspaces need a `hayro-cmap` patch entry beside the other Hayro entries.
+
 The shared snapshot adds immutable per-document ordinary decode limits, threaded through
 initial xrefs, object streams, fallback and repair. Existing constructors retain their
 previous default. Known-size image budgets and streaming content budgets remain distinct.
@@ -58,6 +66,10 @@ Hostile-input bounds (CodeRabbit findings):
 - An xref-stream `/W` type field wider than one byte is read at its full width (big-endian)
   instead of only its first byte, and `/W[0]` over 8 bytes is refused like `/W[1]`.
   A dash array over 256 entries strokes solid.
+- An xref-stream subsection running past object number `i32::MAX` is refused instead of
+  overflowing or turning negative.
+- A CID font's `/W2` run that starts past CID 65535 is skipped as in `/W`, instead of
+  overflowing and discarding the whole table.
 
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
