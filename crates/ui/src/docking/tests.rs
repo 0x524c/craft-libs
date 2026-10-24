@@ -728,10 +728,8 @@ fn split_inner_edge_remains_draggable_beside_a_scrollbar() {
     frame(&mut layout, vec![Event::PointerMoved(start), pointer_button(start, true)]);
     frame(&mut layout, vec![Event::PointerMoved(start + vec2(40.0, 0.0))]);
     frame(&mut layout, vec![pointer_button(start + vec2(40.0, 0.0), false)]);
-    // A dragged divider keeps a ratio of the space, whatever mode it was saved with.
-    let Node::Split { size: SplitSize::Ratio(ratio), .. } = layout.root.unwrap() else { panic!() };
-    // 800 points less the 4 point divider.
-    assert!((ratio * 796.0 - 260.0).abs() < 0.01, "sidebar width after inner-edge drag: {}", ratio * 796.0);
+    let Node::Split { size: SplitSize::FixedFirst(width), .. } = layout.root.unwrap() else { panic!() };
+    assert!((width - 260.0).abs() < 0.01, "sidebar width after inner-edge drag: {width}");
 }
 
 #[test]

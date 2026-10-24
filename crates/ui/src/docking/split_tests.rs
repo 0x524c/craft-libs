@@ -248,6 +248,57 @@ fn a_divider_dragged_past_a_groups_minimum_shrinks_the_next_group_along_the_row(
 }
 
 #[test]
+fn a_divider_drag_keeps_the_splits_fixed_or_ratio_size() {
+    let hsized = |size, first, second| Node::Split { axis: SplitAxis::Horizontal, size, first: Box::new(first), second: Box::new(second) };
+    let start = |d: &Driver| match &d.layout.root {
+        Some(Node::Split { size, .. }) => *size,
+        other => panic!("{other:?}"),
+    };
+    let wider = |d: &mut Driver| {
+        d.screen = Rect::from_min_size(Pos2::ZERO, SCREEN + vec2(400.0, 0.0));
+        d.area = d.screen;
+        d.settle();
+    };
+    let layout = |root| Layout { root: Some(root), floating: Vec::new() };
+
+    // A fixed start panel keeps its dragged width when the window grows.
+    let mut d = driver(layout(hsized(SplitSize::FixedFirst(240.0), tabs(&[1]), tabs(&[2]))), Film::default());
+    drag_hit(&mut d, divider(&[]), vec2(60.0, 0.0));
+    let SplitSize::FixedFirst(width) = start(&d) else { panic!("{:?}", d.layout) };
+    assert!((width - 300.0).abs() < 1.0, "{width}");
+    let panel = group(&d, 1).width();
+    wider(&mut d);
+    assert!((group(&d, 1).width() - panel).abs() < 1.0, "{} {panel}", group(&d, 1).width());
+
+    // A fixed end panel too.
+    let mut d = driver(layout(hsized(SplitSize::FixedSecond(240.0), tabs(&[1]), tabs(&[2]))), Film::default());
+    drag_hit(&mut d, divider(&[]), vec2(60.0, 0.0));
+    let SplitSize::FixedSecond(width) = start(&d) else { panic!("{:?}", d.layout) };
+    assert!((width - 180.0).abs() < 1.0, "{width}");
+    let panel = group(&d, 2).width();
+    wider(&mut d);
+    assert!((group(&d, 2).width() - panel).abs() < 1.0, "{} {panel}", group(&d, 2).width());
+
+    // A ratio stays a ratio, and both sides grow with the window.
+    let mut d = driver(layout(hsplit(0.5, tabs(&[1]), tabs(&[2]))), Film::default());
+    drag_hit(&mut d, divider(&[]), vec2(60.0, 0.0));
+    let SplitSize::Ratio(ratio) = start(&d) else { panic!("{:?}", d.layout) };
+    assert!(ratio > 0.5 && ratio < 1.0, "{ratio}");
+    let (first, second) = (group(&d, 1).width(), group(&d, 2).width());
+    wider(&mut d);
+    assert!(group(&d, 1).width() > first + 100.0 && group(&d, 2).width() > second + 100.0);
+
+    // A drag that runs on past its own split into a fixed ancestor keeps the ancestor fixed.
+    let mut d = driver(layout(hsized(SplitSize::FixedSecond(300.0), hsplit(0.5, tabs(&[1]), tabs(&[2])), tabs(&[3]))), Film::default());
+    drag_hit(&mut d, divider(&[false]), vec2(600.0, 0.0));
+    let SplitSize::FixedSecond(width) = start(&d) else { panic!("{:?}", d.layout) };
+    assert!(width < 299.0, "{width}");
+    let panel = group(&d, 3).width();
+    wider(&mut d);
+    assert!((group(&d, 3).width() - panel).abs() < 1.0, "{} {panel}", group(&d, 3).width());
+}
+
+#[test]
 fn an_intersection_moves_both_dividers() {
     let mut d = film();
     let (project, tools, source) = (group(&d, PROJECT[0]), group(&d, TOOLS), group(&d, SOURCE[0]));

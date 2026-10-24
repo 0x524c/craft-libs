@@ -131,7 +131,7 @@ impl<P> Sizer<'_, P> {
         out: &mut Vec<(Vec<bool>, SplitSize)>,
     ) {
         let Some([a, b]) = self.children(node, rect) else { return };
-        let Node::Split { axis: split_axis, first, second, .. } = node else { return };
+        let Node::Split { axis: split_axis, size, first, second } = node else { return };
         let docked = matches!(**first, Node::Dock { .. }) || matches!(**second, Node::Dock { .. });
         let visit = |child: (&Node<P>, Rect), second_child: bool, grow: f32, path: &mut Vec<bool>, out: &mut Vec<(Vec<bool>, SplitSize)>| {
             path.push(second_child);
@@ -147,7 +147,7 @@ impl<P> Sizer<'_, P> {
             let far_grow = grow - near_grow;
             let (near_size, far_size) = (extent(near.1, axis) + near_grow, extent(far.1, axis) + far_grow);
             let first_size = if end { far_size } else { near_size };
-            push_ratio(path, first_size, near_size + far_size, out);
+            push_size(path, *size, first_size, near_size + far_size, out);
             visit(near, end, near_grow, path, out);
             if far_grow != 0.0 {
                 visit(far, !end, far_grow, path, out);
@@ -214,7 +214,7 @@ impl<P> Sizer<'_, P> {
         let mut out = Vec::new();
         let mut path = path.to_vec();
         let first_size = split.first_size() + first_grow;
-        push_ratio(&path, first_size, first_size + extent(split.second, axis) + second_grow, &mut out);
+        push_size(&path, *size, first_size, first_size + extent(split.second, axis) + second_grow, &mut out);
         path.push(false);
         self.follow((first, split.first), axis, true, first_grow, &mut path, &mut out);
         path.pop();
@@ -252,7 +252,9 @@ impl<P> Sizer<'_, P> {
                 (true, true) => (a_size, b_size + rest),
                 (false, false) => (a_size + rest, b_size),
             };
-            push_ratio(&path, first_size, first_size + second_size, &mut out);
+            if let Some((Node::Split { size, .. }, _)) = chain.get(depth) {
+                push_size(&path, *size, first_size, first_size + second_size, &mut out);
+            }
         }
         out
     }
@@ -307,11 +309,19 @@ impl<P> Sizer<'_, P> {
     }
 }
 
-/// The size of a split at `path` whose first child is `first` of `available` points.
-fn push_ratio(path: &[bool], first: f32, available: f32, out: &mut Vec<(Vec<bool>, SplitSize)>) {
-    if available > 0.0 {
-        out.push((path.to_vec(), SplitSize::Ratio((first / available).clamp(0.0, 1.0))));
+/// The size of a split at `path` whose first child is `first` of `available` points, in the
+/// split's own mode `size`: a fixed side keeps its points, a ratio stays a ratio.
+fn push_size(path: &[bool], size: SplitSize, first: f32, available: f32, out: &mut Vec<(Vec<bool>, SplitSize)>) {
+    if available <= 0.0 || !available.is_finite() || !first.is_finite() {
+        return;
     }
+    let first = first.clamp(0.0, available);
+    let size = match size {
+        SplitSize::Ratio(_) => SplitSize::Ratio((first / available).clamp(0.0, 1.0)),
+        SplitSize::FixedFirst(_) => SplitSize::FixedFirst(first),
+        SplitSize::FixedSecond(_) => SplitSize::FixedSecond(available - first),
+    };
+    out.push((path.to_vec(), size));
 }
 
 /// One group of a flat row, such as the panels of a stack or the groups of a dock column:

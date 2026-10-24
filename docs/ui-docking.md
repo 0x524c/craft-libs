@@ -33,7 +33,7 @@ their sides.
 | Node | Holds |
 |---|---|
 | `Tabs` | A tab group: panels and the active index. |
-| `Split` | Two children, horizontal or vertical, with a ratio. A fixed first or second size from a saved layout is drawn at that size until the divider moves; a moved divider stores a ratio. |
+| `Split` | Two children, horizontal or vertical, and a size: a ratio, a fixed first size or a fixed second size. A moved divider keeps the mode: a fixed side stores its new size in points, a ratio its new ratio. |
 | `Stack` | Accordion entries, each open or closed, with an optional height. |
 | `Dock` | A side and its columns. A `Column` has `Group`s, a width, and `iconic`. |
 
