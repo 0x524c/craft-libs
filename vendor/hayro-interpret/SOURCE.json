@@ -176,13 +176,13 @@
       "path": "src/cache.rs",
       "source_sha256": "76b5dc066330666a50a32124856306b72c98e646346263bd8a269bc99e5a0d42",
       "source_git_blob": "e253a7b8c7dbfbfa2f7dc1f6c582559962060b94",
-      "sha256": "76b5dc066330666a50a32124856306b72c98e646346263bd8a269bc99e5a0d42"
+      "sha256": "137d210732f88f45716e72cd5be654dc25ce83b39dcec697a5715f98831781bd"
     },
     {
       "path": "src/color.rs",
       "source_sha256": "799ce29bb5e59c8fc94db202873e48c2047dd35962e6f26efd215156c47158c1",
       "source_git_blob": "56bb04f24c04ba33ab6bf99c02a24735670959ad",
-      "sha256": "74469aa0b54d606f3c9a3e72b38d8d16e7f82cc85e82a093a8e1075831334da9"
+      "sha256": "190013651fdeb71cb16345e6766e29ce437a682d1efd265ea3e7a567a8eac555"
     },
     {
       "path": "src/context.rs",
@@ -362,7 +362,7 @@
       "path": "src/interpret/mod.rs",
       "source_sha256": "2b002323055bc19aa497e92c81ad8e06dc60ee03686cad89366df4ac7c7a06b2",
       "source_git_blob": "fe08fc284ba7c914d1414b68a5a346674a6f910f",
-      "sha256": "cf79add26a1b39c188c00ba5c6aeb199d5f26297c4ce199b823118079fb2a742"
+      "sha256": "c83663220d27ecf7f80419aab07d44a7ab1894d4932b71b9f5dee83e7e2ba221"
     },
     {
       "path": "src/interpret/path.rs",
@@ -404,13 +404,13 @@
       "path": "src/pattern.rs",
       "source_sha256": "17b49a465275c20e6645dea9443f2cb3a64c594925fd860e74b80b44d5344e37",
       "source_git_blob": "9295f51709f8915951d7b9afca9411651d65a1f8",
-      "sha256": "57433ea93c678bbd6f4825ca8413ccc982c2ba1961d15ece0fae60ae70b1c105"
+      "sha256": "e57d4de60126eafa0da2113af12bbbde1aabd15554f1ee26f6551b8219f4ede5"
     },
     {
       "path": "src/shading.rs",
       "source_sha256": "5d541a2d52f69c88e87a40580bf28afa4b8a6a2d62a3385009087264384ead32",
       "source_git_blob": "2e619e47f2800d7fc7cbdae77c66c58f012c84c2",
-      "sha256": "aeed7f7a4158887ed4af81ff374b1a73bc8af0220e99f1a2d1487713afc4642c"
+      "sha256": "a8f21185291afb336771581cb6d9cad848c79beef5f8e2b8809d7bd6773b939a"
     },
     {
       "path": "src/soft_mask.rs",
@@ -434,7 +434,7 @@
       "path": "src/x_object.rs",
       "source_sha256": "e1c51e96a335c32c122011b2d05c5020c36a33c2c73342ba173c28a3e2fe0219",
       "source_git_blob": "21b134ce8cd9604399cd0776febf923d69c02673",
-      "sha256": "32a4e229517111e49011c48e006bad1f7ef3defa78b182c225f9acebeb62d8f0"
+      "sha256": "f9cdf468e939f4b6eaf6c5ba89f538a77ee5cb7cf940878e176826a67b6c78b0"
     }
   ],
   "compatibility_reference": {
