@@ -159,7 +159,7 @@ index 18dde72..4cfc8e5 100644
      }
  }
 diff --git a/src/lib.rs b/src/lib.rs
-index b331053..4fdcf3f 100644
+index b331053..099a9d4 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -176,10 +176,14 @@ pub use document::*;
@@ -179,7 +179,7 @@ index b331053..4fdcf3f 100644
 +/// PDF/X markers.
 +pub const CRAFT_PRINT_COLOR: bool = true;
 diff --git a/src/serialize.rs b/src/serialize.rs
-index 29844cb..c041579 100644
+index d16261c..1ff011f 100644
 --- a/src/serialize.rs
 +++ b/src/serialize.rs
 @@ -6,9 +6,10 @@ use std::rc::Rc;
@@ -244,7 +244,7 @@ index 29844cb..c041579 100644
  }
  
  /// The color space in which transparency groups blend.
-@@ -153,6 +196,34 @@ impl SerializeSettings {
+@@ -154,6 +197,34 @@ impl SerializeSettings {
          self.configuration.validators()
      }
  
@@ -279,7 +279,7 @@ index 29844cb..c041579 100644
      /// Whether the `/AF` key is supported, accounting for the PDF version and active standards.
      pub(crate) fn supports_associated_files(&self) -> bool {
          self.configuration.version().specifies_associated_files()
-@@ -173,6 +244,9 @@ impl Default for SerializeSettings {
+@@ -174,6 +245,9 @@ impl Default for SerializeSettings {
              enable_tagging: true,
              render_svg_glyph_fn: |_, _, _, _, _| None,
              group_color_space: GroupColorSpace::Rgb,
@@ -289,7 +289,7 @@ index 29844cb..c041579 100644
          }
      }
  }
-@@ -765,18 +839,42 @@ impl SerializeContext {
+@@ -781,18 +855,42 @@ impl SerializeContext {
  impl SerializeContext {
      fn serialize_destination_profiles(&mut self, chunk_container: &mut ChunkContainer) {
          let validators = self.serialize_settings.validators();
@@ -341,7 +341,7 @@ index 29844cb..c041579 100644
                  .subtype(subtype)
                  .output_condition_identifier(TextStr("Custom"))
                  .output_condition(TextStr("sRGB"))
-@@ -789,14 +887,12 @@ impl SerializeContext {
+@@ -805,14 +903,12 @@ impl SerializeContext {
                      )
                      .as_str(),
                  ));

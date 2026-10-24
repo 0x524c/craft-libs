@@ -69,8 +69,11 @@ the default, writes the same groups and page dictionaries as upstream. With
 - A page that uses transparency gets `/Group <</S/Transparency/CS …>>`: DeviceCMYK, or the
   `cmyk_profile` ICC space when `no_device_cs` is set. Opaque pages get no page group, so
   they stay valid for PDF/X-1a and X-3.
-- Soft-mask source groups have no parent, so they name the same CMYK space. The XObject
-  `Repr` carries a `GroupRole` (content or mask source) for this.
+- Soft-mask source groups have no parent, so they name their own space: DeviceCMYK, or
+  sGrey when `no_device_cs` is set. Through a CMYK profile K 100% is not black, so an ICC
+  CMYK mask group would give the default black backdrop a luminosity above 0, and the masked
+  object would show where the mask content paints nothing. The XObject `Repr` carries a
+  `GroupRole` (content or mask source) for this.
 - Pages placed as XObjects (`draw_pdf_page`) get an isolated group without `/CS`; the RGB
   color space is not registered. The source page's own group is dropped, as before;
   krilla #410 (unreleased, needs hayro-write 0.8) keeps it.
@@ -135,8 +138,8 @@ black backdrop, so the masked object is hidden wherever the mask content paints 
 there is no transfer curve.
 
 - `Mask::with_backdrop(color)` writes `/BC` on luminosity masks, in the mask group's color
-  space: RGB under `GroupColorSpace::Rgb` (DeviceRGB or sRGB), four components under
-  `GroupColorSpace::Cmyk` (DeviceCMYK or the `cmyk_profile` ICC). Colors from another space
+  space: RGB under `GroupColorSpace::Rgb` (DeviceRGB or sRGB); under `GroupColorSpace::Cmyk`,
+  four components (DeviceCMYK), or one (sGrey) with `no_device_cs`. Colors from another space
   are converted with the device formulas; luma becomes equal RGB components or black ink only.
   On an alpha mask, where `/BC` has no meaning, the call returns the mask unchanged.
 - `Mask::with_transfer(TransferFunction)` writes `/TR`: `/Identity`, or a Type 0 sampled

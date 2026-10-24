@@ -17,7 +17,7 @@ use crate::configure::validate::ValidationStore;
 use crate::configure::{Configuration, PdfVersion, ValidationError, Validators};
 use crate::error::{KrillaError, KrillaResult, LimitError};
 use crate::geom::Size;
-use crate::graphics::color::{cmyk, rgb, ColorSpace};
+use crate::graphics::color::{cmyk, luma, rgb, ColorSpace};
 use crate::graphics::device_n::DeviceNColorSpace;
 use crate::graphics::icc::{ICCBasedColorSpace, ICCProfile};
 #[cfg(feature = "raster-images")]
@@ -175,8 +175,9 @@ pub enum GroupColorSpace {
     Rgb,
     /// Pages that use transparency get a page group with a CMYK `/CS`: DeviceCMYK, or the
     /// [`SerializeSettings::cmyk_profile`] when `no_device_cs` is set. Content groups and
-    /// embedded PDF pages write no `/CS` and inherit it; soft-mask groups, which have no
-    /// parent, name the same CMYK space. Pages without transparency get no page group.
+    /// embedded PDF pages write no `/CS` and inherit it. Soft-mask groups, which have no
+    /// parent, name DeviceCMYK, or sGrey when `no_device_cs` is set. Pages without
+    /// transparency get no page group.
     ///
     /// With `no_device_cs` and no `cmyk_profile`, [`Document::finish`] fails with
     /// [`KrillaError::MissingGroupCmykProfile`].
@@ -437,8 +438,7 @@ impl SerializeContext {
             .any(|r| self.transparent_refs.contains(&r))
     }
 
-    /// The CMYK blending color space for page and soft-mask groups under
-    /// [`GroupColorSpace::Cmyk`]. Falls back to DeviceCMYK when `no_device_cs` is set
+    /// The CMYK blending color space for page groups under [`GroupColorSpace::Cmyk`]. Falls back to DeviceCMYK when `no_device_cs` is set
     /// without a CMYK profile; `finish` rejects that configuration.
     pub(crate) fn cmyk_group_color_space(
         &mut self,
@@ -447,6 +447,22 @@ impl SerializeContext {
         let cs = cmyk::color_space(&self.serialize_settings)
             .unwrap_or_else(|| DeviceColorSpace::Cmyk.into());
         self.register_colorspace(chunk_container, cs.into())
+    }
+
+    /// The blending color space of soft-mask groups under [`GroupColorSpace::Cmyk`]:
+    /// DeviceCMYK, or sGrey when `no_device_cs` is set. A mask group has no parent, so it
+    /// need not match the page group. An ICC CMYK mask group would give the default black
+    /// backdrop a luminosity above 0, because 100% black through a CMYK profile is not black,
+    /// and the masked object would show where the mask content paints nothing.
+    pub(crate) fn mask_group_color_space(
+        &mut self,
+        chunk_container: &mut ChunkContainer,
+    ) -> MaybeDeviceColorSpace {
+        if self.serialize_settings.no_device_cs {
+            self.register_colorspace(chunk_container, luma::color_space(true).into())
+        } else {
+            self.cmyk_group_color_space(chunk_container)
+        }
     }
 
     pub(crate) fn page_infos(&self) -> &[PageInfo] {

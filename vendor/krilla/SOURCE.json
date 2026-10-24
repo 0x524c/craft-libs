@@ -182,7 +182,7 @@
     {
       "path": "src/graphics/mask.rs",
       "upstream_sha256": "d1dbc7d4d28388ee43c43294bfcbeec79136a65ac2816bdaf19eac4b88669661",
-      "sha256": "12eac7d29154e441db1115de8e01147eef40d595351224ac552e252829afa161"
+      "sha256": "e8cbcd90dea39129a01ab136219b5d169906aecaa232333852f540e75233b29c"
     },
     {
       "path": "src/graphics/mod.rs",
@@ -217,7 +217,7 @@
     {
       "path": "src/graphics/xobject.rs",
       "upstream_sha256": "4f6db246a626d39367660e1b089bc83a828fe97ba6e69d5527bbede876ae4a66",
-      "sha256": "1c53b4fc2615308dcb18bcbe77a6cb5f2b446dd15805ee181d9971495988273b"
+      "sha256": "854386d221196f0361b07ef09b9cbbdc0749550a67b96a9711463f7988631ba2"
     },
     {
       "path": "src/interactive/action.rs",
@@ -312,7 +312,7 @@
     {
       "path": "src/serialize.rs",
       "upstream_sha256": "4f2c439dbd20006eea112e056b2f1a5ba98a1ede9227a45f66a6df46fb1a07e8",
-      "sha256": "bbff10ecb0cb48683d567021405ed2b2c83cf259d2c02d4dfaccfe683eedd5d4"
+      "sha256": "63d970d8a6b65a83de47a8abf564417131c663e8fb50eb53615b6fecd6f7e7cf"
     },
     {
       "path": "src/stream.rs",

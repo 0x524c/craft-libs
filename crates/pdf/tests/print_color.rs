@@ -202,7 +202,7 @@ fn cmyk_groups_use_the_cmyk_profile_without_device_spaces() {
     let icc = Some(Some("ICCBased(N=4)".to_owned()));
     assert_eq!(groups.pages, vec![icc.clone(), None, icc], "{groups:?}");
     assert_eq!(groups.forms, vec![None; FORMS], "{groups:?}");
-    assert_eq!(groups.masks, vec![Some("ICCBased(N=4)".to_owned()); MASKS], "{groups:?}");
+    assert_eq!(groups.masks, vec![Some("ICCBased(N=1)".to_owned()); MASKS], "{groups:?}");
     assert!(!String::from_utf8_lossy(&bytes).contains("DeviceRGB"));
 }
 
@@ -431,8 +431,8 @@ fn soft_masks(bytes: &[u8]) -> Vec<(String, Option<Vec<f32>>, Option<String>)> {
     out
 }
 
-/// `/BC` has the components of the mask group's color space (RGB, or CMYK under
-/// `GroupColorSpace::Cmyk`); an alpha mask gets no `/BC`; `/TR` is a Type 0 function or
+/// `/BC` has the components of the mask group's color space (RGB; under
+/// `GroupColorSpace::Cmyk`, CMYK, or gray with `no_device_cs`); an alpha mask gets no `/BC`; `/TR` is a Type 0 function or
 /// `/Identity`.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
@@ -442,7 +442,7 @@ fn soft_masks_write_backdrop_in_the_group_space_and_transfer() {
         (SerializeSettings::default(), vec![1.0, 1.0, 1.0]),
         (SerializeSettings { no_device_cs: true, ..Default::default() }, vec![1.0, 1.0, 1.0]),
         (cmyk_settings(), vec![0.0, 0.0, 0.0, 0.0]),
-        (SerializeSettings { no_device_cs: true, cmyk_profile: profile(), ..cmyk_settings() }, vec![0.0, 0.0, 0.0, 0.0]),
+        (SerializeSettings { no_device_cs: true, cmyk_profile: profile(), ..cmyk_settings() }, vec![1.0]),
     ];
     for (settings, white) in cases {
         let masks = soft_masks(&masked(settings));
@@ -450,6 +450,57 @@ fn soft_masks_write_backdrop_in_the_group_space_and_transfer() {
             masks,
             vec![("Alpha".to_owned(), None, Some("Identity".to_owned())), ("Luminosity".to_owned(), Some(white), Some("Type0 Size=3".to_owned())),]
         );
+    }
+}
+
+/// With an ICC CMYK page group, a luminosity mask hides the masked object wherever its content
+/// paints nothing: without `/BC`, and with a black `/BC` given as gray or as K 100%. Through a
+/// CMYK profile K 100% is not black, so a mask group in that space would leave the object
+/// showing there.
+#[cfg(feature = "raster")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn icc_cmyk_luminosity_masks_hide_the_object_outside_their_content() {
+    use craft_pdf::interpret::InterpreterSettings;
+    use craft_pdf::raster::{self, Options, RenderCache};
+
+    let settings =
+        SerializeSettings { no_device_cs: true, cmyk_profile: Some(backend::icc::ICCProfile::<4>::new(CMYK_PROFILE).unwrap()), ..cmyk_settings() };
+    let mut writer = Writer::new(settings, Metadata::default());
+    let mut page = writer.document_mut().start_page_with(PageSettings::new(Size::from_wh(200.0, 60.0).unwrap()));
+    let mut surface = page.surface();
+    let backdrops: [Option<backend::color::RegularColor>; 3] = [None, Some(luma::Color::black().into()), Some(k(255).into())];
+    for (i, backdrop) in backdrops.into_iter().enumerate() {
+        let x = 60.0 * i as f32;
+        let mut builder = surface.stream_builder();
+        let mut mask_surface = builder.surface();
+        let mut path = PathBuilder::new();
+        path.push_rect(Rect::from_xywh(x + 10.0, 10.0, 20.0, 40.0).unwrap());
+        mask_surface.set_fill(Some(Fill { paint: luma::Color::white().into(), ..Default::default() }));
+        mask_surface.draw_path(&path.finish().unwrap());
+        mask_surface.finish();
+        let mut mask = Mask::new(builder.finish(), MaskType::Luminosity);
+        if let Some(backdrop) = backdrop {
+            mask = mask.with_backdrop(backdrop);
+        }
+        surface.push_mask(mask);
+        rect(&mut surface, x, k(255), 1.0);
+        surface.pop();
+    }
+    surface.finish();
+    page.finish();
+    let bytes = writer.finish().unwrap();
+
+    let doc = craft_pdf::open_slice(&bytes, None).unwrap();
+    let options = Options { background: [255; 4], ..Default::default() };
+    let raster = raster::render(&doc.pages()[0], &RenderCache::new(), &InterpreterSettings::default(), &options).unwrap();
+    assert_eq!((raster.width, raster.height), (200, 60));
+    let page = raster.bytes();
+    let red = |x: usize, y: usize| page[(y * 200 + x) * 4];
+    for i in 0..3 {
+        let x = 60 * i;
+        assert!(red(x + 20, 30) < 128, "mask {i}: the object shows inside the mask content");
+        assert_eq!((red(x + 5, 30), red(x + 35, 30)), (255, 255), "mask {i}: the object shows outside the mask content");
     }
 }
 
