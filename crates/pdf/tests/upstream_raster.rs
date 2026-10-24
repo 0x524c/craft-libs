@@ -428,3 +428,142 @@ trailer << /Root 1 0 R >>
         }
     }
 }
+
+/// A one-page PDF: `page` holds the page dictionary's entries besides its tree links and
+/// contents (the media box, resources, annotations), and `objects` the objects from 5 on.
+fn one_page(page: &str, content: &[u8], objects: &[u8]) -> Vec<u8> {
+    let mut pdf = format!(
+        "%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n\
+         2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n\
+         3 0 obj << /Type /Page /Parent 2 0 R {page} /Contents 4 0 R >> endobj\n\
+         4 0 obj << /Length {} >> stream\n",
+        content.len()
+    )
+    .into_bytes();
+    pdf.extend_from_slice(content);
+    pdf.extend_from_slice(b"\nendstream endobj\n");
+    pdf.extend_from_slice(objects);
+    pdf.extend_from_slice(b"\ntrailer << /Root 1 0 R >>\n%%EOF\n");
+    pdf
+}
+
+/// PdfCraft ledger hayro-interpret (46) and the hayro stencil paint (#2975): a stencil mask is painted in the
+/// fill color at the fill opacity, once: at `ca 0.5` it is as opaque as a rectangle filled at
+/// `ca 0.5` beside it. The same holds when the fill is a pattern, an uncolored tiling pattern
+/// (drawn in its fill color, not its stroke color) or a shading pattern.
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn stencil_masks_are_drawn_at_the_fill_opacity_once() {
+    let fills = [("color", "0 0 1 rg"), ("uncolored tiling pattern", "/CsP cs 0 0 1 /Tp scn"), ("shading pattern", "/Pattern cs /Sp scn")];
+    for (fill_name, fill) in fills {
+        for alpha in ["1", "0.5", "0.25"] {
+            let content = format!("/A gs {fill} q 100 0 0 100 20 50 cm /Msk Do Q 160 50 100 100 re f");
+            let page = format!(
+                "/MediaBox [0 0 300 200] /Resources << /ExtGState << /A << /ca {alpha} >> >> /XObject << /Msk 5 0 R >> \
+                 /ColorSpace << /CsP [/Pattern /DeviceRGB] >> /Pattern << /Tp 6 0 R /Sp 7 0 R >> >>"
+            );
+            let objects = b"5 0 obj << /Type /XObject /Subtype /Image /Width 2 /Height 2 /ImageMask true /Length 2 >> stream\n\0\0\nendstream endobj\n\
+6 0 obj << /Type /Pattern /PatternType 1 /PaintType 2 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << >> /Length 14 >> stream\n0 0 10 10 re f\nendstream endobj\n\
+7 0 obj << /Type /Pattern /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 300 0] /Extend [true true] /Function << /FunctionType 2 /Domain [0 1] /C0 [0 0 1] /C1 [0 0 1] /N 1 >> >> >> endobj";
+            let p = render(&one_page(&page, content.as_bytes(), objects));
+            // Pixel rows run top down: PDF (70, 100) is in the mask, (210, 100) in the rectangle.
+            let (mask, rect) = (pixel(&p, 70, 100), pixel(&p, 210, 100));
+            assert!(rect[..3] != [255, 255, 255], "{fill_name}, ca {alpha}: the rectangle is painted");
+            assert!(mask.iter().zip(rect).all(|(m, r)| m.abs_diff(*r) <= 1), "{fill_name}, ca {alpha}: mask {mask:?}, rectangle {rect:?}");
+        }
+    }
+}
+
+/// PdfCraft #3246 (#3176, with ledger hayro-interpret (46)): `CA` and `ca` belong to the graphics
+/// state at paint time, so a `gs` after `SCN` or `scn` still fades a shading pattern, and a
+/// stroke takes the stroke alpha.
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn shading_pattern_uses_the_alpha_current_at_paint_time() {
+    let content = b"/Pattern CS /P0 SCN /S1 gs 10 w 0 75 m 100 75 l S /Pattern cs /P0 scn /F1 gs 0 0 100 50 re f";
+    let page = "/MediaBox [0 0 100 100] /Resources << /ExtGState << /S1 << /CA 0.25 >> /F1 << /ca 0.25 >> >> /Pattern << /P0 5 0 R >> >>";
+    let objects = b"5 0 obj << /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] /Extend [true true] \
+/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [1 0 0] /N 1 >> >> >> endobj";
+    let p = render(&one_page(page, content, objects));
+    // A quarter red over white: (255, 191, 191).
+    for (what, y) in [("stroke", 25), ("fill", 75)] {
+        let px = pixel(&p, 50, y);
+        assert!(px[0] == 255 && (185..=197).contains(&px[1]) && (185..=197).contains(&px[2]), "{what}: {px:?}");
+    }
+}
+
+fn type4_mesh_page(data: &[u8]) -> Pixels {
+    let mut objects = format!(
+        "5 0 obj << /ShadingType 4 /ColorSpace /DeviceRGB /BitsPerCoordinate 8 /BitsPerComponent 8 /BitsPerFlag 8 \
+         /Decode [0 255 0 255 0 1 0 1 0 1] /Length {} >> stream\n",
+        data.len()
+    )
+    .into_bytes();
+    objects.extend_from_slice(data);
+    objects.extend_from_slice(b"\nendstream endobj");
+    let page = render(&one_page("/MediaBox [0 0 50 50] /Resources << /Shading << /Sh0 5 0 R >> >>", b"/Sh0 sh", &objects));
+    assert_eq!((page.width, page.height), (50, 50));
+    page
+}
+
+/// PdfCraft ledger hayro-interpret (36) (#3035): two triangles of a mesh that share an edge cover it
+/// together. Testing only each pixel's corner, strictly inside a triangle, left the shared
+/// diagonal white, and a pixel row or column along the mesh's own sides.
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn mesh_triangles_sharing_an_edge_leave_no_seam() {
+    // A red square from 10 to 40 on a 50 × 50 page, cut along its diagonal; in device space
+    // the diagonal runs through pixel centers and corners alike.
+    let vertex = |flag: u8, x: u8, y: u8| [flag, x, y, 255, 0, 0];
+    let (lo, hi) = (10, 40);
+    let mut triangles = Vec::new();
+    for [a, b, c] in [[(lo, lo), (hi, lo), (hi, hi)], [(lo, lo), (hi, hi), (lo, hi)]] {
+        for (x, y) in [a, b, c] {
+            triangles.extend(vertex(0, x, y));
+        }
+    }
+    // Each triangle as its own three vertices, and the second one as a strip (flag 1).
+    let mut strip = Vec::new();
+    for (flag, (x, y)) in [(0, (lo, lo)), (0, (hi, lo)), (0, (hi, hi)), (2, (lo, hi))] {
+        strip.extend(vertex(flag, x, y));
+    }
+    for (label, data) in [("separate triangles", triangles), ("a strip", strip)] {
+        let page = type4_mesh_page(&data);
+        let (mut white_inside, mut red_outside) = (Vec::new(), Vec::new());
+        for y in 0..50 {
+            for x in 0..50 {
+                let p = pixel(&page, x, y);
+                let inside = (10..40).contains(&x) && (10..40).contains(&y);
+                if inside && p != [255, 0, 0, 255] {
+                    white_inside.push((x, y));
+                } else if !inside && p != [255, 255, 255, 255] {
+                    red_outside.push((x, y));
+                }
+            }
+        }
+        assert!(white_inside.is_empty(), "{label}: unshaded pixels inside the square: {white_inside:?}");
+        assert!(red_outside.is_empty(), "{label}: shaded pixels outside the square: {red_outside:?}");
+    }
+
+    // One triangle alone, the square's upper left half: a pixel whose corner lies on its
+    // diagonal is taken by its center, so one wholly across the diagonal (x + y ≥ 50 in
+    // device space) is not shaded, and one wholly inside is.
+    let mut data = Vec::new();
+    for (x, y) in [(lo, lo), (hi, hi), (lo, hi)] {
+        data.extend(vertex(0, x, y));
+    }
+    let page = type4_mesh_page(&data);
+    let (mut spilled, mut missing) = (Vec::new(), Vec::new());
+    for y in 10..40 {
+        for x in 10..40 {
+            let p = pixel(&page, x, y);
+            if x + y >= 50 && p == [255, 0, 0, 255] {
+                spilled.push((x, y));
+            } else if x + y + 2 <= 50 && p != [255, 0, 0, 255] {
+                missing.push((x, y));
+            }
+        }
+    }
+    assert!(spilled.is_empty(), "shaded pixels wholly across the diagonal: {spilled:?}");
+    assert!(missing.is_empty(), "unshaded pixels wholly inside the triangle: {missing:?}");
+}

@@ -185,10 +185,19 @@ const MAX_SAVED_STATES: usize = 4096;
 const MAX_SAVED_STATE_BYTES: usize = 64 << 20;
 
 /// Roughly what a saved copy of `state` holds.
+/// PdfCraft patch (51): the sums saturate, so a huge dash array or clip list counts as over the
+/// bound rather than wrapping on a 32-bit target.
 fn state_bytes(state: &State<'_>) -> usize {
     size_of::<State<'_>>()
-        + state.graphics_state.stroke_props.dash_array.len() * size_of::<f32>()
-        + state.clips.len() * size_of::<ClipType>()
+        .saturating_add(
+            state
+                .graphics_state
+                .stroke_props
+                .dash_array
+                .len()
+                .saturating_mul(size_of::<f32>()),
+        )
+        .saturating_add(state.clips.len().saturating_mul(size_of::<ClipType>()))
 }
 
 impl<'a> Context<'a> {
@@ -269,7 +278,7 @@ impl<'a> Context<'a> {
         }
 
         let cur = cur.clone();
-        self.saved_bytes += bytes;
+        self.saved_bytes = self.saved_bytes.saturating_add(bytes);
         self.states.push(cur);
     }
 
@@ -446,7 +455,7 @@ impl<'a> Context<'a> {
 
     pub(crate) fn num_states(&self) -> usize {
         // PdfCraft patch: saves not kept still count, so callers restore back past them.
-        self.states.len() + self.skipped_saves.len()
+        self.states.len().saturating_add(self.skipped_saves.len())
     }
 
     pub(crate) fn nesting_depth(&self) -> u32 {

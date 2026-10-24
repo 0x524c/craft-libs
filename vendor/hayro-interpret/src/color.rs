@@ -1231,6 +1231,16 @@ pub struct Color {
 }
 
 impl Color {
+    /// PdfCraft patch (46): the same color, fully opaque (see `Pattern::without_opacity`). A
+    /// fully transparent color stays so: on a plate it is the paint that leaves the plate as it
+    /// is (`for_plate`), and making it opaque would knock the plate out.
+    pub(crate) fn opaque(mut self) -> Self {
+        if self.opacity != 0.0 {
+            self.opacity = 1.0;
+        }
+        self
+    }
+
     pub(crate) fn new(color_space: ColorSpace, components: ColorComponents, opacity: f32) -> Self {
         Self {
             color_space,
