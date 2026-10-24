@@ -26,8 +26,9 @@ pub struct Workspace<P> {
     pub saved: Option<Layout<P>>,
     /// Lock Workspace, saved with this workspace: [`Self::apply`] uses
     /// [`Permissions::locked`], so moving, floating and closing are rejected while activating,
-    /// opening, minimizing and resizing still work. An application with a global lock
-    /// preference instead passes locked permissions itself.
+    /// opening, minimizing, resizing and recording native windows still work. Draw it with
+    /// [`super::DockArea::locked`]. An application with a global lock preference instead
+    /// passes locked permissions itself.
     pub locked: bool,
 }
 
@@ -96,7 +97,13 @@ impl<P: Clone + Eq + Hash> Workspace<P> {
         for action in actions {
             let closed = proposed.layout.closed_by(&action)?;
             let locations = close_locations(&proposed.layout, &closed);
-            proposed.layout.apply_with_permissions(action, policy)?;
+            // SetNative records where the window system has a floating window, so a lock
+            // takes it too.
+            if matches!(action, Action::SetNative { .. }) {
+                proposed.layout.apply_with_permissions(action, &permissions)?;
+            } else {
+                proposed.layout.apply_with_permissions(action, policy)?;
+            }
             for (panel, location) in locations {
                 proposed.hidden.retain(|(p, _)| p != &panel);
                 proposed.hidden.push((panel, location));

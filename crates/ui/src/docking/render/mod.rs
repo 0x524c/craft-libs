@@ -48,6 +48,8 @@ pub(super) struct Renderer<'a, P> {
     pub(super) content: &'a mut dyn DockContent<P>,
     pub(super) activation: Option<P>,
     pub(super) blockers: Vec<Rect>,
+    /// [`crate::docking::DockArea::locked`].
+    pub(super) locked: bool,
     pub(super) layout: &'a Layout<P>,
     /// The docked area, for host drop requests.
     pub(super) workspace: Rect,
@@ -100,7 +102,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     pub(super) fn permissions(&self, panel: &P) -> Permissions {
-        self.content.permissions(panel)
+        let permissions = self.content.permissions(panel);
+        if self.locked { permissions.locked() } else { permissions }
     }
 
     pub(super) fn limits(&self, panel: &P) -> PanelLimits {

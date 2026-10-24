@@ -288,6 +288,16 @@ fn dock_validation_rejects_two_docks_per_side_nested_docks_empty_columns_and_bad
 }
 
 #[test]
+fn a_locked_workspace_records_its_native_windows() {
+    let mut workspace = Workspace::new(docked());
+    workspace.locked = true;
+    for rect in [[0.0, 0.0, 300.0, 400.0], [40.0, 30.0, 300.0, 400.0]] {
+        workspace.apply(Action::SetNative { panel: 6, rect: Some(rect) }, |_| Permissions::default()).unwrap();
+        assert_eq!(workspace.layout.floating[0].native, Some(rect));
+    }
+}
+
+#[test]
 fn locked_workspace_rejects_structure_but_allows_activate_open_minimize_and_resize() {
     let mut workspace = Workspace::new(docked());
     let allow = |_: &u32| Permissions::default();
@@ -304,7 +314,6 @@ fn locked_workspace_rejects_structure_but_allows_activate_open_minimize_and_resi
         Action::Close { panel: 4 },
         Action::CloseGroup { panel: 4 },
         Action::CloseWindow { panel: 6 },
-        Action::SetNative { panel: 6, rect: Some([0.0, 0.0, 100.0, 100.0]) },
     ];
     for action in refused {
         assert_eq!(workspace.apply(action.clone(), allow), Err(DockError::NotAllowed), "{action:?}");

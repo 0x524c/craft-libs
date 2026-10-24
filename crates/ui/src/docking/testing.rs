@@ -46,6 +46,8 @@ pub struct DockDriver<P, C> {
     pub float_bounds: Option<Rect>,
     /// Passed to [`DockArea::monitors`].
     pub monitors: Vec<Monitor>,
+    /// Passed to [`DockArea::locked`].
+    pub locked: bool,
     /// The stand-in for OS windows, in use after [`Self::with_native_host`].
     #[cfg(feature = "native-windows")]
     host: Option<std::rc::Rc<std::cell::RefCell<NativeHost>>>,
@@ -74,6 +76,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
             raise: None,
             float_bounds: None,
             monitors: Vec::new(),
+            locked: false,
             #[cfg(feature = "native-windows")]
             host: None,
             #[cfg(feature = "native-windows")]
@@ -122,15 +125,15 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
         }
         let (layout, content, area, id) = (&self.layout, &mut self.content, self.area, self.id);
         let monitors = self.monitors.clone();
-        let (style_fn, maximized, raise, auto, bounds) =
-            (&self.style, self.maximized.clone(), self.raise.take(), self.auto_collapse, self.float_bounds);
+        let (style_fn, maximized, raise, auto, bounds, locked) =
+            (&self.style, self.maximized.clone(), self.raise.take(), self.auto_collapse, self.float_bounds, self.locked);
         let mut full = self.ctx.run_ui(input, |ui| {
             let mut style = DockStyle::from_ui(ui);
             if let Some(adjust) = style_fn {
                 adjust(&mut style);
             }
             ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
-                let mut dock = DockArea::new(id).maximized(maximized.clone()).auto_collapse_iconic(auto).monitors(monitors.clone());
+                let mut dock = DockArea::new(id).maximized(maximized.clone()).auto_collapse_iconic(auto).monitors(monitors.clone()).locked(locked);
                 if let Some(panel) = raise.clone() {
                     dock = dock.raise_panel(panel);
                 }

@@ -5,7 +5,7 @@ use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, ViewportCo
 
 use super::render::{APPKIT_CORNER, DragPointer, MACOS_CLOSE, WindowDrag, appkit_resize_areas, close_rects, floats_shown, resize_bands};
 use super::testing::DockDriver;
-use super::{Action, DockContent, Floating, Hit, Layout, Monitor, Node, Permissions, Placement, Target};
+use super::{Action, DockContent, Floating, Hit, Layout, Monitor, Node, Permissions, Placement, Target, Workspace};
 use crate::layout::{SplitAxis, SplitSize};
 
 /// Desktop position of the main window's content.
@@ -233,6 +233,34 @@ fn a_restored_window_opens_on_a_connected_monitor() {
     assert_eq!(os_window(&d, 5).unwrap().0.min, pos2(1080.0, 100.0));
     assert_eq!(window(&d, 5).native, Some([1080.0, 100.0, 240.0, 300.0]));
     assert_eq!(window(&d, 5).monitor.as_ref().and_then(|m| m.name.as_deref()), Some("left"));
+}
+
+#[test]
+fn a_locked_area_moves_no_native_window_and_records_where_the_os_put_it() {
+    let mut d = driver(layout(true));
+    d.locked = true;
+    let id = window(&d, 5).id;
+    let viewport = d.viewport(id);
+    let sent = d.host().commands.len();
+    d.window_step(id, vec![Event::PointerMoved(pos2(40.0, 9.0)), button(pos2(40.0, 9.0), true)]);
+    d.window_step(id, vec![Event::PointerMoved(pos2(60.0, 19.0))]);
+    let out = d.window_step(id, vec![Event::PointerMoved(pos2(70.0, 9.0)), button(pos2(70.0, 9.0), false)]);
+    assert!(out.actions.is_empty(), "{:?}", out.actions);
+    let moves = d.host().commands[sent..]
+        .iter()
+        .filter(|(v, c)| *v == viewport && matches!(c, ViewportCommand::OuterPosition(_) | ViewportCommand::StartDrag))
+        .count();
+    assert_eq!(moves, 0, "the bar is inert");
+
+    // The window system moves the window anyway: the locked workspace takes its new place.
+    let mut workspace = Workspace { locked: true, ..Workspace::new(d.layout.clone()) };
+    d.host().windows.get_mut(&viewport).unwrap().rect = Rect::from_min_size(pos2(700.0, 200.0), vec2(240.0, 300.0));
+    for _ in 0..60 {
+        let out = d.step(vec![]);
+        assert!(!out.actions.iter().any(|a| matches!(a, Action::MoveFloating { .. })), "{:?}", out.actions);
+        workspace.apply_all(out.actions, |_| Permissions::default()).unwrap();
+    }
+    assert_eq!(workspace.layout.floating[0].native, Some([700.0, 200.0, 240.0, 300.0]));
 }
 
 #[test]

@@ -208,7 +208,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let mut ids = Vec::new();
         let mut natives = Vec::new();
         for window in windows {
-            let allowed = window.panels().all(|p| self.content.allow_native(p) && self.permissions(p).floatable);
+            // The application's own policy: a locked area keeps its native windows.
+            let allowed = window.panels().all(|p| self.content.allow_native(p) && self.content.permissions(p).floatable);
             if !native || !allowed || window.panels().next().is_none() {
                 in_window.push(window);
                 continue;

@@ -689,6 +689,7 @@ pub struct DockArea<'a, P = ()> {
     id: Id,
     activation: Option<P>,
     blockers: Vec<Rect>,
+    locked: bool,
     maximized: Option<P>,
     hide: HidePanels<'a, P>,
     auto_collapse: bool,
@@ -702,6 +703,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             id,
             activation: None,
             blockers: Vec::new(),
+            locked: false,
             maximized: None,
             hide: HidePanels::None,
             auto_collapse: true,
@@ -774,6 +776,14 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
     /// bounds, such as ones restored from a saved layout, are drawn moved inside.
     pub fn float_bounds(mut self, bounds: Rect) -> Self {
         self.float_bounds = Some(bounds);
+        self
+    }
+
+    /// Draw a locked workspace: pass [`super::Workspace::locked`]. Every panel gets
+    /// [`Permissions::locked`], so no tab, bar or native window starts a move, float or close
+    /// that the workspace would refuse.
+    pub fn locked(mut self, locked: bool) -> Self {
+        self.locked = locked;
         self
     }
 
@@ -856,6 +866,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             content,
             activation: self.activation,
             blockers: self.blockers,
+            locked: self.locked,
             layout,
             workspace: rect,
             float_bounds: self.float_bounds.map_or(ui.ctx().content_rect(), |bounds| bounds.intersect(ui.ctx().content_rect())),
