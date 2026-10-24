@@ -18,6 +18,8 @@ use super::{DockArea, DockContent, DockOutput, DockStyle, Hit, Layout, Monitor};
 const NUDGE: egui::Vec2 = egui::Vec2::new(8.0, 6.0);
 
 type StyleFn = Box<dyn Fn(&mut DockStyle)>;
+#[cfg(feature = "native-windows")]
+type InputHook = std::sync::Arc<dyn Fn(&Context, &mut RawInput) + Send + Sync>;
 
 /// A [`DockArea`] in a headless egui context, with its layout and content. Each frame advances
 /// the clock by 1/60 s, so double-clicks register. [`Self::step`] applies what a frame emits,
@@ -55,6 +57,9 @@ pub struct DockDriver<P, C> {
     host: Option<std::rc::Rc<std::cell::RefCell<NativeHost>>>,
     #[cfg(feature = "native-windows")]
     no_host: std::cell::RefCell<NativeHost>,
+    /// Passed to [`DockArea::native_input_hook`].
+    #[cfg(feature = "native-windows")]
+    input_hook: Option<InputHook>,
     style: Option<StyleFn>,
     shapes: Vec<ClippedShape>,
     time: f64,
@@ -84,6 +89,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
             host: None,
             #[cfg(feature = "native-windows")]
             no_host: std::cell::RefCell::new(NativeHost::new(Pos2::ZERO)),
+            #[cfg(feature = "native-windows")]
+            input_hook: None,
             style: None,
             shapes: Vec::new(),
             time: 0.0,
@@ -128,6 +135,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
         }
         let (layout, content, area, id) = (&self.layout, &mut self.content, self.area, self.id);
         let monitors = self.monitors.clone();
+        #[cfg(feature = "native-windows")]
+        let input_hook = self.input_hook.clone();
         let (style_fn, maximized, raise, auto, bounds, locked, native) =
             (&self.style, self.maximized.clone(), self.raise.take(), self.auto_collapse, self.float_bounds, self.locked, self.native_windows);
         let mut full = self.ctx.run_ui(input, |ui| {
@@ -147,6 +156,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
                 }
                 if let Some(bounds) = bounds {
                     dock = dock.float_bounds(bounds);
+                }
+                #[cfg(feature = "native-windows")]
+                if let Some(hook) = input_hook.clone() {
+                    dock = dock.native_input_hook(move |ctx, input| hook(ctx, input));
                 }
                 output = dock.show_content(ui, layout, &style, content);
             });
@@ -173,6 +186,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
         self.ctx.set_embed_viewports(false);
         self.host = Some(host);
         self.settle();
+        self
+    }
+
+    /// Pass `hook` to [`DockArea::native_input_hook`] every frame (feature `native-windows`).
+    #[cfg(feature = "native-windows")]
+    pub fn with_native_input_hook(mut self, hook: impl Fn(&Context, &mut RawInput) + Send + Sync + 'static) -> Self {
+        self.input_hook = Some(std::sync::Arc::new(hook));
         self
     }
 
@@ -396,6 +416,10 @@ pub struct HostWindow {
     pub events: Vec<Event>,
     /// Ask to close it on its next frame, as the OS close button does.
     pub close: bool,
+    /// Files dragged over it, in every frame's input until cleared.
+    pub hovered_files: Vec<egui::HoveredFile>,
+    /// Files dropped on it on its next frame.
+    pub dropped_files: Vec<egui::DroppedFileHandle>,
     /// Shapes of its last frame.
     pub shapes: Vec<ClippedShape>,
 }
@@ -453,6 +477,8 @@ impl NativeHost {
                 frames: 0,
                 events: Vec::new(),
                 close: false,
+                hovered_files: Vec::new(),
+                dropped_files: Vec::new(),
                 shapes: Vec::new(),
             });
             let mut viewports = host.infos();
@@ -470,6 +496,8 @@ impl NativeHost {
                 viewports,
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, window.rect.size())),
                 events: std::iter::once(Event::ModifiersChanged(modifiers)).chain(std::mem::take(&mut window.events)).collect(),
+                hovered_files: window.hovered_files.clone(),
+                dropped_files: std::mem::take(&mut window.dropped_files),
                 focused,
                 time: Some(time),
                 ..Default::default()
