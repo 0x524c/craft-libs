@@ -211,8 +211,8 @@ A flyout fits its content the same way, without the title bar.
   limits and the screen. A focused resize handle moves its edge 8 pt per arrow key.
 - Over a frame, the tab strip and the middle join its tabs, and the nearest side splits it. The
   side zones are trapezoids along the four edges of the body below the tab strip, like a picture
-  frame: `DockStyle::zone_depth` (40 pt) deep, or a third of the body's width or height when that
-  is less, so every frame keeps a center. A split that would leave either half without
+  frame, all four the same depth: `DockStyle::zone_depth` (40 pt), or a quarter of the body's
+  smaller side when that is less, so every frame keeps a center. A split that would leave either half without
   `DockStyle::min_pane` joins the frame's tabs instead. The gap between two frames is no target.
 - The outer edge band (`DockStyle::edge_band`) takes a drop as a new frame across the whole
   window side: top and bottom, and left and right with `side_edge_zones`. It takes a quarter of
