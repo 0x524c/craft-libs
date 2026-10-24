@@ -74,6 +74,10 @@ the other default:
 let limits = craft_jpeg::Limits { max_alloc: 512 << 20, ..Default::default() };
 ```
 
+A file of under a hundred bytes can declare a frame that fills the default limits, and
+decoding it still renders every sample. Callers that decode for a UI or for previews should
+pass a `max_alloc` well below the default.
+
 ## Routing
 
 An app that decodes baseline JPEG with another decoder keeps its own rule for which files come

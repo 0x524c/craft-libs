@@ -1196,6 +1196,19 @@ fn reconstruct(comp: &Component, q: &[u16; 64], basis: &[[f32; 8]; 8], max: f32)
     let shift = (max + 1.0) / 2.0;
     for (n, blk) in comp.coefs.iter().enumerate() {
         let (bx, by) = (n % comp.bw, n / comp.bw);
+        if blk[1..].iter().all(|&c| c == 0) {
+            // Only DC: every sample is T[y][0] · T[x][0] · F[0][0], the same products the full
+            // transform below sums (its other terms are zero), so the result is identical.
+            let t = basis[0][0];
+            let v = (t * (t * (blk[0] as f32 * f32::from(q[0]))) + shift).clamp(0.0, max);
+            for y in 0..8 {
+                let row = (by * 8 + y) * stride + bx * 8;
+                if let Some(out) = plane.get_mut(row..row + 8) {
+                    out.fill(v);
+                }
+            }
+            continue;
+        }
         let mut f = [0f32; 64];
         for (k, &c) in blk.iter().enumerate() {
             f[ZIGZAG[k]] = c as f32 * f32::from(q[k]);
