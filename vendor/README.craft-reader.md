@@ -176,6 +176,22 @@ raster tests are adapted in `tests/upstream_raster.rs` and the text contracts in
 `tests/upstream_text.rs`. (P8)'s PdfCraft test needs a Japanese substitute font and is not
 ported.
 
+Font and text fixes from the [PdfCraft revision 0b670caf4a090e9d83a7f41a84b4cb2144a2d33e ledger](https://github.com/storytold/pdfcraft/blob/0b670caf4a090e9d83a7f41a84b4cb2144a2d33e/vendor/README.md),
+each marked `PdfCraft patch` in the source: hayro-interpret (49) (PdfCraft #2949 and its
+follow-up), `OpenTypeFontBlob::new` accepts a `post` table version 1.0, 2.0 or 3.0 written
+with its 16-bit halves swapped (`00 00 00 03`, as ScanSoft PDF Create! embeds every font), and
+`glyph_names` reads such a table from a copy with the version written correctly, so a 2.0
+table's names serve `/Differences`; any other unknown version is still refused; (50)
+(PdfCraft #3958), `CffFontBlob::glyph_index_by_name` looks names up in a map built on first
+use and shared between clones instead of searching the charset for every character code, and
+the first glyph with a name still wins; and the unledgered PdfCraft #3116 (#3109), marked
+`PdfCraft patch (#3116)`, text in mode 7 (clip only) installs its clip and reaches the device
+as `GlyphDrawMode::Clip`, which hayro does not paint, so extraction that leaves out invisible
+OCR text (mode 3) keeps a heading drawn through its clip. The unit tests
+`font::blob::tests::{a_post_version_with_swapped_halves_is_read_as_the_version_it_means,
+glyph_names_resolve_to_the_first_glyph_with_that_name}` come with (49) and (50); the #3116
+contract is in `tests/upstream_text.rs`.
+
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
 equivalence. The independent color oracles, backend tests and facade contracts cover
