@@ -176,6 +176,19 @@ raster tests are adapted in `tests/upstream_raster.rs` and the text contracts in
 `tests/upstream_text.rs`. (P8)'s PdfCraft test needs a Japanese substitute font and is not
 ported.
 
+Paint fixes from the [PdfCraft revision 0b670caf4a090e9d83a7f41a84b4cb2144a2d33e ledger](https://github.com/storytold/pdfcraft/blob/0b670caf4a090e9d83a7f41a84b4cb2144a2d33e/vendor/README.md),
+each marked `PdfCraft patch` in the source: hayro-interpret (46) with its hayro counterpart
+(PdfCraft #2977), a stencil mask is painted with the fill paint, not the stroke paint, at the
+fill opacity once, and a pattern paint drops the opacity it captured at `scn`
+(`Pattern::without_opacity`); the unledgered PdfCraft #3246, a shading pattern takes the alpha
+current when it is painted (`Pattern::set_alpha`, also on a plate), so a `gs` after `scn` or
+`SCN` still applies; (36), marked `PdfCraft patch (#3035)` because the plate-mode code uses
+(35) and (36) for #2770's own numbers, a mesh pixel whose corner no triangle holds takes the
+triangle covering its center (`Triangle::covers`), so shared edges leave no seam; and (51),
+the saved-state byte and count sums saturate, so a huge dash array or clip list stays over
+the bound on 32-bit targets instead of wrapping. The PdfCraft raster tests for (46), #3246 and
+(36) are adapted in `tests/upstream_raster.rs`.
+
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
 equivalence. The independent color oracles, backend tests and facade contracts cover
