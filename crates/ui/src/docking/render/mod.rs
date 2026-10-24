@@ -81,6 +81,9 @@ pub(super) struct Renderer<'a, P> {
     /// [`crate::docking::DockArea::monitors`].
     #[cfg_attr(not(feature = "native-windows"), allow(dead_code))]
     pub(super) monitors: Vec<crate::docking::Monitor>,
+    /// [`crate::docking::DockArea::input_blocked`].
+    #[cfg_attr(not(feature = "native-windows"), allow(dead_code))]
+    pub(super) input_blocked: bool,
     /// [`crate::docking::DockArea::native_windows`].
     #[cfg_attr(not(feature = "native-windows"), allow(dead_code))]
     pub(super) native_windows: Option<bool>,

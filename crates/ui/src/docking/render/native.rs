@@ -10,8 +10,8 @@
 use std::{fmt::Debug, hash::Hash};
 
 use egui::{
-    Context, CursorIcon, Event, Id, Key, Modifiers, Pos2, RawInput, Rect, ResizeDirection, Sense, Ui, Vec2, ViewportBuilder, ViewportClass,
-    ViewportCommand, ViewportId, ViewportInfo, WindowLevel, pos2, vec2,
+    Color32, Context, CursorIcon, Event, Id, Key, LayerId, Modifiers, Order, Pos2, RawInput, Rect, ResizeDirection, Sense, Ui, UiBuilder, Vec2,
+    ViewportBuilder, ViewportClass, ViewportCommand, ViewportId, ViewportInfo, WindowLevel, pos2, vec2,
 };
 
 use super::Renderer;
@@ -331,13 +331,19 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if activated && RAISE_ON_ACTIVATION {
             // The back one first, so each lands in front of those raised before it, and the
             // window just focused, at the front of the order, last.
+            // While input is blocked the main window, with the modal, ends in front.
+            if self.input_blocked {
+                order.retain(Option::is_some);
+                order.insert(0, None);
+            }
             let queue: Vec<Option<u64>> = order
                 .iter()
                 .rev()
                 .filter(|id| id.is_none_or(|id| natives.iter().any(|(w, ..)| w.id == id && self.normal_window(w))))
                 .copied()
                 .collect();
-            if queue.iter().any(Option::is_some) {
+            // Blocked, the main window comes in front of a palette the app was activated through.
+            if self.input_blocked || queue.iter().any(Option::is_some) {
                 ctx.data_mut(|d| d.insert_temp(self.id.with("native-raise"), queue));
             }
         }
@@ -462,7 +468,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             .with_position([spawn[0], spawn[1]])
             .with_inner_size([spawn[2], spawn[3]])
             .with_min_inner_size(MIN_SIZE)
-            .with_window_level(if normal { WindowLevel::Normal } else { WindowLevel::AlwaysOnTop })
+            // A blocked palette could cover the modal, and its bar moves nothing: the main
+            // window can come in front of it at the normal level.
+            .with_window_level(if normal || self.input_blocked { WindowLevel::Normal } else { WindowLevel::AlwaysOnTop })
             .with_taskbar(false);
         // The bar replaces the OS title bar. macOS keeps the frame, with its title bar and
         // buttons hidden: AppKit resizes a movable window from its edges and corners with its
@@ -473,18 +481,22 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             .with_title_shown(false)
             .with_fullsize_content_view(true)
             .with_titlebar_buttons_shown(false)
-            .with_resizable(window.panels().all(|p| self.permissions(p).movable));
+            .with_resizable(!self.input_blocked && window.panels().all(|p| self.permissions(p).movable));
         #[cfg(not(target_os = "macos"))]
         let builder = builder.with_decorations(false);
+        // A blocked palette keeps showing while the app is away: showing it on the app's return
+        // would raise it over the modal and, on macOS, give it focus.
+        let visible = visible || (self.input_blocked && place.shown);
         // Only on a change: showing a shown window raises it and, on macOS, takes focus.
         if place.shown != visible {
             ctx.send_viewport_cmd_to(viewport, ViewportCommand::Visible(visible));
             place.shown = visible;
         }
-        if visible && self.activation.as_ref().is_some_and(|panel| window.contains(panel)) {
+        if visible && !self.input_blocked && self.activation.as_ref().is_some_and(|panel| window.contains(panel)) {
             ctx.send_viewport_cmd_to(viewport, ViewportCommand::Focus);
         }
         let (targets, docks, windows) = (self.targets.len(), self.dock_targets.len(), self.frame.windows.len());
+        let blocked = self.input_blocked;
         ctx.with_plugin(|input: &mut NativeInput| input.windows.insert(viewport, self.id));
         let report = ctx.show_viewport_immediate(viewport, builder, |ui, class| {
             // `cancel_drag` reaches this viewport's drag here.
@@ -493,6 +505,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 ui.ctx().stop_dragging();
             }
             let full = ui.max_rect();
+            // An embedded fallback reads the main window's input: its close request, place,
+            // keys and resizes are not this window's.
+            let own = matches!(class, ViewportClass::Immediate | ViewportClass::Deferred);
+            let released = if blocked && own { block_input(ui) } else { Vec::new() };
             ui.painter().rect_filled(full, 0.0, self.style.floating_background);
             let buttons = self.native_bar(ui, window);
             let body = Rect::from_min_max(pos2(full.left(), (full.top() + BAR_HEIGHT).min(full.bottom())), full.max);
@@ -502,9 +518,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             if debug_close() {
                 debug_outlines(ui, full, &buttons);
             }
-            // An embedded fallback reads the main window's input: its close request, place,
-            // keys and resizes are not this window's.
-            if !matches!(class, ViewportClass::Immediate | ViewportClass::Deferred) {
+            if !own {
                 return Report::default();
             }
             if window.panels().all(|p| self.permissions(p).movable) {
@@ -523,9 +537,18 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 windows: self.frame.windows.split_off(windows),
             };
             surface.origin = self.window_gestures(ui, window);
-            self.paint_cross(ui, &mut surface);
-            self.forward_events(ui);
-            self.report_files(ui, window, viewport);
+            if blocked {
+                (surface.targets, surface.dock_targets, surface.windows) = Default::default();
+                cover(ui, self.id.with(("native-blocked", window.id)), full, self.style.blocked_dim);
+                if !released.is_empty() {
+                    self.output.forwarded_modifiers = Some(ui.input(|i| i.modifiers));
+                    self.output.forwarded_events.extend(released);
+                }
+            } else {
+                self.paint_cross(ui, &mut surface);
+                self.forward_events(ui);
+                self.report_files(ui, window, viewport);
+            }
             ui.input(|i| Report {
                 closed: i.viewport().close_requested(),
                 placed: placed(i.viewport()),
@@ -575,7 +598,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if report.closed {
             // Like the bar's ×: its panels close and reopen from the application's menu. A
             // window the application would refuse to close stays open.
-            if window.panels().all(|p| self.permissions(p).closable) {
+            if !blocked && window.panels().all(|p| self.permissions(p).closable) {
                 self.output.actions.push(Action::CloseWindow { panel: first });
                 return Some(key);
             }
@@ -890,6 +913,39 @@ fn rebuilt<P: Eq + Hash>(previous: &[(u64, Vec<P>)], current: &[(u64, Vec<P>)]) 
 #[cfg(debug_assertions)]
 fn panels<P: Eq + Hash>(windows: &[(u64, Vec<P>)]) -> std::collections::HashSet<&Vec<P>> {
     windows.iter().map(|(_, panels)| panels).collect()
+}
+
+/// The start of a blocked native window's frame: its widgets are disabled, and the pointer,
+/// keys, text and scrolling are taken out of its input before anything reads them, so a panel
+/// that reads input directly sees none either. Returns the key releases it took out, for the
+/// app: a key pressed before the block would otherwise stay down in the app's shortcuts.
+fn block_input(ui: &mut Ui) -> Vec<Event> {
+    // Disabling fades what the window paints, its opaque background too; the cover dims it.
+    let opacity = ui.opacity();
+    ui.disable();
+    ui.set_opacity(opacity);
+    let kept = |e: &Event| matches!(e, Event::Screenshot { .. } | Event::WindowFocused(_));
+    let released = ui.input(|i| i.events.iter().filter(|e| matches!(e, Event::Key { pressed: false, .. })).cloned().collect());
+    ui.input_mut(|i| {
+        i.events.retain(kept);
+        i.raw.events.retain(kept);
+        // File drops are fields of their own, not events.
+        i.raw.dropped_files.clear();
+        i.raw.hovered_files.clear();
+        i.keys_down.clear();
+        i.smooth_scroll_delta = Vec2::ZERO;
+        i.pointer = Default::default();
+    });
+    ui.memory_mut(|m| m.stop_text_input());
+    released
+}
+
+/// The end of a blocked native window's frame: `dim` over its content `full`, in a layer above
+/// its popups that takes the pointer, so a popup left open takes no click either.
+fn cover(ui: &Ui, id: Id, full: Rect, dim: Color32) {
+    let cover = Ui::new(ui.ctx().clone(), id, UiBuilder::new().layer_id(LayerId::new(Order::Tooltip, id)).max_rect(full));
+    cover.painter().rect_filled(full, 0.0, dim);
+    cover.interact(full, id.with("sink"), Sense::CLICK | Sense::DRAG);
 }
 
 /// Move and size a native window so its content is the desktop rect `to`. The size goes

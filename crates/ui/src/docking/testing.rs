@@ -50,6 +50,8 @@ pub struct DockDriver<P, C> {
     pub monitors: Vec<Monitor>,
     /// Passed to [`DockArea::locked`].
     pub locked: bool,
+    /// Passed to [`DockArea::input_blocked`].
+    pub input_blocked: bool,
     /// Passed to [`DockArea::native_windows`]: on by default, whatever the test's desktop.
     pub native_windows: bool,
     /// The stand-in for OS windows, in use after [`Self::with_native_host`].
@@ -84,6 +86,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
             float_bounds: None,
             monitors: Vec::new(),
             locked: false,
+            input_blocked: false,
             native_windows: true,
             #[cfg(feature = "native-windows")]
             host: None,
@@ -137,8 +140,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
         let monitors = self.monitors.clone();
         #[cfg(feature = "native-windows")]
         let input_hook = self.input_hook.clone();
-        let (style_fn, maximized, raise, auto, bounds, locked, native) =
-            (&self.style, self.maximized.clone(), self.raise.take(), self.auto_collapse, self.float_bounds, self.locked, self.native_windows);
+        let (style_fn, maximized, raise, auto, bounds, locked, native, blocked) = (
+            &self.style,
+            self.maximized.clone(),
+            self.raise.take(),
+            self.auto_collapse,
+            self.float_bounds,
+            self.locked,
+            self.native_windows,
+            self.input_blocked,
+        );
         let mut full = self.ctx.run_ui(input, |ui| {
             let mut style = DockStyle::from_ui(ui);
             if let Some(adjust) = style_fn {
@@ -150,7 +161,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static, C: DockContent<P>> Do
                     .auto_collapse_iconic(auto)
                     .monitors(monitors.clone())
                     .locked(locked)
-                    .native_windows(native);
+                    .native_windows(native)
+                    .input_blocked(blocked);
                 if let Some(panel) = raise.clone() {
                     dock = dock.raise_panel(panel);
                 }

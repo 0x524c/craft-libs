@@ -25,8 +25,14 @@ struct Content {
     focus_text: bool,
     /// The panel with a button that takes focus.
     focused_button: Option<u32>,
+    /// The panel with a counter button, its clicks, and where it was drawn.
+    counter: Option<u32>,
+    count: usize,
+    counter_rect: Option<Rect>,
     /// Pointer buttons pressed in each panel's body.
     pressed: Vec<(u32, PointerButton)>,
+    /// A panel body saw hovered or dropped files.
+    saw_files: bool,
 }
 
 impl DockContent<u32> for Content {
@@ -41,6 +47,12 @@ impl DockContent<u32> for Content {
         if self.focused_button == Some(*panel) {
             ui.button("OK").request_focus();
         }
+        if self.counter == Some(*panel) {
+            let response = ui.button("Add");
+            self.count += usize::from(response.clicked());
+            self.counter_rect = Some(response.rect);
+        }
+        self.saw_files |= ui.input(|i| !i.raw.hovered_files.is_empty() || !i.raw.dropped_files.is_empty());
         if ui.rect_contains_pointer(ui.max_rect()) {
             let pressed = [PointerButton::Primary, PointerButton::Secondary].into_iter().filter(|b| ui.input(|i| i.pointer.button_pressed(*b)));
             self.pressed.extend(pressed.map(|b| (*panel, b)));
@@ -464,6 +476,13 @@ fn the_app_comes_forward_with_its_viewers_when_it_is_activated() {
     focus(&mut d, None, 20);
     focus(&mut d, Some(back), 10);
     assert_eq!(levels(&mut d), raised(&[front, MAIN, back]));
+
+    // While a modal blocks input, the main window with the modal is raised last, even when
+    // the app is activated through a viewer.
+    d.input_blocked = true;
+    focus(&mut d, None, 20);
+    focus(&mut d, Some(front), 10);
+    assert_eq!(levels(&mut d), raised(&[back, front, MAIN]));
 }
 
 #[test]
@@ -1180,6 +1199,30 @@ fn files_dragged_onto_a_native_window_are_reported_with_its_panel() {
 }
 
 #[test]
+fn a_blocked_native_window_reports_no_files() {
+    let mut d = driver(layout(true));
+    let (id, viewport) = (id_of(&d), d.viewport(id_of(&d)));
+    d.input_blocked = true;
+    d.step(Vec::new());
+    let drop = |d: &mut DockDriver<u32, Content>| {
+        let mut host = d.host();
+        let window = host.windows.get_mut(&viewport).unwrap();
+        window.hovered_files = vec![egui::HoveredFile { path: Some("a.png".into()), mime: String::new() }];
+        window.dropped_files = vec![std::sync::Arc::new(File("a.png".into()))];
+    };
+    drop(&mut d);
+    let out = d.window_step(id, vec![Event::PointerMoved(pos2(60.0, 150.0))]);
+    assert!(out.window_files.is_empty(), "{:?}", out.window_files);
+    assert!(!d.content.saw_files);
+
+    d.input_blocked = false;
+    drop(&mut d);
+    let out = d.window_step(id, vec![Event::PointerMoved(pos2(60.0, 150.0))]);
+    assert_eq!(out.window_files.len(), 1);
+    assert!(d.content.saw_files);
+}
+
+#[test]
 fn escape_or_focus_loss_ends_a_drag_a_native_window_owns() {
     // Escape cancels it, and is no shortcut.
     let mut d = driver(layout(true));
@@ -1478,6 +1521,162 @@ fn a_layout_built_each_frame_without_ids_is_warned_about() {
         d.step(vec![]);
     }
     assert!(!warned(&d));
+}
+
+/// Fill of the overlay over a blocked native window in [`blocked_driver`].
+const DIM: Color32 = Color32::from_rgba_premultiplied(10, 20, 30, 120);
+
+fn blocked_driver() -> DockDriver<u32, Content> {
+    let mut d = DockDriver::new(layout(true), Content { counter: Some(5), ..Content::default() })
+        .with_style(|s| s.blocked_dim = DIM)
+        .with_native_host(ORIGIN);
+    d.settle();
+    d
+}
+
+/// Whether the native window `viewport` drew the overlay over all of its content.
+fn dimmed(d: &DockDriver<u32, Content>, viewport: egui::ViewportId) -> bool {
+    let full = Rect::from_min_size(Pos2::ZERO, d.host().windows[&viewport].rect.size());
+    d.host().windows[&viewport].shapes.iter().any(|c| matches!(&c.shape, egui::Shape::Rect(r) if r.fill == DIM && r.rect == full))
+}
+
+#[test]
+fn a_native_window_takes_no_input_while_the_app_blocks_it() {
+    let mut d = blocked_driver();
+    let id = id_of(&d);
+    let viewport = d.viewport(id);
+    let counter = d.content.counter_rect.unwrap().center();
+    let tab = pos2(90.0, TAB_ROW);
+    let key = Event::Key { key: Key::S, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::COMMAND };
+    let level = |d: &DockDriver<u32, Content>| d.host().windows[&viewport].level;
+    assert!(!dimmed(&d, viewport));
+    assert_eq!(level(&d), Some(egui::WindowLevel::AlwaysOnTop));
+
+    d.input_blocked = true;
+    d.step(vec![]);
+    assert!(dimmed(&d, viewport), "drawn dimmed");
+    assert_eq!(level(&d), Some(egui::WindowLevel::Normal), "the main window can cover the palette");
+    let out = d.window_click(id, tab);
+    assert!(out.actions.is_empty(), "{:?}", out.actions);
+    d.window_click(id, counter);
+    assert_eq!(d.content.count, 0, "the body takes no click");
+    let out = d.window_step(id, vec![key.clone(), Event::Text("s".into())]);
+    assert!(out.forwarded_events.is_empty(), "{:?}", out.forwarded_events);
+    // A key released while blocked still reaches the app, which may have seen it go down.
+    let release = Event::Key { key: Key::S, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::COMMAND };
+    let out = d.window_step(id, vec![release.clone()]);
+    assert_eq!(out.forwarded_events, vec![release]);
+    // The bar starts no move, of the dock area's or the window system's.
+    let sent = d.host().commands.len();
+    d.window_hold(id, pos2(40.0, 9.0), pos2(140.0, 59.0));
+    assert!(d.ctx.data(|data| data.get_temp::<WindowDrag>(d.id.with("window-drag"))).is_none());
+    assert!(
+        !d.host().commands[sent..].iter().any(|(v, c)| *v == viewport && matches!(c, ViewportCommand::StartDrag | ViewportCommand::OuterPosition(_)))
+    );
+    let out = d.window_release(id, pos2(140.0, 59.0));
+    assert!(out.actions.is_empty(), "{:?}", out.actions);
+    // The OS close request is cancelled.
+    d.host().windows.get_mut(&viewport).unwrap().close = true;
+    let out = d.step(vec![]);
+    assert!(!out.actions.iter().any(|a| matches!(a, Action::CloseWindow { .. })), "{:?}", out.actions);
+    assert!(d.host().commands.contains(&(viewport, ViewportCommand::CancelClose)));
+
+    // Unblocked, the same input works again.
+    d.input_blocked = false;
+    d.step(vec![]);
+    assert!(!dimmed(&d, viewport));
+    assert_eq!(level(&d), Some(egui::WindowLevel::AlwaysOnTop));
+    d.window_click(id, counter);
+    assert_eq!(d.content.count, 1);
+    let out = d.window_click(id, tab);
+    assert!(out.actions.contains(&Action::Activate { panel: 6 }), "{:?}", out.actions);
+    let out = d.window_step(id, vec![key.clone()]);
+    assert_eq!(out.forwarded_events, vec![key]);
+}
+
+#[test]
+fn a_blocked_palette_stays_shown_and_behind_the_main_window_when_the_app_returns() {
+    use egui::{ViewportId, WindowLevel};
+    let mut d = blocked_driver();
+    let palette = d.viewport(id_of(&d));
+    d.input_blocked = true;
+    d.step(vec![]);
+    d.host().commands.clear();
+    let focus = |d: &mut DockDriver<u32, Content>, window: Option<ViewportId>| {
+        d.host().focus = window;
+        for _ in 0..20 {
+            d.step(vec![]);
+        }
+    };
+    // Showing it again would raise it over the modal and, on macOS, give it focus.
+    focus(&mut d, None);
+    assert!(d.host().windows[&palette].visible);
+    focus(&mut d, Some(palette));
+    let host = d.host();
+    assert!(!host.commands.iter().any(|(v, c)| *v == palette && matches!(c, ViewportCommand::Visible(_))), "{:?}", host.commands);
+    // Activated through the palette, the main window comes in front of it, with no viewers.
+    let levels: Vec<_> = host.commands.iter().filter(|(_, c)| matches!(c, ViewportCommand::WindowLevel(_))).cloned().collect();
+    let expected = if cfg!(target_os = "macos") {
+        Vec::new()
+    } else {
+        [WindowLevel::AlwaysOnTop, WindowLevel::Normal].map(|l| (ViewportId::ROOT, ViewportCommand::WindowLevel(l))).to_vec()
+    };
+    assert_eq!(levels, expected);
+}
+
+#[test]
+fn a_focused_field_and_a_held_press_stay_inert_across_a_block() {
+    let mut d = blocked_driver();
+    let id = id_of(&d);
+    d.content.text = Some(5);
+    d.content.focus_text = true;
+    d.step(vec![]);
+    d.window_step(id, vec![Event::Text("a".into())]);
+    assert_eq!(d.content.typed, "a");
+    // The field loses focus when the block starts, and stays without it after.
+    d.input_blocked = true;
+    d.step(vec![]);
+    let out = d.window_step(id, vec![Event::Text("b".into())]);
+    assert!(out.forwarded_events.is_empty(), "{:?}", out.forwarded_events);
+    d.input_blocked = false;
+    d.step(vec![]);
+    let out = d.window_step(id, vec![Event::Text("c".into())]);
+    assert_eq!(d.content.typed, "a");
+    assert_eq!(out.forwarded_events, vec![Event::Text("c".into())]);
+
+    // A press made while blocked and released after is no click.
+    let counter = d.content.counter_rect.unwrap().center();
+    d.input_blocked = true;
+    d.step(vec![]);
+    d.window_step(id, vec![Event::PointerMoved(counter), button(counter, true)]);
+    d.input_blocked = false;
+    d.step(vec![]);
+    d.window_step(id, vec![button(counter, false)]);
+    assert_eq!(d.content.count, 0);
+}
+
+#[test]
+fn blocking_input_cancels_a_drag_in_progress() {
+    // A tab drag a native window owns.
+    let mut d = blocked_driver();
+    let id = id_of(&d);
+    let over = d.window_local(id, ORIGIN + vec2(600.0, 300.0)).unwrap();
+    d.window_hold(id, pos2(15.0, TAB_ROW), over);
+    assert!(super::is_dragging::<u32>(&d.ctx, d.id));
+    d.input_blocked = true;
+    d.step(vec![]);
+    assert!(!super::is_dragging::<u32>(&d.ctx, d.id));
+    let out = d.window_release(id, over);
+    assert!(!out.actions.iter().any(|a| matches!(a, Action::Move { .. } | Action::Float { .. })), "{:?}", out.actions);
+
+    // A bar drag.
+    let mut d = blocked_driver();
+    let id = id_of(&d);
+    d.window_hold(id, pos2(40.0, 9.0), pos2(140.0, 59.0));
+    assert!(d.ctx.data(|data| data.get_temp::<WindowDrag>(d.id.with("window-drag"))).is_some());
+    d.input_blocked = true;
+    d.step(vec![]);
+    assert!(d.ctx.data(|data| data.get_temp::<WindowDrag>(d.id.with("window-drag"))).is_none());
 }
 
 #[test]
