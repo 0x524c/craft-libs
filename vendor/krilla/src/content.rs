@@ -16,6 +16,7 @@ use crate::configure::ValidationError;
 #[cfg(feature = "raster-images")]
 use crate::geom::Size;
 use crate::geom::{Point, Rect, Transform};
+use crate::graphics::blend::{GroupOptions, Overprint};
 use crate::graphics::color::{Color, ColorSpace};
 use crate::graphics::graphics_state::{ExtGState, GraphicsStates};
 #[cfg(feature = "raster-images")]
@@ -181,6 +182,12 @@ impl ContentBuilder {
             let state = ExtGState::new().blend_mode(blend_mode);
             self.graphics_states.combine(&state);
         }
+    }
+
+    pub(crate) fn set_overprint(&mut self, overprint: Overprint) {
+        let state =
+            ExtGState::new().overprint(overprint.fill, overprint.stroke, overprint.to_pdf_mode());
+        self.graphics_states.combine(&state);
     }
 
     pub(crate) fn expand_bbox(&mut self, new_bbox: Rect) {
@@ -926,14 +933,15 @@ impl ContentBuilder {
         self.draw_xobject(sc, chunk_container, x_object, &state);
     }
 
-    pub(crate) fn draw_isolated(
+    pub(crate) fn draw_group(
         &mut self,
         sc: &mut SerializeContext,
         chunk_container: &mut ChunkContainer,
+        options: GroupOptions,
         stream: Stream,
     ) {
         let state = ExtGState::new();
-        let x_object = XObject::new(stream, true, false, None);
+        let x_object = XObject::group(stream, options);
         self.draw_xobject(sc, chunk_container, x_object, &state);
     }
 
@@ -1113,6 +1121,16 @@ impl ContentBuilder {
             InnerPaint::SweepGradient(sg) => {
                 let (gradient_props, transform) = sg.clone().gradient_properties(bounds);
                 write_gradient(gradient_props, sc, chunk_container, transform, self);
+            }
+            InnerPaint::MeshGradient(mg) => {
+                let transform = mg.transform;
+                write_gradient(
+                    GradientProperties::MeshGradient(mg.clone()),
+                    sc,
+                    chunk_container,
+                    transform,
+                    self,
+                );
             }
             InnerPaint::Pattern(pat) => {
                 let mut pat = Arc::unwrap_or_clone(pat.clone());

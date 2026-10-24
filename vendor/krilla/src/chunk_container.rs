@@ -147,14 +147,12 @@ impl ChunkContainer {
             sc.register_validation_error(ValidationError::NoDocumentTitle);
         }
 
-        // Write the PDF document info metadata.
-        if let Some(metadata) = &self.metadata {
-            metadata.serialize_document_info(
-                &mut remapped_ref,
-                &mut pdf,
-                sc.serialize_settings().configuration,
-            );
-        }
+        // Write the PDF document info metadata, also without metadata when print markers need it.
+        let no_metadata = Metadata::default();
+        self.metadata
+            .as_ref()
+            .unwrap_or(&no_metadata)
+            .serialize_document_info(&mut remapped_ref, &mut pdf, &sc.serialize_settings());
 
         let instance_id = stable_hash_base64(pdf.as_bytes());
 
@@ -182,6 +180,7 @@ impl ChunkContainer {
         let settings = sc.serialize_settings();
         let validators = settings.validators();
         validators.write_xmp(&mut xmp);
+        settings.write_print_xmp(&mut xmp);
 
         xmp.num_pages(sc.page_infos().len() as u32);
         xmp.format("application/pdf");
@@ -192,7 +191,12 @@ impl ChunkContainer {
             instance_id.as_bytes().to_vec(),
         ));
 
-        xmp.rendition_class(RenditionClass::Proof);
+        // PdfCraft patch: a document written here is the master rendition, not a proof copy.
+        // `xmpMM:RenditionClass` says which rendition a file is (XMP Part 2, Media Management):
+        // `default` is the master, `proof` a proof copy. Writing `proof` on every file told a
+        // prepress system that a print deliverable was a proof, and PDF/X output carries it
+        // (storytold/designcraft#1207).
+        xmp.rendition_class(RenditionClass::Default);
         sc.serialize_settings().pdf_version().write_xmp(&mut xmp);
 
         let named_destinations = sc.global_objects.named_destinations.take();
