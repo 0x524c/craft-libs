@@ -280,6 +280,19 @@ returns before the extent is used, so it still clears under the whole path. Test
 `mesh_extent_tests::{a_mesh_paints_its_triangles_alone, a_mesh_keeps_the_graphics_state_alpha,
 a_mesh_off_the_canvas_paints_nothing}` in hayro.
 
+An ICC profile cache fix from the [PdfCraft revision 0b670caf4a090e9d83a7f41a84b4cb2144a2d33e ledger](https://github.com/storytold/pdfcraft/blob/0b670caf4a090e9d83a7f41a84b4cb2144a2d33e/vendor/README.md):
+hayro-interpret (48) (PdfCraft #3020), marked `PdfCraft patch (#3020)`. The color space read
+from an `/ICCBased` profile stream is cached by `IccProfileKey`, not by the stream
+dictionary's bytes alone, so two profiles with the same `/N` and `/Length` no longer share
+whichever was read first. A stream object is looked up by its object identifier without
+reading it, and on a miss by its dictionary key and raw (decrypted, undecoded) bytes, so
+copies of a profile are read once; a stream written directly in its array has only the
+content key. `InterpreterCache::icc_profile_reads` counts the reads. The CMYK simulation of
+patch 36 doesn't use this cache: it is built from the output intent's bytes by the caller,
+and the digest that tells its profile from a document profile is still a hash of the
+decoded profile bytes. PdfCraft's two raster tests are adapted in `tests/upstream_raster.rs`
+(`icc_profile_cache`).
+
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
 equivalence. The independent color oracles, backend tests and facade contracts cover

@@ -662,9 +662,9 @@ mod default_color_spaces {
     use super::{Pixels, render};
 
     const WIDTH: usize = 130;
-    const RED: [u8; 3] = [255, 0, 0];
+    pub(super) const RED: [u8; 3] = [255, 0, 0];
     const GREEN: [u8; 3] = [0, 255, 0];
-    const BLUE: [u8; 3] = [0, 0, 255];
+    pub(super) const BLUE: [u8; 3] = [0, 0, 255];
     const BLACK: [u8; 3] = [0, 0, 0];
     /// Device black through `gray_profile`: half the luminance of white, sRGB-encoded.
     const MID_GRAY: [u8; 3] = [188, 188, 188];
@@ -724,7 +724,7 @@ mod default_color_spaces {
 
     /// A linear RGB profile whose red, green and blue take the sRGB colorants `primaries` names:
     /// with `[1, 2, 0]` red is drawn as sRGB green.
-    fn rgb_profile(primaries: [usize; 3]) -> Vec<u8> {
+    pub(super) fn rgb_profile(primaries: [usize; 3]) -> Vec<u8> {
         let mut tags = Vec::new();
         for (signature, primary) in [*b"rXYZ", *b"gXYZ", *b"bXYZ"].into_iter().zip(primaries) {
             tags.push((signature, xyz(SRGB_COLORANTS[primary])));
@@ -760,7 +760,7 @@ mod default_color_spaces {
         icc(b"prtr", b"CMYK", b"Lab ", &[(*b"A2B0", lut)])
     }
 
-    fn profile_stream(n: u8, profile: Vec<u8>) -> (String, Vec<u8>) {
+    pub(super) fn profile_stream(n: u8, profile: Vec<u8>) -> (String, Vec<u8>) {
         (format!("<< /N {n} /Length {} >>", profile.len()), profile)
     }
 
@@ -769,9 +769,9 @@ mod default_color_spaces {
         (format!("<< /Type /XObject /Subtype /Form /BBox [0 0 130 70] {extra} /Length {} >>", content.len()), content.as_bytes().to_vec())
     }
 
-    /// Draw `content` with `resources` on a 130 × 70 pt page whose objects 5, 6, … are the
-    /// streams `objects`, and give the color at each of `points` (from the top left).
-    fn colors(content: &str, resources: &str, objects: &[(String, Vec<u8>)], points: &[(usize, usize)]) -> Vec<[u8; 3]> {
+    /// A 130 × 70 pt page that draws `content` with `resources`, whose objects 5, 6, … are the
+    /// streams `objects`.
+    pub(super) fn page_pdf(content: &str, resources: &str, objects: &[(String, Vec<u8>)]) -> Vec<u8> {
         let mut pdf = format!(
             "%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n\
              2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n\
@@ -786,13 +786,19 @@ mod default_color_spaces {
             pdf.extend_from_slice(b"\nendstream endobj\n");
         }
         pdf.extend_from_slice(b"trailer << /Root 1 0 R >>\n%%EOF");
-        let Pixels { width, height, rgba } = render(&pdf);
+        pdf
+    }
+
+    /// Draw `content` with `resources` on a 130 × 70 pt page whose objects 5, 6, … are the
+    /// streams `objects`, and give the color at each of `points` (from the top left).
+    pub(super) fn colors(content: &str, resources: &str, objects: &[(String, Vec<u8>)], points: &[(usize, usize)]) -> Vec<[u8; 3]> {
+        let Pixels { width, height, rgba } = render(&page_pdf(content, resources, objects));
         assert_eq!((width as usize, height), (WIDTH, 70));
         points.iter().map(|&(x, y)| rgba[(y * WIDTH + x) * 4..][..3].try_into().unwrap()).collect()
     }
 
     #[track_caller]
-    fn assert_near(got: [u8; 3], want: [u8; 3], what: &str) {
+    pub(super) fn assert_near(got: [u8; 3], want: [u8; 3], what: &str) {
         assert!(got.iter().zip(want).all(|(got, want)| got.abs_diff(want) <= 6), "{what}: got {got:?}, expected about {want:?}");
     }
 
@@ -1041,6 +1047,107 @@ mod default_color_spaces {
             );
             assert_eq!(got[0], RED, "DefaultRGB {default}: device RGB is drawn as it is");
             assert_near(got[1], MID_GRAY, &format!("DefaultRGB {default}: DefaultGray still applies"));
+        }
+    }
+}
+
+/// PdfCraft ledger hayro-interpret (48) and the ICC profile cache key (#3020): two `/ICCBased`
+/// profiles whose stream dictionaries are byte for byte the same (`/N 3` and one `/Length`)
+/// each draw through their own profile. hayro cached the color space it read from a profile
+/// stream by the dictionary's bytes alone, so the second profile drew through whichever was
+/// read first. The profiles are linear sRGB and the same profile with red and blue swapped,
+/// which draws red as blue; they have the same length.
+mod icc_profile_cache {
+    use super::default_color_spaces::{BLUE, RED, assert_near, colors, page_pdf, profile_stream, rgb_profile};
+    use craft_pdf::interpret::{
+        BlendMode, ClipPath, Context, Device, GlyphDrawMode, Image, InterpreterCache, InterpreterSettings, Paint, PathDrawMode, SoftMask,
+        TransformExt, font::Glyph,
+    };
+    use kurbo::{Affine, BezPath, Rect};
+
+    /// An `/ICCBased` space whose profile stream is written directly in the space's array, not
+    /// as an object of its own: the profile as ASCIIHex digits, each a token of its own, in
+    /// upper case (a lone `f` reads as a broken `false`). Its dictionary reports the object
+    /// holding the array, which is the page for every one of them.
+    fn direct_space(profile: &[u8]) -> String {
+        let hex: String = profile.iter().flat_map(|b| [b >> 4, b & 0xf]).map(|d| format!("{d:X} ")).collect();
+        format!("[/ICCBased << /N 3 /Filter /ASCIIHexDecode /Length {} >> stream\n{hex}\nendstream]", hex.len())
+    }
+
+    /// Six 20 pt squares, side by side, filled with `1 0 0 sc` (red) in `/A` (object 5, linear
+    /// sRGB), `/B` (object 6, red and blue swapped), `/A2` (object 5 again, through an array of
+    /// other bytes), `/A3` (object 7, a copy of object 5), `/C` and `/D` (the two profiles
+    /// again, each written directly in its array). Objects 5, 6 and 7 have the same dictionary,
+    /// and so do the two direct streams.
+    fn page() -> (String, String, Vec<(String, Vec<u8>)>) {
+        let (srgb, swapped) = (rgb_profile([0, 1, 2]), rgb_profile([2, 1, 0]));
+        assert_eq!(srgb.len(), swapped.len(), "the profiles have the same length, so the same dictionary");
+        assert_ne!(srgb, swapped);
+        let resources = format!(
+            "<< /ColorSpace << /A [/ICCBased 5 0 R] /B [/ICCBased 6 0 R] /A2 [ /ICCBased 5 0 R ] /A3 [/ICCBased 7 0 R] /C {} /D {} >> >>",
+            direct_space(&srgb),
+            direct_space(&swapped)
+        );
+        let content = ["A", "B", "A2", "A3", "C", "D"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| format!("/{name} cs 1 0 0 sc {} 20 20 30 re f", 2 + 21 * i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        (content, resources, vec![profile_stream(3, srgb.clone()), profile_stream(3, swapped), profile_stream(3, srgb)])
+    }
+
+    /// Each square is drawn through its own profile, whether the profile is an object or
+    /// written in its array, and object 5 looked up again and its copy still draw red.
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn icc_profiles_with_identical_dictionaries_draw_their_own_colors() {
+        let (content, resources, objects) = page();
+        let points: Vec<_> = (0..6).map(|i| (12 + 21 * i, 35)).collect();
+        let got = colors(&content, &resources, &objects, &points);
+        let expected = [
+            ("/A, object 5, linear sRGB", RED),
+            ("/B, object 6, red and blue swapped", BLUE),
+            ("/A2, object 5 again", RED),
+            ("/A3, object 7, a copy of object 5", RED),
+            ("/C, linear sRGB written in its array", RED),
+            ("/D, red and blue swapped written in its array", BLUE),
+        ];
+        for (got, (what, want)) in got.into_iter().zip(expected) {
+            assert_near(got, want, what);
+        }
+    }
+
+    /// Draws nothing: only the color spaces the page selects matter here.
+    struct Nothing;
+    impl<'a> Device<'a> for Nothing {
+        fn set_soft_mask(&mut self, _: Option<SoftMask<'a>>) {}
+        fn set_blend_mode(&mut self, _: BlendMode) {}
+        fn draw_path(&mut self, _: &BezPath, _: Affine, _: &Paint<'a>, _: &PathDrawMode) {}
+        fn push_clip_path(&mut self, _: &ClipPath) {}
+        fn push_transparency_group(&mut self, _: f32, _: Option<SoftMask<'a>>, _: BlendMode) {}
+        fn draw_glyph(&mut self, _: &Glyph<'a>, _: Affine, _: Affine, _: &Paint<'a>, _: &GlyphDrawMode) {}
+        fn draw_image(&mut self, _: Image<'a, '_>, _: Affine) {}
+        fn pop_clip_path(&mut self) {}
+        fn pop_transparency_group(&mut self) {}
+    }
+
+    /// The profiles are still cached: the four different ones (objects 5 and 6, and the two
+    /// written in their arrays) are read once each, and neither object 5 looked up again nor its
+    /// copy, object 7, is read again. A second pass through the same cache reads none.
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn icc_profiles_used_again_are_read_once() {
+        let (content, resources, objects) = page();
+        let bytes = page_pdf(&content, &resources, &objects);
+        let pdf = craft_pdf::open_slice(&bytes, None).unwrap();
+        let page = &pdf.pages()[0];
+        let cache = InterpreterCache::new();
+        for pass in ["first", "second"] {
+            let initial = page.initial_transform(true).to_kurbo();
+            let mut ctx = Context::new(initial, Rect::new(0.0, 0.0, 130.0, 70.0), &cache, page.xref(), InterpreterSettings::default());
+            craft_pdf::interpret_page(page, &mut ctx, &mut Nothing).unwrap();
+            assert_eq!(cache.icc_profile_reads(), 4, "after the {pass} pass: each different profile is read once");
         }
     }
 }
