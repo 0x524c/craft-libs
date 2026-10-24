@@ -55,14 +55,15 @@ if img.damaged { /* warn: part of the image is missing */ }
     inverted convention (maximum = no ink) and are inverted back. With Adobe transform 2 (YCCK),
     C, M and Y are converted from YCbCr, which yields ink amounts directly, and K is inverted.
 - `damaged` is set when entropy-coded data was cut short or corrupt after at least one MCU had
-  decoded, or the stream had more than 500 scans. The rest of that scan is left out; those
-  blocks keep what earlier scans decoded. A stream with no decodable image data is an error.
+  decoded, or its scans would decode more than 64 passes over the frame's blocks. The rest of
+  that scan, and every scan past the budget, is left out; those blocks keep what earlier scans
+  decoded. A stream with no decodable image data is an error.
 
 ## Limits
 
 `Limits { max_pixels, max_alloc }` is checked against the frame header before anything is
-allocated: `width × height` against `max_pixels`, and both the output buffer and the decoder's
-own coefficient and sample buffers against `max_alloc`. The defaults are 2³⁰ pixels and 8 GiB on
+allocated: `width × height` against `max_pixels`, and the output buffer plus the decoder's own
+coefficient and sample buffers, together, against `max_alloc`. The defaults are 2³⁰ pixels and 8 GiB on
 64-bit targets, 1 GiB on 32-bit ones (wasm32). Fields are public, so an app sets one and keeps
 the other default:
 

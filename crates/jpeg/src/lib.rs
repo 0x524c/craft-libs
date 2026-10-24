@@ -71,8 +71,8 @@ fn unsupported(m: impl Into<String>) -> Error {
 pub struct Limits {
     /// Maximum `width * height`.
     pub max_pixels: u64,
-    /// Maximum bytes for the decoded output, and separately for the decoder's own
-    /// coefficient and sample buffers.
+    /// Maximum bytes for the decoded output and the decoder's own coefficient and sample
+    /// buffers together.
     pub max_alloc: u64,
 }
 
@@ -361,7 +361,7 @@ fn parse_frame(marker: u8, seg: &[u8], limits: &Limits) -> Result<Frame, Error> 
         0xC0 | 0xC1 => (false, false),
         0xC9 => (true, false),
         0xCA => (true, true),
-        0xC2 => return Err(unsupported("progressive JPEG with 12-bit samples is not supported")),
+        0xC2 => return Err(unsupported("progressive Huffman-coded JPEG is not supported")),
         0xC3 | 0xCB => return Err(unsupported("lossless JPEG is not supported")),
         _ => return Err(unsupported("hierarchical JPEG is not supported")),
     };
