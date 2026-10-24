@@ -8,6 +8,7 @@
 mod catalog;
 mod region;
 mod scripts;
+mod size;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Mutex, OnceLock, PoisonError};
@@ -18,6 +19,7 @@ use unicode_bidi::{BidiClass, bidi_class};
 
 pub use region::{HourCycle, Measurement, Paper, Region};
 pub use scripts::{Direction, Han, Script, base_direction, direction, han, scripts};
+pub use size::{FileSize, SizeUnit};
 
 /// The catalogs an app embeds, one entry per locale: (locale, shared catalog, the app's catalog).
 /// A missing catalog is `""`.
