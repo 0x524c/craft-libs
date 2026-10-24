@@ -42,7 +42,11 @@ accordions, no docks), a rect, an optional native-window rect with the monitor i
 `minimized`. Its `id` names the window across panel moves (see [Native windows](#native-windows)).
 `Floating::single` makes a window with one group, `Floating::new` one with a tree, and
 `Floating::stack` one with groups stacked top to bottom (a vertical split sized by the groups'
-heights, as an app's own stacked layouts migrate); `panels()` and `contains()` read it. Saved layouts keep loading: a window stored as one group (v1) or as a
+heights, as an app's own stacked layouts migrate); `panels()` and `contains()` read it. Each of
+these calls makes a new window with a fresh `id`. Build a layout once and keep it, or give its
+windows ids with `with_id`: a layout built anew each frame, as an unsaved default layout might
+be, otherwise opens new OS windows each frame and loses their drags and places. Debug builds log
+a warning when native windows are replaced by new ones with the same panels three frames running. Saved layouts keep loading: a window stored as one group (v1) or as a
 stack of groups loads as that group or as a vertical split of the stacked groups, sized by their
 heights.
 
@@ -56,7 +60,7 @@ use craft_ui::docking::{Action, Floating, Layout, Node, Placement};
 
 let mut layout = Layout {
     root: Some(Node::Tabs { panels: vec!["layers", "properties"], active: 0 }),
-    floating: vec![Floating::single(vec!["brushes"], 0, [40.0, 80.0, 240.0, 300.0])],
+    floating: vec![Floating::single(vec!["brushes"], 0, [40.0, 80.0, 240.0, 300.0]).with_id(1)],
 };
 layout.apply(Action::Move {
     panel: "brushes",
@@ -327,7 +331,8 @@ that is not floatable, stays in-window. Floating windows get no taskbar or Alt-T
 (`with_taskbar(false)`).
 
 - **Identity.** `Floating::id` names the OS window, so a window keeps it when its panels change,
-  including when its first panel moves out. `Floating::new` and loading draw fresh ids; a layout
+  including when its first panel moves out. `Floating::new` and loading draw fresh ids, and
+  `Floating::with_id` sets one; a layout
   loads with unique ids; a window that merges into another takes the receiver's id, and a whole
   window that moves (floated again, or its only group dragged) keeps its own.
 - **Level.** The windows stay above other windows (`WindowLevel::AlwaysOnTop`), so clicking the

@@ -68,8 +68,8 @@ pub struct StackEntry<P> {
 #[derive(Clone, Debug)]
 pub struct Floating<P> {
     /// Names the window across panel moves, and its OS window with feature `native-windows`.
-    /// Unique within a layout: [`Self::new`] and loading draw fresh ids, and merging windows
-    /// keeps the receiving window's.
+    /// Unique within a layout: [`Self::new`] and loading draw fresh ids, [`Self::with_id`]
+    /// sets one, and merging windows keeps the receiving window's.
     pub id: u64,
     /// `Split`, `Tabs` and `Stack` nodes; a `Dock` is invalid here.
     pub root: Node<P>,
@@ -122,12 +122,24 @@ pub(super) fn fresh_window_id() -> u64 {
 }
 
 impl<P> Floating<P> {
+    /// A window holding `root`. Each call makes a new window, with a fresh [`Self::id`]: build
+    /// a layout once and keep it, or give its windows ids with [`Self::with_id`]. A layout
+    /// built anew each frame without them opens new OS windows each frame.
     pub fn new(root: Node<P>, rect: [f32; 4]) -> Self {
         Self { id: fresh_window_id(), root, rect, native: None, monitor: None, monitor_size: None, minimized: false }
     }
 
+    /// A window with one group. Each call makes a new window, as [`Self::new`] does.
     pub fn single(panels: Vec<P>, active: usize, rect: [f32; 4]) -> Self {
         Self::new(Node::Tabs { panels, active }, rect)
+    }
+
+    /// The window with `id`, for a layout the app builds in code, such as a default layout:
+    /// built with the same id, it is the same window, and the same OS window, on every frame.
+    /// Ids must be unique within a layout.
+    pub fn with_id(mut self, id: u64) -> Self {
+        self.id = id;
+        self
     }
 
     pub fn panels(&self) -> impl Iterator<Item = &P> {
@@ -135,7 +147,8 @@ impl<P> Floating<P> {
     }
 
     /// Groups stacked top to bottom, as a v1 layout stored them: each group over a vertical
-    /// split of the ones below it, sized by their heights. `None` without groups.
+    /// split of the ones below it, sized by their heights. `None` without groups. Each call
+    /// makes a new window, as [`Self::new`] does.
     pub fn stack(groups: Vec<Group<P>>, rect: [f32; 4]) -> Option<Self> {
         super::dock_model::stack_tree(groups).map(|root| Self::new(root, rect))
     }

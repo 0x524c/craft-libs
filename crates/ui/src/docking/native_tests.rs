@@ -1084,3 +1084,50 @@ fn a_manual_resize_keeps_the_opposite_edges_and_the_minimum_size() {
     assert_eq!(resized(start, D::SouthWest, vec2(500.0, -500.0), min), [240.0, 50.0, 160.0, 100.0]);
     assert_eq!(resized(start, D::NorthEast, vec2(-500.0, 500.0), min), [100.0, 150.0, 160.0, 100.0]);
 }
+
+/// [`layout`] built anew, its window with id 7 when `with_id`.
+fn rebuilt_layout(with_id: bool) -> Layout<u32> {
+    let mut layout = layout(true);
+    if with_id {
+        layout.floating = layout.floating.into_iter().map(|w| w.with_id(7)).collect();
+    }
+    layout
+}
+
+#[test]
+fn a_layout_built_each_frame_with_ids_keeps_its_os_window() {
+    let mut d = driver(rebuilt_layout(true));
+    let viewport = d.viewport(7);
+    for _ in 0..4 {
+        d.layout = rebuilt_layout(true);
+        d.step(vec![]);
+    }
+    assert_eq!(d.host().windows.keys().copied().collect::<Vec<_>>(), [viewport], "one OS window, the same each frame");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_layout_built_each_frame_without_ids_is_warned_about() {
+    let warned = |d: &DockDriver<u32, Content>| d.ctx.data(|m| m.get_temp::<bool>(d.id.with("native-rebuilt"))).unwrap_or(false);
+    let mut d = driver(rebuilt_layout(false));
+    for _ in 0..4 {
+        d.layout = rebuilt_layout(false);
+        d.step(vec![]);
+    }
+    assert!(warned(&d));
+    assert!(d.host().windows.len() > 1, "a new OS window each frame");
+
+    // A layout kept across frames, and one rebuilt with ids, are not.
+    let mut d = driver(layout(true));
+    d.layout = rebuilt_layout(false);
+    for _ in 0..4 {
+        d.step(vec![]);
+    }
+    assert!(!warned(&d), "loaded once");
+    let mut d = driver(rebuilt_layout(true));
+    for _ in 0..4 {
+        d.layout = rebuilt_layout(true);
+        d.step(vec![]);
+    }
+    assert!(!warned(&d));
+}

@@ -160,6 +160,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             natives.push((window, rect, viewport_id(self.id, window.id, n)));
         }
         if native {
+            #[cfg(debug_assertions)]
+            self.warn_rebuilt(ctx, &natives);
             self.escape_elsewhere(ctx, None);
             // A window closed or docked during its own bar drag or resize ends it.
             let shown = |window: u64| natives.iter().any(|(w, ..)| w.id == window);
@@ -196,6 +198,26 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             d.insert_temp(key, shown);
         });
         in_window
+    }
+
+    /// Debug builds: warn once when for [`REBUILT_FRAMES`] frames running, every native window
+    /// is new, with the panels of the last frame's. The app builds its layout anew each frame
+    /// without [`Floating::with_id`], so each frame opens new OS windows. A layout loaded
+    /// again does it once.
+    #[cfg(debug_assertions)]
+    fn warn_rebuilt(&self, ctx: &Context, natives: &[(&Floating<P>, [f32; 4], ViewportId)]) {
+        let (key, warned) = (self.id.with("native-previous"), self.id.with("native-rebuilt"));
+        let current: Vec<(u64, Vec<P>)> = natives.iter().map(|(w, ..)| (w.id, w.panels().cloned().collect())).collect();
+        let (runs, previous) = ctx.data_mut(|d| d.remove_temp::<(usize, Vec<(u64, Vec<P>)>)>(key)).unwrap_or_default();
+        let runs = if rebuilt(&previous, &current) { runs + 1 } else { 0 };
+        if runs >= REBUILT_FRAMES && !ctx.data(|d| d.get_temp::<bool>(warned).unwrap_or(false)) {
+            log::warn!(
+                "craft-ui docking: the native floating windows get new ids every frame, so each frame opens new OS windows. \
+                 Keep the layout across frames, or give its windows ids with Floating::with_id."
+            );
+            ctx.data_mut(|d| d.insert_temp(warned, true));
+        }
+        ctx.data_mut(|d| d.insert_temp(key, (runs, current)));
     }
 
     /// The main window and the shown native windows on the desktop, front first: the window
@@ -611,6 +633,23 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             self.output.forwarded_events.extend(events);
         }
     }
+}
+
+/// Frames running whose native windows are all new, with the last frame's panels, before
+/// [`Renderer::warn_rebuilt`] warns.
+#[cfg(debug_assertions)]
+const REBUILT_FRAMES: usize = 3;
+
+/// Whether every window of `current` is new to `previous`, and they hold the same panels:
+/// windows, with their panels, as `(id, panels)`.
+#[cfg(debug_assertions)]
+fn rebuilt<P: Eq + Hash>(previous: &[(u64, Vec<P>)], current: &[(u64, Vec<P>)]) -> bool {
+    !current.is_empty() && current.iter().all(|(id, _)| previous.iter().all(|(p, _)| p != id)) && panels(previous) == panels(current)
+}
+
+#[cfg(debug_assertions)]
+fn panels<P: Eq + Hash>(windows: &[(u64, Vec<P>)]) -> std::collections::HashSet<&Vec<P>> {
+    windows.iter().map(|(_, panels)| panels).collect()
 }
 
 /// Move and size a native window so its content is the desktop rect `to`. The size goes
