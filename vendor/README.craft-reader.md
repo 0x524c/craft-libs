@@ -175,6 +175,12 @@ comma. The unit tests of all these items come with them; the CCITT, Type 3 and c
 raster tests are adapted in `tests/upstream_raster.rs` and the text contracts in
 `tests/upstream_text.rs`. (P8)'s PdfCraft test needs a Japanese substitute font and is not
 ported.
+- A CCITT image with `/Rows 0` (unknown height) decodes at most the rows that fit the stream's
+  output limit (counted in 1-bit rows) and 2^28 pixels; a known height is clamped the same way.
+  Before, it decoded to the end of the data, and a bit of 2D code can repeat a whole row.
+- A JPEG 2000 image over 2^28 pixels, or over its output limit (at least 64 MiB), by the
+  codestream's own dimensions is refused before decoding, and its buffer is reserved fallibly:
+  the image dictionary's smaller size no longer stands in for the size the decoder allocates.
 
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8

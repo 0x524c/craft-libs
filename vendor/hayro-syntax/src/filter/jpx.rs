@@ -17,7 +17,15 @@ impl ImageColorSpace {
     }
 }
 
-pub(crate) fn decode(data: &[u8], params: &ImageDecodeParams) -> Option<FilterResult<'static>> {
+/// PdfCraft patch: the most pixels a JPEG 2000 image may decode to, as for JBIG2.
+const MAX_PIXELS: u64 = 1 << 28;
+
+/// PdfCraft patch: the least output `limit` a JPEG 2000 image is held to: the limit comes from the
+/// image dictionary's size, which a decoder may round differently from the codestream's.
+const MIN_LIMIT: usize = 64 << 20;
+
+/// PdfCraft patch: `limit` is the most bytes the filter may produce (see `decode_limit`).
+pub(crate) fn decode(data: &[u8], params: &ImageDecodeParams, limit: usize) -> Option<FilterResult<'static>> {
     use crate::object::stream::ImageColorSpace;
 
     let settings = DecodeSettings {
@@ -58,7 +66,23 @@ pub(crate) fn decode(data: &[u8], params: &ImageDecodeParams) -> Option<FilterRe
         },
     };
     let has_alpha = image.has_alpha();
-    let bitmap = image.decode().ok()?;
+    // PdfCraft patch: the decoder sizes its output from the codestream's own dimensions, not the
+    // image dictionary's, and allocates it infallibly. Refuse more than `MAX_PIXELS` pixels or
+    // more than `limit` bytes before decoding, and reserve the buffer fallibly.
+    if u64::from(width) * u64::from(height) > MAX_PIXELS {
+        return None;
+    }
+    let channels = usize::from(cs.num_components()) + usize::from(has_alpha);
+    let len = (width as usize).checked_mul(height as usize)?.checked_mul(channels)?;
+    let output_limit = limit.max(MIN_LIMIT);
+    if len > output_limit {
+        return None;
+    }
+    let mut bitmap = Vec::new();
+    bitmap.try_reserve_exact(len).ok()?;
+    bitmap.resize(len, 0);
+    let mut context = hayro_jpeg2000::DecoderContext::default();
+    image.decode_into(&mut bitmap, &mut context).ok()?;
 
     let (mut data, mut alpha) = if !has_alpha {
         (bitmap, None)
@@ -82,6 +106,18 @@ pub(crate) fn decode(data: &[u8], params: &ImageDecodeParams) -> Option<FilterRe
     // The decoded image is always 8-bit, so if necessary we have to rescale
     // ourselves.
     if bpc != 8 {
+        // PdfCraft patch: the rescaled buffer can be larger than the 8-bit bitmap (up to 32 bits
+        // per component), so bound it, with alpha, by the same output limit.
+        let bits_per_row = (width as usize)
+            .checked_mul(usize::from(cs.num_components()))?
+            .checked_mul(usize::from(bpc))?;
+        let scaled_len = bits_per_row
+            .div_ceil(8)
+            .checked_mul(height as usize)?
+            .checked_mul(if alpha.is_some() { 2 } else { 1 })?;
+        if scaled_len > output_limit {
+            return None;
+        }
         data = scale(&data, bpc, cs.num_components(), width, height)?;
         alpha = alpha.and_then(|alpha| scale(&alpha, bpc, cs.num_components(), width, height));
     }
@@ -198,7 +234,9 @@ fn scale(
         .checked_mul(num_components as usize)?
         .checked_mul(bit_per_component as usize)?;
     let input_len = bits_per_row.div_ceil(8).checked_mul(height as usize)?;
-    let mut input = vec![0; input_len];
+    let mut input = Vec::new();
+    input.try_reserve_exact(input_len).ok()?;
+    input.resize(input_len, 0);
     let mut writer = BitWriter::new(&mut input, bit_per_component)?;
     let components_per_row = (num_components as usize).checked_mul(width as usize)?;
 
