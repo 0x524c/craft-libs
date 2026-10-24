@@ -51,8 +51,8 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   placeholders, filled in one pass.
 - **Isolation:** when a message or a value inserted into it has a right-to-left letter (bidi
   class R or AL), or a value has a bidi control (LRE, RLE, PDF, LRO, RLO, LRI, RLI, FSI, PDI,
-  LRM, RLM, ALM), `fmt` wraps each inserted value in a first-strong isolate (FSI…PDI), and `trn`
-  wraps `{n}` in a left-to-right one (LRI…PDI), so a Latin file name in an Arabic sentence, a
+  LRM, RLM, ALM), `fmt` wraps each inserted value in a first-strong isolate (FSI…PDI), and `trn`,
+  `file_size` and `measure` wrap `{n}` in a left-to-right one (LRI…PDI), so a Latin file name in an Arabic sentence, a
   Hebrew name in an English one, or an ASCII file name with a right-to-left override can't
   reorder the words around it. Embeddings, overrides and isolates a value opens are closed inside
   its isolate, and a stray PDF or PDI in it is dropped. Wrap numbers, paths and codes in `ltr`

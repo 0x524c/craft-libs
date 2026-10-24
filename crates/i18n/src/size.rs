@@ -5,7 +5,7 @@
 //! spacing (`{n} Mo`, `{n} %`). They are looked up with [`I18n::get`], never the plain row: a
 //! plain `B` row means bold. A byte count in words is the `@plural` row `{n} byte|{n} bytes`.
 
-use crate::{I18n, Lang, fmt};
+use crate::{I18n, Lang, fmt, ltr};
 
 /// The context unit rows are in.
 const CONTEXT: &str = "unit";
@@ -174,7 +174,7 @@ impl I18n {
     }
 
     fn unit_text(&self, lang: Lang, template: &str, n: &str) -> String {
-        fmt(self.get(lang, CONTEXT, template).unwrap_or(template), &[("n", n)])
+        fmt(self.get(lang, CONTEXT, template).unwrap_or(template), &[("n", &ltr(n))])
     }
 }
 
@@ -232,6 +232,15 @@ mod tests {
         // Only sizes below the smallest unit round up.
         assert_eq!(en(1025, FileSize::BINARY.smallest(SizeUnit::Kilo).unit_decimals(SizeUnit::Kilo, 0)), "1 KB");
         assert_eq!(en(100, FileSize::BINARY.smallest(SizeUnit::Kilo).unit_decimals(SizeUnit::Kilo, 0)), "1 KB");
+    }
+
+    #[test]
+    fn numbers_are_left_to_right_isolates_in_rtl_units() {
+        let (i18n, problems) = I18n::new(&[("ar", "unit\t{n} KB\t{n} ك.ب\n", "")], &["ar"]);
+        assert!(problems.is_empty(), "{problems:?}");
+        let ar = i18n.from_code("ar").unwrap();
+        assert_eq!(i18n.file_size(ar, 1536, FileSize::BINARY), "\u{2066}1.5\u{2069} ك.ب");
+        assert_eq!(en(1536, FileSize::BINARY), "1.5 KB", "no marks in left-to-right text");
     }
 
     #[test]
