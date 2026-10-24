@@ -24,7 +24,7 @@ use craft_pdf::syntax::object::{Array, Dict, Name, Stream, String as PdfText};
 use craft_pdf::{OpenError, open_slice};
 
 use crate::cms::{CmsConversion, ProfileError, srgb8_to_lab};
-use crate::ink::{Alternate, Ink, InkId, InkSet, Spot};
+use crate::ink::{Alternate, InkId, InkSet, Spot};
 
 /// Spot inks separated per page, after the four process inks. More than any press runs: a
 /// `DeviceN` space has at most 32 colorants, and every plate costs a render and a byte per
@@ -178,10 +178,10 @@ pub fn plates(pdf: &[u8], page: usize, dpi: f32, opts: &Options) -> Result<Plate
             continue;
         }
         let alternate = Alternate::Lab(srgb8_to_lab(swatch).unwrap_or([0.0; 3]));
-        let spot = Ink::Spot(Spot { name: ink.name().to_string(), alternate, solidity: None });
-        // A name that normalizes to one already listed (`A#2341` and `AA`) has no plate of its
-        // own.
-        match inks.add(spot) {
+        let spot = Spot { name: ink.name().to_string(), alternate, solidity: None };
+        // hayro hands over names with their `#xx` escapes decoded, so `#` here is a literal
+        // character. Two names that read the same after lossy UTF-8 decoding share one plate.
+        match inks.add_decoded(spot) {
             Some(id) if id.index() == separated.len() => separated.push(ink),
             _ => unseparated.push(ink.name().to_string()),
         }

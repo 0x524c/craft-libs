@@ -147,22 +147,31 @@ impl InkSet {
             Ink::Spot(spot) => spot,
         };
         let name = normalize_name(&spot.name).into_owned();
-        if name == "All" || name == "None" {
+        self.add_decoded(Spot { name, ..spot })
+    }
+
+    /// [`add`](Self::add) for a spot whose name is already decoded, as a PDF reader hands it
+    /// over: `#` in the name is a literal character.
+    pub(crate) fn add_decoded(&mut self, spot: Spot) -> Option<InkId> {
+        if spot.name == "All" || spot.name == "None" {
             return None;
         }
-        if let Some(id) = self.lookup(&name) {
+        if let Some(id) = self.lookup_decoded(&spot.name) {
             return Some(id);
         }
         let id = InkId(u16::try_from(self.inks.len()).ok()?);
-        self.inks.push(Ink::Spot(Spot { name, ..spot }));
+        self.inks.push(Ink::Spot(spot));
         Some(id)
     }
 
     /// The ink named `name`, compared after [`normalize_name`]: `"/Gold#20Foil"` finds
     /// `Gold Foil`.
     pub fn lookup(&self, name: &str) -> Option<InkId> {
-        let name = normalize_name(name);
-        if let Some(p) = Process::from_name(&name) {
+        self.lookup_decoded(&normalize_name(name))
+    }
+
+    fn lookup_decoded(&self, name: &str) -> Option<InkId> {
+        if let Some(p) = Process::from_name(name) {
             return Some(InkId::process(p));
         }
         let at = self.inks.iter().skip(4).position(|ink| ink.name() == name)?;
