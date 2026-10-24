@@ -754,6 +754,17 @@ fn device_n_image_writes_one_sample_per_colorant() {
     assert_eq!(found, 1);
 }
 
+/// `Image::from_custom` refuses channel data that doesn't match the dimensions, and dimensions
+/// whose channel length overflows, instead of panicking when the page is written.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn custom_image_with_mismatched_or_huge_dimensions_is_refused() {
+    let cmyk = |data: Vec<u8>, size| Samples { data, size, space: ImageColorspace::Cmyk, device_n: None };
+    assert!(Image::from_custom(cmyk(vec![0; 3], (1, 1)), false).is_err());
+    assert!(Image::from_custom(cmyk(vec![0; 4], (u32::MAX, u32::MAX)), false).is_err());
+    assert!(Image::from_custom(cmyk(vec![0; 4], (1, 1)), false).is_ok());
+}
+
 /// A DeviceN image needs its space from `CustomImage::device_n_space`.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]

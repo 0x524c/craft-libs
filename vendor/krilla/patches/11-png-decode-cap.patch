@@ -1,8 +1,63 @@
 diff --git a/src/graphics/image.rs b/src/graphics/image.rs
-index d97b8b4..d3ffcad 100644
+index d97b8b4..d8fd6a4 100644
 --- a/src/graphics/image.rs
 +++ b/src/graphics/image.rs
-@@ -356,7 +356,7 @@ impl Image {
+@@ -290,8 +290,8 @@ impl Image {
+ 
+     /// Create a new image from a custom image.
+     ///
+-    /// Panics if the dimensions of the image and the length of the
+-    /// data doesn't match.
++    /// Returns an error if the dimensions of the image and the length of the
++    /// data don't match.
+     pub fn from_custom<T: CustomImage>(image: T, interpolate: bool) -> Result<Image, String> {
+         let hash = (image.clone(), interpolate).sip_hash();
+         let mut metadata = ImageMetadata {
+@@ -312,22 +312,30 @@ impl Image {
+             );
+         }
+ 
+-        let num_components = metadata.num_components() as u32;
++        // Checked: 32 DeviceN components at 16 bits overflow `u32` at about 67 megapixels.
++        let bytes_per_component = usize::from(image.bits_per_component().as_u8() / 8);
++        let (width, height) = metadata.size;
++        let alpha_channel_len = usize::try_from(width)
++            .ok()
++            .zip(usize::try_from(height).ok())
++            .and_then(|(w, h)| w.checked_mul(h)?.checked_mul(bytes_per_component))
++            .ok_or("image dimensions are too large")?;
++        let color_channel_len = alpha_channel_len
++            .checked_mul(metadata.num_components())
++            .ok_or("image dimensions are too large")?;
++        if image.color_channel().len() != color_channel_len {
++            return Err("color channel length doesn't match the image dimensions".to_string());
++        }
++        if image
++            .alpha_channel()
++            .is_some_and(|alpha| alpha.len() != alpha_channel_len)
++        {
++            return Err("alpha channel length doesn't match the image dimensions".to_string());
++        }
++
+         Ok(Self(Arc::new(ImageRepr {
+             inner: Deferred::new(move || {
+-                let bytes_per_component = (image.bits_per_component().as_u8() / 8) as u32;
+-                let color_channel_len = bytes_per_component
+-                    * num_components
+-                    * metadata.size.0
+-                    * metadata.size.1;
+                 let color_channel = image.color_channel();
+-                assert_eq!(color_channel.len(), color_channel_len as usize);
+-
+-                let alpha_channel_len = bytes_per_component * metadata.size.0 * metadata.size.1;
+-                let alpha_channel = image.alpha_channel();
+-                if let Some(alpha_channel) = alpha_channel {
+-                    assert_eq!(alpha_channel.len(), alpha_channel_len as usize);
+-                }
+ 
+                 Ok(Repr::Sampled(SampledRepr {
+                     color_channel: deflate_encode(color_channel),
+@@ -356,7 +364,7 @@ impl Image {
          Self(Arc::new(ImageRepr {
              inner: Deferred::new(move || {
                  let (color_channel, alpha_channel, bits_per_component) =
@@ -11,7 +66,7 @@ index d97b8b4..d3ffcad 100644
  
                  Ok(Repr::Sampled(SampledRepr {
                      color_channel,
-@@ -554,6 +554,13 @@ fn png_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
+@@ -554,6 +562,13 @@ fn png_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
      let reader = decoder
          .read_info()
          .map_err(|e| e.to_string().to_ascii_lowercase())?;
@@ -25,7 +80,7 @@ index d97b8b4..d3ffcad 100644
      let info = reader.info();
  
      let size = (info.width, info.height);
-@@ -588,6 +595,11 @@ fn png_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
+@@ -588,6 +603,11 @@ fn png_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
      })
  }
  
@@ -37,7 +92,7 @@ index d97b8b4..d3ffcad 100644
  fn decode_png(data: &[u8]) -> Result<Repr, String> {
      let cursor = Cursor::new(data);
      let mut decoder = png::Decoder::new(cursor);
-@@ -595,7 +607,15 @@ fn decode_png(data: &[u8]) -> Result<Repr, String> {
+@@ -595,7 +615,15 @@ fn decode_png(data: &[u8]) -> Result<Repr, String> {
      let mut reader = decoder
          .read_info()
          .map_err(|e| e.to_string().to_ascii_lowercase())?;
@@ -54,7 +109,7 @@ index d97b8b4..d3ffcad 100644
      let _ = reader
          .next_frame(&mut img_data)
          .map_err(|e| e.to_string())?;
-@@ -610,8 +630,8 @@ fn decode_png(data: &[u8]) -> Result<Repr, String> {
+@@ -610,8 +638,8 @@ fn decode_png(data: &[u8]) -> Result<Repr, String> {
      };
  
      let (color_channel, alpha_channel, bits_per_component) = match bit_depth {
@@ -65,7 +120,7 @@ index d97b8b4..d3ffcad 100644
          _ => return Err("image has an unsupported bit-depth".to_string()),
      };
  
-@@ -697,7 +717,7 @@ fn decode_gif(data: Data) -> Result<Repr, String> {
+@@ -697,7 +725,7 @@ fn decode_gif(data: Data) -> Result<Repr, String> {
          .ok_or("GIF image seems to be empty".to_string())?;
  
      let (color_channel, alpha_channel, bits_per_component) =
@@ -74,7 +129,7 @@ index d97b8b4..d3ffcad 100644
  
      Ok(Repr::Sampled(SampledRepr {
          color_channel,
-@@ -755,7 +775,7 @@ fn decode_webp(data: Data) -> Result<Repr, String> {
+@@ -755,7 +783,7 @@ fn decode_webp(data: Data) -> Result<Repr, String> {
      };
  
      let (color_channel, alpha_channel, bits_per_component) =
@@ -83,7 +138,7 @@ index d97b8b4..d3ffcad 100644
  
      Ok(Repr::Sampled(SampledRepr {
          color_channel,
-@@ -764,9 +784,21 @@ fn decode_webp(data: Data) -> Result<Repr, String> {
+@@ -764,9 +792,21 @@ fn decode_webp(data: Data) -> Result<Repr, String> {
      }))
  }
  
@@ -107,7 +162,7 @@ index d97b8b4..d3ffcad 100644
      } else {
          Vec::new()
      };
-@@ -774,7 +806,7 @@ fn handle_u8_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, Bi
+@@ -774,7 +814,7 @@ fn handle_u8_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, Bi
      let color_channel = match cs {
          ColorSpace::RGB => deflate_encode(data),
          ColorSpace::RGBA => {
@@ -116,7 +171,7 @@ index d97b8b4..d3ffcad 100644
              data.chunks_exact(4).for_each(|data| {
                  buf.extend_from_slice(&data[0..3]);
                  alphas.push(data[3]);
-@@ -783,7 +815,7 @@ fn handle_u8_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, Bi
+@@ -783,7 +823,7 @@ fn handle_u8_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, Bi
          }
          ColorSpace::Luma => deflate_encode(data),
          ColorSpace::LumaA => {
@@ -125,7 +180,7 @@ index d97b8b4..d3ffcad 100644
              data.chunks_exact(2).for_each(|data| {
                  buf.push(data[0]);
                  alphas.push(data[1]);
-@@ -800,12 +832,12 @@ fn handle_u8_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, Bi
+@@ -800,12 +840,12 @@ fn handle_u8_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, Bi
          None
      };
  
@@ -141,7 +196,7 @@ index d97b8b4..d3ffcad 100644
      } else {
          Vec::new()
      };
-@@ -813,7 +845,7 @@ fn handle_u16_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, B
+@@ -813,7 +853,7 @@ fn handle_u16_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, B
      let encoded_image = match cs {
          ColorSpace::RGB => deflate_encode(data),
          ColorSpace::RGBA => {
@@ -150,7 +205,7 @@ index d97b8b4..d3ffcad 100644
              data.chunks_exact(8).for_each(|data| {
                  buf.extend_from_slice(&data[0..6]);
                  alphas.extend_from_slice(&data[6..]);
-@@ -822,7 +854,7 @@ fn handle_u16_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, B
+@@ -822,7 +862,7 @@ fn handle_u16_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, B
          }
          ColorSpace::Luma => deflate_encode(data),
          ColorSpace::LumaA => {
@@ -159,7 +214,7 @@ index d97b8b4..d3ffcad 100644
              data.chunks_exact(4).for_each(|data| {
                  buf.extend_from_slice(&data[0..2]);
                  alphas.extend_from_slice(&data[2..]);
-@@ -839,7 +871,7 @@ fn handle_u16_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, B
+@@ -839,7 +879,7 @@ fn handle_u16_image(data: &[u8], cs: ColorSpace) -> (Vec<u8>, Option<Vec<u8>>, B
          None
      };
  
@@ -168,7 +223,7 @@ index d97b8b4..d3ffcad 100644
  }
  
  fn get_icc_profile_type(data: &[u8], color_space: ImageColorspace) -> Option<GenericICCProfile> {
-@@ -864,6 +896,54 @@ mod tests {
+@@ -864,6 +904,54 @@ mod tests {
          assert!(e.is_err());
      }
  

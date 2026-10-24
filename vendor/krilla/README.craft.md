@@ -292,3 +292,7 @@ A PNG whose header implies more than 1 GiB of decoded output is refused by
 fallibly, so a small file (or a bitmap glyph in a font) cannot request an allocation that
 ends the process. The color and alpha buffers that PNG, GIF and WebP decoding split an
 image into are reserved fallibly too, and a failure there is an image error.
+`Image::from_custom` computes the expected channel lengths with checked `usize` arithmetic and
+returns an error when they overflow or don't match the data, where upstream multiplied in
+`u32` and asserted while writing (32 DeviceN components at 16 bits overflow at about 67
+megapixels).

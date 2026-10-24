@@ -290,8 +290,8 @@ impl Image {
 
     /// Create a new image from a custom image.
     ///
-    /// Panics if the dimensions of the image and the length of the
-    /// data doesn't match.
+    /// Returns an error if the dimensions of the image and the length of the
+    /// data don't match.
     pub fn from_custom<T: CustomImage>(image: T, interpolate: bool) -> Result<Image, String> {
         let hash = (image.clone(), interpolate).sip_hash();
         let mut metadata = ImageMetadata {
@@ -312,22 +312,30 @@ impl Image {
             );
         }
 
-        let num_components = metadata.num_components() as u32;
+        // Checked: 32 DeviceN components at 16 bits overflow `u32` at about 67 megapixels.
+        let bytes_per_component = usize::from(image.bits_per_component().as_u8() / 8);
+        let (width, height) = metadata.size;
+        let alpha_channel_len = usize::try_from(width)
+            .ok()
+            .zip(usize::try_from(height).ok())
+            .and_then(|(w, h)| w.checked_mul(h)?.checked_mul(bytes_per_component))
+            .ok_or("image dimensions are too large")?;
+        let color_channel_len = alpha_channel_len
+            .checked_mul(metadata.num_components())
+            .ok_or("image dimensions are too large")?;
+        if image.color_channel().len() != color_channel_len {
+            return Err("color channel length doesn't match the image dimensions".to_string());
+        }
+        if image
+            .alpha_channel()
+            .is_some_and(|alpha| alpha.len() != alpha_channel_len)
+        {
+            return Err("alpha channel length doesn't match the image dimensions".to_string());
+        }
+
         Ok(Self(Arc::new(ImageRepr {
             inner: Deferred::new(move || {
-                let bytes_per_component = (image.bits_per_component().as_u8() / 8) as u32;
-                let color_channel_len = bytes_per_component
-                    * num_components
-                    * metadata.size.0
-                    * metadata.size.1;
                 let color_channel = image.color_channel();
-                assert_eq!(color_channel.len(), color_channel_len as usize);
-
-                let alpha_channel_len = bytes_per_component * metadata.size.0 * metadata.size.1;
-                let alpha_channel = image.alpha_channel();
-                if let Some(alpha_channel) = alpha_channel {
-                    assert_eq!(alpha_channel.len(), alpha_channel_len as usize);
-                }
 
                 Ok(Repr::Sampled(SampledRepr {
                     color_channel: deflate_encode(color_channel),
