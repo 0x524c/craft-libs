@@ -205,6 +205,14 @@ OCR text (mode 3) keeps a heading drawn through its clip. The unit tests
 glyph_names_resolve_to_the_first_glyph_with_that_name}` come with (49) and (50); the #3116
 contract is in `tests/upstream_text.rs`.
 
+Rendering fixes from the [PdfCraft revision 0b670caf4a090e9d83a7f41a84b4cb2144a2d33e ledger](https://github.com/storytold/pdfcraft/blob/0b670caf4a090e9d83a7f41a84b4cb2144a2d33e/vendor/README.md),
+each marked `PdfCraft patch` in the source: hayro-interpret (40) (PdfCraft #2987), an optional
+content membership dictionary with a visibility expression (`/VE`: `/And`, `/Or` and `/Not`
+over groups the document lists in `/OCProperties /OCGs`) shows its content when the
+expression is true, ahead of `/OCGs` and `/P`; a malformed expression, or one nested deeper
+than 32 levels, is ignored and `/OCGs` and `/P` decide. Its PdfCraft raster test is adapted in
+`tests/upstream_raster.rs`.
+
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
 equivalence. The independent color oracles, backend tests and facade contracts cover

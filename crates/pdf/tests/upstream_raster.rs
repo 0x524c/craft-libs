@@ -1,10 +1,12 @@
 //! Portable regressions adapted from PdfCraft 7437bde378f43856eada40af25b983812e615e8a and
 //! a2ec27b4775f53c40cad3456936d9406611e3a8d (MIT OR Apache-2.0).
 #![cfg(feature = "raster")]
+use craft_pdf::interpret::InterpreterSettings;
 use craft_pdf::{
     open_slice,
     raster::{self, Options, RenderCache},
 };
+use std::sync::Arc;
 
 struct Pixels {
     width: u32,
@@ -566,4 +568,53 @@ fn mesh_triangles_sharing_an_edge_leave_no_seam() {
     }
     assert!(spilled.is_empty(), "shaded pixels wholly across the diagonal: {spilled:?}");
     assert!(missing.is_empty(), "unshaded pixels wholly inside the triangle: {missing:?}");
+}
+
+/// PdfCraft ledger hayro-interpret (40) (#2987): an optional content membership dictionary
+/// with a visibility expression (`/VE`, ISO 32000-2 §8.11.2.2) shows its content only when the
+/// expression is true, and the expression takes precedence over `/OCGs` and `/P`. A malformed
+/// expression, one naming an object that isn't a listed group, or one nested too deep falls
+/// back to `/OCGs`.
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn visibility_expressions_decide_what_a_membership_dictionary_shows() {
+    let render = |ocmd: &str, off: &[i32]| {
+        let catalog = "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R 6 0 R] /D << /Order [5 0 R 6 0 R] >> >> >>";
+        let objects = format!("5 0 obj << /Type /OCG /Name (A) >> endobj\n6 0 obj << /Type /OCG /Name (B) >> endobj\n7 0 obj {ocmd} endobj");
+        let pdf = String::from_utf8(one_page(
+            "/MediaBox [0 0 100 100] /Resources << /Properties << /M1 7 0 R >> >>",
+            b"/OC /M1 BDC 1 0 0 rg 0 0 100 100 re f EMC",
+            objects.as_bytes(),
+        ))
+        .unwrap()
+        .replacen("<< /Type /Catalog /Pages 2 0 R >>", catalog, 1);
+        let doc = open_slice(pdf.as_bytes(), None).unwrap();
+        let settings = InterpreterSettings { ocg_overrides: Arc::new(off.iter().map(|n| (*n, 0, false)).collect()), ..Default::default() };
+        let options = Options { background: [255; 4], scale: [0.5, 0.5], ..Default::default() };
+        let raster = raster::render(&doc.pages()[0], &RenderCache::new(), &settings, &options).unwrap();
+        raster.bytes()[..4] == [255, 0, 0, 255]
+    };
+    let and = "<< /Type /OCMD /VE [/And 5 0 R 6 0 R] >>";
+    assert!(render(and, &[]), "And: both on");
+    assert!(!render(and, &[5]), "And: one off");
+    let or = "<< /Type /OCMD /VE [/Or 5 0 R 6 0 R] >>";
+    assert!(render(or, &[5]), "Or: one on");
+    assert!(!render(or, &[5, 6]), "Or: both off");
+    let not = "<< /Type /OCMD /VE [/Not 5 0 R] >>";
+    assert!(!render(not, &[]), "Not: the group is on");
+    assert!(render(not, &[5]), "Not: the group is off");
+    let nested = "<< /Type /OCMD /VE [/And [/Not 5 0 R] 6 0 R] >>";
+    assert!(render(nested, &[5]), "nested: A off, B on");
+    assert!(!render(nested, &[]), "nested: A on");
+    let both = "<< /Type /OCMD /OCGs [5 0 R] /P /AllOn /VE [/Not 5 0 R] >>";
+    assert!(render(both, &[5]), "the expression, not /P, decides");
+    // Malformed: an unknown operator, a wrong operand count, a bare group, a string operand,
+    // a missing object, and the page instead of a group.
+    for bad in ["[/Xor 5 0 R]", "[/Not 5 0 R 6 0 R]", "[/And]", "[5 0 R]", "[/And (5)]", "[/Or 8 0 R]", "[/Or 3 0 R]"] {
+        let ocmd = format!("<< /Type /OCMD /OCGs [5 0 R] /VE {bad} >>");
+        assert!(render(&ocmd, &[]), "{bad}: /OCGs on");
+        assert!(!render(&ocmd, &[5]), "{bad}: /OCGs off");
+    }
+    let deep = format!("<< /Type /OCMD /OCGs [5 0 R] /VE {}5 0 R{} >>", "[/Not ".repeat(41), "]".repeat(41));
+    assert!(!render(&deep, &[5]), "too deep: /OCGs decides");
 }
