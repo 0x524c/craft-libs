@@ -302,10 +302,8 @@ impl<P> Default for Layout<P> {
 pub enum Placement<P> {
     /// Insert before this existing destination member, or append. Also reorders a group.
     Tab { before: Option<P> },
-    /// Center inserts after the anchor; sides create a new half-size split. Sides apply to
-    /// `Tabs` and `Stack` nodes only. A frame that holds the fixed size of its parent split
-    /// along the same axis keeps it: on its outer side the new split wraps the parent, on its
-    /// inner side it halves the parent's other child.
+    /// Center inserts after the anchor; sides split the anchor's frame into two halves, and
+    /// every other frame keeps its size. Sides apply to `Tabs` and `Stack` nodes only.
     Split(Zone),
     /// A new group above or below the anchor's group in a dock column. On an anchor in a
     /// floating window, a split of the anchor's group above or below.
