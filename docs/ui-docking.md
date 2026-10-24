@@ -347,17 +347,19 @@ that is not floatable, stays in-window. Floating windows get no taskbar or Alt-T
 - **Bar.** Each window has a bar at the top, 18 points high, in the floating title bar's style:
   the title (the shown panel of its first group) and ×. Dragging the bar moves the window. On
   Wayland, where a window cannot be placed, the bar hands the move to the compositor. On
-  Windows and Linux the OS frame is off. On macOS the frame stays for its shadow and rounded
-  corners, with its title bar and buttons hidden, and is not resizable: AppKit's resize areas
-  reach well into the content and would take clicks from the ×.
-- **Resize.** A movable window resizes from bands 4 pt deep along its edges. Each corner is an
-  L along both edges, 12 pt long and as deep as the edges. The bands leave out the bar's
-  buttons, which sit 4 pt in from the window's edge so the corner's grab runs down beside
-  them; elsewhere the top band lies over the bar's drag area. The OS runs the resize
-  (`ViewportCommand::BeginResize`), except on macOS, where winit cannot: there the window
-  follows the pointer by `InnerSize` and `OuterPosition`, keeping the opposite edges and the
-  160 by 100 pt minimum, and a window released with too little of its bar on a monitor moves
-  back onto the nearest one, as after a bar drag.
+  Windows and Linux the OS frame is off. On macOS the frame stays, with its title bar and
+  buttons hidden, for its resizing, rounded corners and standard window shadow. The dock area
+  paints no shadow of its own around a native window.
+- **Resize.** A movable window resizes from its edges and corners. On macOS AppKit does it,
+  with its own areas and cursors. Its corner area reaches about 15 pt into the window along
+  each edge (a 19 pt square, measured on macOS 26) and takes presses before the content sees
+  them, so the bar's buttons sit 19 pt in from the window's trailing edge; the 18 pt bar is too
+  short to keep them below it. Over AppKit's areas the window sets no cursor of its own, which
+  would flicker with AppKit's. Elsewhere the window resizes from bands 6 pt deep along its
+  edges, and each corner is an L along both edges, 16 pt long and as deep as the edges. The
+  bands leave out the bar's buttons, which sit 6 pt in from the window's edge so the corner's
+  grab runs down beside them; elsewhere the top band lies over the bar's drag area. The OS
+  runs the resize from a band (`ViewportCommand::BeginResize`).
 - **Close.** The bar's × and the OS close request close the window's panels, as the
   floating window's × does. They reopen from the app's Window menu.
 - **Place.** `Floating::native` is the desktop rect of the window's content (egui's
