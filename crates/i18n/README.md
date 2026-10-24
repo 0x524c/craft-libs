@@ -45,8 +45,8 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   → `pt`, `zh-hant-hk` → `zh-hant`); `sr-latn` never falls back to Cyrillic `sr`. A missing
   translation never errors.
 - **Lookups:** `t` (plain), `tc` (with a context such as `menu` or `@msg`, else plain), `tid` (an
-  `@id` command id, else the English label), `trn` (a count, `@plural` rows, `{n}` filled), `get`
-  (one context along the locale chain, so `pt-br` can return a `pt` row, but never the plain row
+  `@id` command id, else the English label), `trn` and `trn_decimal` (a count, `@plural` rows,
+  `{n}` filled), `get` (one context along the locale chain, so `pt-br` can return a `pt` row, but never the plain row
   or English: a key cap's name under `key`, or "is there a translation?"), and `fmt` for `{name}`
   placeholders, filled in one pass.
 - **Isolation:** when a message or a value inserted into it has a right-to-left letter (bidi
@@ -67,10 +67,13 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   `log::warn!`) on the first lookup that reaches it, including as a fallback. `I18n::check_all()`
   parses every locale and returns all problems (`<locale>/<common|app>: line N: …`), for a test.
 - **Plurals:** forms are listed in CLDR order (zero, one, two, few, many, other) for the categories
-  whole numbers 0 to 1000 reach, from `intl_pluralrules`; a count in any other category takes the
-  last form. CLDR's `pt` is Brazilian, so `pt` uses `pt-PT`'s rules (0 is plural) and `pt-br`
-  `pt`'s. `intl_pluralrules` is pinned to the version craft-i18n's checker uses, and
-  `plural_form_counts` holds the same counts.
+  whole numbers 0 to 1000 reach, from ICU4X's CLDR rules; `plural_form_counts` holds the counts
+  craft-i18n's checker expects. `trn_decimal` picks the form from the digits shown (ICU4X plural
+  operands), so English `1.0` is plural and French `1,5` singular. A count in a category integers
+  never reach takes the `few` form if there is one (Russian and Ukrainian decimals, `1,5 файла`),
+  else the last. Rules are per language, so `sr-latn` and `zh-hant` take `sr`'s and `zh`'s. CLDR's
+  `pt` is Brazilian, so `pt` uses `pt-PT`'s rules (0 is plural) and `pt-br` `pt`'s. A language
+  CLDR has no plural rules for shows English forms.
 - **Names:** a language's name comes from the app catalog's `@id language.name` row, else the
   shared catalog's, else its code; English is "English".
 - **Scripts and direction:** for any language tag, `scripts` lists the ISO 15924 scripts its
@@ -85,6 +88,29 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   `pt-PT` → `pt-br` when that is the only Portuguese, `C`/`POSIX` → English. A script is never
   crossed: `sr_RS@latin` and `sr-Latn-RS` pick `sr-latn`, never `sr`, while `sr-Cyrl-RS` picks `sr`.
   A region that implies a script counts as that script: `pa-PK` picks `pa-arab`, not Gurmukhi `pa`.
+- **Sizes and units:** `file_size(lang, bytes, style)` writes `1.5 MB` or `512 bytes`; `FileSize`
+  picks steps of 1024 named KB (`BINARY`), 1024 named KiB (`IEC`) or 1000 named KB (`DECIMAL`),
+  the decimals per unit, no decimals from a given value up, the smallest and largest unit (below
+  the smallest, sizes round up), and `B` or words for bytes. `measure(lang, value, decimals,
+  "{n} px")` writes any other measure. Unit names are rows in context `unit`, keyed by the English
+  template (`{n} MB` → `{n} Mo`, `{n}%` → `{n} %`) and read with `get`, so a plain `B` row (bold)
+  is never used; bytes in words are the `@plural` row `{n} byte|{n} bytes`. Numbers are written
+  by `I18n::format`.
+- **Numbers:** `Format` writes numbers for a `Region` on ICU4X's decimal formatter: `integer`
+  (`1.234.567`, Indian `12,34,567`), `number(value, decimals)` and `percent(ratio, decimals)`
+  (`50 %`, Turkish `%50`). It follows the region, not the interface language, with the locale's
+  digits (`١٬٢٣٤٫٥` in Egypt, `۱٬۲۳۴` in Iran) or, with `Digits::Latin`, `0`–`9`. With Latin
+  digits, a decimal or grouping separator the system sets (Windows' and macOS's own settings)
+  replaces the locale's. `I18n::format` is the format `trn`, `file_size` and `measure` use: the
+  system region's until `I18n::set_format` (the user's region setting or digit choice), and again
+  after `I18n::reset_format`. A count in `trn` is therefore grouped and in the region's digits
+  (`1.234 Dateien`, `١٬٢٣٤ ملفًا`); for names written into documents or files (`Copy 1234`), use
+  `trn_plain`, which writes `0`–`9` without grouping.
+- **CLDR data:** decimal symbols, digits and plural rules (`data/numbers.postcard`, about 10 KB) and
+  percent patterns (`data/locales.rs`) cover every CLDR locale; `data/generate.sh` rebuilds both
+  from CLDR. The ICU4X crates are pinned to one minor version (`~2.3`), the one the data is
+  generated for. The ICU4X code and data add about 90 KB to a stripped release build and 80 KB to
+  wasm.
 - **Formatting region:** `Region` holds how numbers, times and measurements are written, apart
   from the interface language: the number and time locales (BCP 47), metric or US measurement, A4
   or Letter, and the decimal and grouping separators (or no grouping) and clock when the system
@@ -98,14 +124,6 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   carry `-u-ms-`, `-u-hc-`, `-u-rg-` and `-u-nu-` (Apple's `@numbers=`), and a chosen digit
   system stays in the number locale.
   Ported from WordCraft's `Region`.
-- **Sizes and units:** `file_size(lang, bytes, style)` writes `1.5 MB` or `512 bytes`; `FileSize`
-  picks steps of 1024 named KB (`BINARY`), 1024 named KiB (`IEC`) or 1000 named KB (`DECIMAL`),
-  the decimals per unit, no decimals from a given value up, the smallest and largest unit (below
-  the smallest, sizes round up), and `B` or words for bytes. `measure(lang, value, decimals,
-  "{n} px")` writes any other measure. Unit names are rows in context `unit`, keyed by the English
-  template (`{n} MB` → `{n} Mo`, `{n}%` → `{n} %`) and read with `get`, so a plain `B` row (bold)
-  is never used; bytes in words are the `@plural` row `{n} byte|{n} bytes`. Numbers are
-  ASCII digits with a decimal point.
 - **Pseudo locale** (`pseudo`, debug builds only, never in `languages()`): every lookup, `get`
   included, comes back as `⟦…⟧`, line by line, so text drawn without the marks never went through
   translation. `looked_up()` lists the source texts looked up so far, for an audit against a

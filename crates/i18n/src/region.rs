@@ -264,7 +264,7 @@ fn from_posix(var: impl Fn(&str) -> Option<String>, platform: impl FnOnce() -> O
 /// reads, where Windows keeps the regional format and the user's changes to it. `LocaleName` is
 /// the format (`pl-PL`), else the platform's preferred locale.
 #[cfg(any(test, windows))]
-fn from_windows(value: impl Fn(&str) -> Option<String>, platform: impl FnOnce() -> Option<String>) -> Region {
+pub(crate) fn from_windows(value: impl Fn(&str) -> Option<String>, platform: impl FnOnce() -> Option<String>) -> Region {
     let mut region = Region::from_tag(&value("LocaleName").or_else(platform).unwrap_or_default());
     region.decimal = value("sDecimal").as_deref().and_then(single_char);
     region.grouping = value("sThousand").as_deref().and_then(grouping);

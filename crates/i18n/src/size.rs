@@ -103,8 +103,8 @@ impl FileSize {
         self
     }
 
-    /// The unit `bytes` is written in and the number in it, in English.
-    fn parts(&self, bytes: u64) -> (SizeUnit, String) {
+    /// The unit `bytes` is written in, the number in it and its digits after the point.
+    fn parts(&self, bytes: u64) -> (SizeUnit, f64, usize) {
         let (smallest, largest) = (self.smallest.min(self.largest), self.largest);
         let mut unit = smallest;
         for &u in SizeUnit::ALL.iter().filter(|u| (smallest..=largest).contains(u)) {
@@ -133,7 +133,7 @@ impl FileSize {
                 unit = next;
                 continue;
             }
-            return (unit, number(rounded, usize::from(decimals)));
+            return (unit, rounded, usize::from(decimals));
         }
     }
 
@@ -158,19 +158,21 @@ impl FileSize {
 }
 
 impl I18n {
-    /// `bytes` as a file size in `lang`, written the way `style` says (`1.5 MB`, `512 bytes`).
+    /// `bytes` as a file size in `lang`, written the way `style` says (`1.5 MB`, `512 bytes`), the
+    /// number as [`I18n::format`] writes it (`1,5 Mo`).
     pub fn file_size(&self, lang: Lang, bytes: u64, style: FileSize) -> String {
-        let (unit, n) = style.parts(bytes);
+        let (unit, n, decimals) = style.parts(bytes);
         if unit == SizeUnit::Byte && !style.byte_symbol {
             return self.trn(lang, bytes, "{n} byte", "{n} bytes");
         }
-        self.unit_text(lang, style.template(unit), &n)
+        self.unit_text(lang, style.template(unit), &self.format().number(n, decimals))
     }
 
-    /// `value` with `decimals` digits after the decimal point in the unit template `unit`, an
-    /// English catalog key with the number as `{n}` (`{n} px`, `{n}%`, `{n} dB`).
+    /// `value` with `decimals` digits after the decimal separator in the unit template `unit`, an
+    /// English catalog key with the number as `{n}` (`{n} px`, `{n} dB`), the number as
+    /// [`I18n::format`] writes it. Percentages are [`crate::Format::percent`].
     pub fn measure(&self, lang: Lang, value: f64, decimals: usize, unit: &str) -> String {
-        self.unit_text(lang, unit, &number(value, decimals))
+        self.unit_text(lang, unit, &self.format().number(value, decimals))
     }
 
     fn unit_text(&self, lang: Lang, template: &str, n: &str) -> String {
@@ -178,17 +180,10 @@ impl I18n {
     }
 }
 
-/// `value` with `decimals` digits after the decimal point, in ASCII digits with a decimal point.
-/// The one place sizes and measures write numbers, for craft-i18n's locale number formatting
-/// (digits, separators) to take over.
-fn number(value: f64, decimals: usize) -> String {
-    format!("{value:.decimals$}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Embedded;
+    use crate::{Embedded, Format};
 
     static E: &Embedded = &[(
         "fr",
@@ -198,12 +193,14 @@ mod tests {
 
     fn en(bytes: u64, style: FileSize) -> String {
         let (i18n, _) = I18n::new(&[], &[]);
+        i18n.set_format(Format::from_tag("en-US"));
         i18n.file_size(Lang::EN, bytes, style)
     }
 
     #[test]
     fn binary_decimal_and_iec_steps() {
         assert_eq!(en(512, FileSize::BINARY), "512 bytes");
+        assert_eq!(en(1023, FileSize::BINARY), "1,023 bytes");
         assert_eq!(en(1, FileSize::BINARY), "1 byte");
         assert_eq!(en(1536, FileSize::BINARY), "1.5 KB");
         assert_eq!(en(1536, FileSize::IEC), "1.5 KiB");
@@ -228,7 +225,7 @@ mod tests {
         assert_eq!(en(12_600_000, style), "13 MB");
         assert_eq!(en(9_960_000, style), "10 MB", "whole once rounded to 10");
         assert_eq!(en(9_940_000, style), "9.9 MB");
-        assert_eq!(en(5_000_000_000, style), "5000 MB");
+        assert_eq!(en(5_000_000_000, style), "5,000 MB");
         // Only sizes below the smallest unit round up.
         assert_eq!(en(1025, FileSize::BINARY.smallest(SizeUnit::Kilo).unit_decimals(SizeUnit::Kilo, 0)), "1 KB");
         assert_eq!(en(100, FileSize::BINARY.smallest(SizeUnit::Kilo).unit_decimals(SizeUnit::Kilo, 0)), "1 KB");
@@ -248,11 +245,21 @@ mod tests {
         let (i18n, problems) = I18n::new(E, &["fr"]);
         assert!(problems.is_empty(), "{problems:?}");
         let fr = i18n.from_code("fr").unwrap();
-        assert_eq!(i18n.file_size(fr, 1536, FileSize::BINARY), "1.5 Ko");
+        i18n.set_format(Format::from_tag("fr-FR"));
+        assert_eq!(i18n.file_size(fr, 1536, FileSize::BINARY), "1,5 Ko");
         assert_eq!(i18n.file_size(fr, 512, FileSize::BINARY), "512 octets");
         assert_eq!(i18n.file_size(fr, 512, FileSize::BINARY.byte_symbol()), "512 o", "not the plain row B (bold)");
-        assert_eq!(i18n.file_size(fr, 3 << 30, FileSize::BINARY), "3.0 GB", "a missing row is English");
+        assert_eq!(i18n.file_size(fr, 3 << 30, FileSize::BINARY), "3,0 GB", "a missing row is English");
         assert_eq!(i18n.measure(fr, 50.0, 0, "{n}%"), "50 %");
-        assert_eq!(i18n.measure(Lang::EN, 12.34, 1, "{n} px"), "12.3 px");
+        assert_eq!(i18n.measure(Lang::EN, 12.34, 1, "{n} px"), "12,3 px", "numbers follow the region, not the language");
+    }
+
+    #[test]
+    fn locale_digits() {
+        let (i18n, _) = I18n::new(&[], &[]);
+        i18n.set_format(Format::from_tag("ar-EG"));
+        assert_eq!(i18n.file_size(Lang::EN, 1536, FileSize::BINARY), "١٫٥ KB");
+        i18n.set_format(Format::from_tag("hi"));
+        assert_eq!(i18n.file_size(Lang::EN, 1_234_567, FileSize::DECIMAL.largest(SizeUnit::Byte).byte_symbol()), "12,34,567 B");
     }
 }
