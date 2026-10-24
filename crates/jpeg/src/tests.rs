@@ -620,6 +620,31 @@ fn huffman_scan_out_of_data_is_not_clean() {
     assert!(decode(&cut, &Limits::default(), None).unwrap().damaged);
 }
 
+/// Arithmetic data cut short before a valid EOI is reported damaged, and the blocks before the
+/// cut are kept: past the end the decoder is fed zeros, and a restart marker goes missing.
+#[test]
+fn arithmetic_scan_out_of_data_is_damaged() {
+    let blocks = coefficients(64, 11, 500);
+    for ri in [0, 2] {
+        let full = arith_stream(8, 8, 8, &blocks, &[(0, 63, 0, 0)], ri);
+        assert_eq!(decoded_blocks(&full), blocks, "ri={ri}");
+        let data = last_scan_data(&full);
+        let end = full.len() - 2;
+        for cut in [data + (end - data) / 2, data] {
+            let mut s = full[..cut].to_vec();
+            if s.last() == Some(&0xFF) {
+                s.pop();
+            }
+            s.extend([0xFF, 0xD9]);
+            let (frame, _, damaged) = decode_coefficients(&s, &Limits::default()).unwrap();
+            assert!(damaged, "ri={ri} cut at {}", cut - data);
+            if cut > data {
+                assert_eq!(frame.comps[0].coefs[0], blocks[0], "ri={ri}");
+            }
+        }
+    }
+}
+
 /// A baseline file from `jpeg-encoder`, relabeled SOF1, decodes like zune decodes the original.
 #[test]
 fn extended_huffman_matches_zune_on_baseline_data() {
