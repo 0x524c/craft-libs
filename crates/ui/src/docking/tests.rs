@@ -303,23 +303,30 @@ fn pointer_targets_distinguish_reorder_center_split_and_occlusion() {
 }
 
 #[test]
-fn side_zones_are_40_pt_deep_or_a_third_of_a_small_body() {
+fn side_zones_are_40_pt_deep_or_a_quarter_of_the_bodys_smaller_side() {
     let depth = DockStyle::default().zone_depth;
     assert_eq!(depth, 40.0);
     // The inner corner of the left trapezoid is the depth of both bands.
     let inner = |rect: Rect| zone_shape(rect, 0.0, depth, Zone::Left).unwrap()[1] - rect.min;
-    for size in [vec2(600.0, 400.0), vec2(130.0, 130.0)] {
+    for size in [vec2(600.0, 400.0), vec2(160.0, 160.0)] {
         let rect = Rect::from_min_size(pos2(10.0, 20.0), size);
         assert_eq!(inner(rect), vec2(40.0, 40.0), "{size:?}");
         let y = rect.center().y;
         assert_eq!(drop_zone(rect, 0.0, depth, pos2(rect.left() + 39.0, y)), Some(Zone::Left), "{size:?}");
         assert_eq!(drop_zone(rect, 0.0, depth, pos2(rect.left() + 41.0, y)), Some(Zone::Center), "{size:?}");
     }
-    // A 90 pt body keeps a 30 pt center.
+    // A 90 pt body keeps a 45 pt center.
     let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(90.0, 90.0));
-    assert_eq!(inner(rect), vec2(30.0, 30.0));
+    assert_eq!(inner(rect), vec2(22.5, 22.5));
     assert_eq!(drop_zone(rect, 0.0, depth, rect.center()), Some(Zone::Center));
-    assert_eq!(drop_zone(rect, 0.0, depth, pos2(rect.left() + 29.0, rect.center().y)), Some(Zone::Left));
+    assert_eq!(drop_zone(rect, 0.0, depth, pos2(rect.left() + 22.0, rect.center().y)), Some(Zone::Left));
+    // A tall narrow body: its top and bottom zones are as deep as its left and right ones.
+    let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(120.0, 600.0));
+    assert_eq!(inner(rect), vec2(30.0, 30.0));
+    let top = zone_shape(rect, 0.0, depth, Zone::Top).unwrap();
+    assert_eq!(top[2].y - rect.top(), 30.0);
+    assert_eq!(drop_zone(rect, 0.0, depth, pos2(rect.center().x, rect.top() + 29.0)), Some(Zone::Top));
+    assert_eq!(drop_zone(rect, 0.0, depth, pos2(rect.center().x, rect.top() + 31.0)), Some(Zone::Center));
     // The bands start below the tab header.
     let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(600.0, 400.0));
     assert_eq!(drop_zone(rect, 24.0, depth, pos2(rect.center().x, rect.top() + 60.0)), Some(Zone::Top));
@@ -653,6 +660,17 @@ fn stack_dividers_resize_adjacent_open_bodies_by_pointer_and_keyboard() {
     let Node::Stack { entries } = layout.root.as_ref().unwrap() else { panic!() };
     assert!(entries[0].height.unwrap() > after_pointer);
     assert!((entries[0].height.unwrap() + entries[2].height.unwrap() - 300.0).abs() < 0.001);
+    // Dragged past the next body's minimum, the one after it gives way too, down to the same
+    // minimum; the closed entry keeps its height.
+    let start = ctx.read_response(id).unwrap().rect.center();
+    step(&ctx, &mut layout, vec![Event::PointerMoved(start), pointer_button(start, true)]);
+    step(&ctx, &mut layout, vec![Event::PointerMoved(start + vec2(0.0, 600.0))]);
+    step(&ctx, &mut layout, vec![pointer_button(start + vec2(0.0, 600.0), false)]);
+    let Node::Stack { entries } = layout.root.as_ref().unwrap() else { panic!() };
+    let heights = entries.iter().map(|entry| entry.height.unwrap()).collect::<Vec<_>>();
+    assert!((heights[2] - heights[3]).abs() < 0.01 && heights[3] < 120.0, "{heights:?}");
+    assert!((heights[0] + heights[2] + heights[3] - 420.0).abs() < 0.01, "{heights:?}");
+    assert_eq!(heights[1], 91.0);
 }
 
 #[test]

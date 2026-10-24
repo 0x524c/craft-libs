@@ -37,7 +37,7 @@ mod group;
 mod preview;
 mod sizes;
 
-pub(in crate::docking) use sizes::{DROP_MARGIN, Drawn, Sizer};
+pub(in crate::docking) use sizes::{DROP_MARGIN, Drawn, RowItem, Sizer, row_drag, row_range};
 
 pub(super) struct Renderer<'a, P> {
     pub(super) id: Id,
@@ -79,8 +79,6 @@ pub(super) struct Renderer<'a, P> {
 pub(super) struct DrawnDivider {
     path: Vec<bool>,
     axis: SplitAxis,
-    /// The whole split's rect.
-    rect: Rect,
     divider: Rect,
 }
 
@@ -123,23 +121,25 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         });
     }
 
-    pub(in crate::docking) fn node(&mut self, ui: &mut Ui, node: &Node<P>, rect: Rect, path: &mut Vec<bool>) {
+    /// Draws `node` at view path `path` in `rect`, in the tree `root` (its root node and rect),
+    /// which a dragged divider resizes beyond `node`.
+    pub(in crate::docking) fn node(&mut self, ui: &mut Ui, node: &Node<P>, rect: Rect, path: &mut Vec<bool>, root: (&Node<P>, Rect)) {
         if !crate::docking::targets::usable(rect) {
             return;
         }
         self.note_edge(path, rect);
         match node {
-            Node::Split { axis: SplitAxis::Horizontal, first, second, .. } if self.dock_split(ui, first, second, rect, path) => {}
+            Node::Split { axis: SplitAxis::Horizontal, first, second, .. } if self.dock_split(ui, first, second, rect, path, root) => {}
             Node::Split { axis, size, first, second } => {
                 let sizer = self.sizer();
                 let Some(split) = sizer.split(*axis, *size, first, second, rect) else { return };
-                let (lo, hi) = sizer.range(node, rect);
+                let (lo, hi) = sizer.range(root, path);
                 let mark = self.dividers.len();
                 path.push(false);
-                self.node(ui, first, split.first, path);
+                self.node(ui, first, split.first, path, root);
                 path.pop();
                 path.push(true);
-                self.node(ui, second, split.second, path);
+                self.node(ui, second, split.second, path, root);
                 path.pop();
                 // The divider's inner-edge hit margin must win over child scrollbars, just
                 // as accordion dividers win over the adjacent panel's content.
@@ -156,12 +156,12 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 .show(ui);
                 self.register_interaction(ui.ctx(), response.response.id);
                 if response.delta != 0.0 {
-                    let actions = self.divider_actions(node, rect, path, response.delta);
+                    let actions = self.divider_actions(root, path, response.delta);
                     self.output.actions.extend(actions);
                 }
-                self.intersections(ui, node, rect, path, split.divider, mark);
+                self.intersections(ui, (node, rect), path, split.divider, mark, root);
                 if self.dividers.len() < crate::docking::model::MAX_NODES {
-                    self.dividers.push(DrawnDivider { path: path.clone(), axis: *axis, rect, divider: split.divider });
+                    self.dividers.push(DrawnDivider { path: path.clone(), axis: *axis, divider: split.divider });
                 }
             }
             Node::Tabs { panels, active } => {
@@ -228,21 +228,30 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 }
                 // Register dividers after the headers so their narrow hit regions win at the
                 // shared boundary. Closed entries retain their saved sizes and are skipped.
+                let scale = if total_wanted > 0.0 { f64::from(remaining) / total_wanted } else { 0.0 };
+                let body_limits = |panel: &P| {
+                    let mut limits = self.limits(panel);
+                    limits.min.y = limits.min.y.max(self.style.min_pane);
+                    limits.max = limits.max.max(limits.min);
+                    limits
+                };
+                let open: Vec<&crate::docking::StackEntry<P>> = entries.iter().filter(|entry| entry.open).collect();
+                let row: Vec<RowItem> = open
+                    .iter()
+                    .map(|entry| {
+                        let limits = body_limits(&entry.panel);
+                        let size = (f64::from(entry.height.unwrap_or(self.style.min_pane).max(1.0)) * scale) as f32;
+                        RowItem { size, min: limits.min.y, max: limits.max.y }
+                    })
+                    .collect();
                 for (index, divider) in dividers {
                     let Some(first) = entries.get(index) else { continue };
-                    let Some(second) = entries.iter().skip(index.saturating_add(1)).find(|entry| entry.open) else { continue };
-                    let a = f64::from(first.height.unwrap_or(self.style.min_pane).max(1.0));
-                    let b = f64::from(second.height.unwrap_or(self.style.min_pane).max(1.0));
-                    let scale = f64::from(remaining) / total_wanted;
-                    let first_size = (a * scale) as f32;
-                    let pair_size = ((a + b) * scale) as f32;
-                    let body_limits = |panel: &P| {
-                        let mut limits = self.limits(panel);
-                        limits.min.y = limits.min.y.max(self.style.min_pane);
-                        limits.max = limits.max.max(limits.min);
-                        limits
-                    };
-                    let (lo, hi) = split_bounds(pair_size, SplitAxis::Vertical, body_limits(&first.panel), body_limits(&second.panel));
+                    let Some(position) = open.iter().position(|entry| std::ptr::eq(*entry, first)) else { continue };
+                    let Some(first_size) = row.get(position).map(|item| item.size) else { continue };
+                    if position + 1 >= row.len() {
+                        continue;
+                    }
+                    let (lo, hi) = row_range(&row, position);
                     let response = ResizeHandle::new(
                         self.id.with(("stack-resize", &first.panel)),
                         SplitAxis::Vertical,
@@ -250,14 +259,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                         &self.style.resize_label,
                         ResizeHandleStyle { hovered: self.style.accent, dragged: self.style.accent, focused: self.style.accent },
                     )
-                    .value(first_size, lo..=hi)
+                    .value(first_size, (first_size + lo)..=(first_size + hi))
                     .show(ui);
                     self.register_interaction(ui.ctx(), response.response.id);
                     if response.delta != 0.0 && scale > 0.0 {
-                        let delta = f64::from((first_size + response.delta).clamp(lo, hi) - first_size) / scale;
-                        let next_a = (a + delta).clamp((a + b - 1_000_000.0).max(1.0), (a + b - 1.0).min(1_000_000.0));
-                        self.output.actions.push(Action::ResizeStack { panel: first.panel.clone(), height: Some(next_a as f32) });
-                        self.output.actions.push(Action::ResizeStack { panel: second.panel.clone(), height: Some((a + b - next_a) as f32) });
+                        for ((entry, item), next) in open.iter().zip(&row).zip(row_drag(&row, position, response.delta)) {
+                            if next != item.size {
+                                let height = (f64::from(next) / scale).clamp(1.0, 1_000_000.0) as f32;
+                                self.output.actions.push(Action::ResizeStack { panel: entry.panel.clone(), height: Some(height) });
+                            }
+                        }
                     }
                 }
             }
@@ -268,10 +279,10 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         Sizer { style: self.style, content: &*self.content }
     }
 
-    /// `ResizeSplit` actions that move the divider of the split `node`, drawn at view path
-    /// `path` in `rect`, by `delta` points.
-    fn divider_actions(&self, node: &Node<P>, rect: Rect, path: &[bool], delta: f32) -> Vec<Action<P>> {
-        let sizes = self.sizer().drag(node, rect, delta, &mut path.to_vec());
+    /// `ResizeSplit` actions that move the divider of the split at view path `path` in the
+    /// tree `root` by `delta` points.
+    fn divider_actions(&self, root: (&Node<P>, Rect), path: &[bool], delta: f32) -> Vec<Action<P>> {
+        let sizes = self.sizer().drag(root, path, delta);
         let resize = |path: Vec<bool>, size| match &self.tree {
             None => Action::ResizeSplit { path, size },
             Some((panel, _)) => Action::ResizeWindowSplit { panel: panel.clone(), path, size },
@@ -290,7 +301,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 
     /// Four-way handles where a divider drawn inside the split `node` (since `mark`) ends on
     /// the split's own divider: dragging one moves both dividers.
-    fn intersections(&mut self, ui: &mut Ui, node: &Node<P>, rect: Rect, path: &[bool], divider: Rect, mark: usize) {
+    fn intersections(&mut self, ui: &mut Ui, (node, rect): (&Node<P>, Rect), path: &[bool], divider: Rect, mark: usize, root: (&Node<P>, Rect)) {
         let Node::Split { axis, .. } = node else { return };
         let side = (self.style.gap * 3.0).max(12.0);
         let mut found = Vec::new();
@@ -302,9 +313,9 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 SplitAxis::Horizontal => pos2(divider.center().x, inner.divider.center().y),
                 SplitAxis::Vertical => pos2(inner.divider.center().x, divider.center().y),
             };
-            found.push((inner.path.clone(), inner.rect, Rect::from_center_size(center, Vec2::splat(side)).intersect(rect)));
+            found.push((inner.path.clone(), Rect::from_center_size(center, Vec2::splat(side)).intersect(rect)));
         }
-        for (inner_path, inner_rect, hit) in found {
+        for (inner_path, hit) in found {
             let Some(inner) = inner_path.get(path.len()..).and_then(|rest| crate::docking::dock_model::node_at(node, rest)) else { continue };
             let (outer, inner_layout) = (self.original_path(path), self.original_path(&inner_path));
             let id = match &self.tree {
@@ -321,8 +332,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             if delta != Vec2::ZERO && delta.is_finite() {
                 let along = |axis: SplitAxis| if axis == SplitAxis::Horizontal { delta.x } else { delta.y };
                 let Node::Split { axis: inner_axis, .. } = inner else { continue };
-                let mut actions = self.divider_actions(node, rect, path, along(*axis));
-                actions.extend(self.divider_actions(inner, inner_rect, &inner_path, along(*inner_axis)));
+                let mut actions = self.divider_actions(root, path, along(*axis));
+                actions.extend(self.divider_actions(root, &inner_path, along(*inner_axis)));
                 self.output.actions.extend(actions);
             }
         }

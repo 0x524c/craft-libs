@@ -217,16 +217,21 @@ A flyout fits its content the same way, without the title bar.
   limits and the screen. A focused resize handle moves its edge 8 pt per arrow key.
 - Over a frame, the tab strip and the middle join its tabs, and the nearest side splits it. The
   side zones are trapezoids along the four edges of the body below the tab strip, like a picture
-  frame: `DockStyle::zone_depth` (40 pt) deep, or a third of the body's width or height when that
-  is less, so every frame keeps a center. A split that would leave either half without
+  frame, all four the same depth: `DockStyle::zone_depth` (40 pt), or a quarter of the body's
+  smaller side when that is less, so every frame keeps a center. A split that would leave either half without
   `DockStyle::min_pane` joins the frame's tabs instead. The gap between two frames is no target.
 - The outer edge band (`DockStyle::edge_band`) takes a drop as a new frame across the whole
   window side: top and bottom, and left and right with `side_edge_zones`. It takes a quarter of
   the window and is offered only when every frame keeps its minimum. Past the band, a frame's own
   side zones apply.
-- A divider resizes only the frames that touch it; every other frame keeps its size. It stops
-  when a frame touching it reaches its minimum. Where a divider ends on another divider, a
-  four-way handle (`Divider::Intersection`) moves both.
+- A dragged divider grows the frames that touch it on one side, up to their maximums. On the
+  other side the frame touching it shrinks to its minimum, then the next frame along the same
+  axis, and so on: the divider stops when every frame on that side is at its minimum. Frames
+  side by side across the axis shrink together, and the next frame gives way once one of them
+  is at its minimum. The line of frames ends at a split across the axis or at a dock; every
+  other frame keeps its size. Dividers between stacked panels and between the groups of a dock
+  column work the same way. Where a divider ends on another divider, a four-way handle
+  (`Divider::Intersection`) moves both.
 - Every frame has the same minimum, `DockStyle::min_pane` (plus its tab strip), unless its panels
   ask for more through `PanelLimits::min`. Frames have no maximum unless every panel in them asks
   for one through `PanelLimits::max`: a panel without a maximum lifts the maximum of the panels it

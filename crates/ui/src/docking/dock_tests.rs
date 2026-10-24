@@ -416,6 +416,16 @@ fn column_and_group_dividers_resize_and_minimized_groups_keep_their_height() {
 }
 
 #[test]
+fn a_group_divider_dragged_past_the_lower_groups_minimum_shrinks_the_next_group() {
+    let mut d = Driver::new(docked(Side::Start, &[&[&[2], &[3], &[4]]]));
+    let divider = d.rect("group-resize", 2).center();
+    d.drag(divider, divider + vec2(0.0, 500.0));
+    // Groups 3 and 4 are at their minimum: a tab strip and a 40 pt body.
+    let heights = column(&d.layout, 0).groups.iter().map(|g| g.height).collect::<Vec<_>>();
+    assert_eq!(heights[1..], [Some(66.0), Some(66.0)], "{heights:?}");
+}
+
+#[test]
 fn double_click_on_a_docked_tab_minimizes_and_clicking_another_tab_expands() {
     let mut d = Driver::new(docked(Side::Start, &[&[&[2, 3], &[4]]]));
     let minimized = |d: &Driver| column(&d.layout, 0).groups[0].minimized;

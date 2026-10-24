@@ -1,4 +1,4 @@
-use egui::{Pos2, Rangef, Rect, Vec2, pos2, vec2};
+use egui::{Pos2, Rangef, Rect, Vec2, pos2};
 
 use super::{Placement, Side, Target, Zone};
 
@@ -32,10 +32,11 @@ pub(super) fn usable(rect: Rect) -> bool {
 }
 
 /// Tab header (the top `tab_height` of `rect`) is the center; otherwise the nearest side zone of
-/// the body below it wins. A side zone reaches `depth` into the body, or a third of the body's
-/// extent in that axis when that is less, so a body always keeps a center; a `depth` of zero
-/// or less leaves only the center. Outside, non-finite, empty and inverted rectangles have no
-/// target.
+/// the body below it wins. Every side zone reaches the same depth into the body: `depth`, or a
+/// quarter of the body's smaller side when that is less, so a body always keeps a center and a
+/// narrow body's top and bottom zones are no deeper than its left and right ones. A `depth` of
+/// zero or less leaves only the center. Outside, non-finite, empty and inverted rectangles have
+/// no target.
 pub fn drop_zone(rect: Rect, tab_height: f32, depth: f32, pointer: Pos2) -> Option<Zone> {
     if !usable(rect) || !pointer.is_finite() || !rect.contains(pointer) || !tab_height.is_finite() || tab_height < 0.0 {
         return None;
@@ -65,10 +66,10 @@ fn body(rect: Rect, tab_height: f32) -> Rect {
 }
 
 /// How deep the side zones of `body` reach in from its left and right edges (`x`) and its top
-/// and bottom edges (`y`).
+/// and bottom edges (`y`): the same on all four sides.
 fn side_depths(body: Rect, depth: f32) -> Vec2 {
     let depth = if depth > 0.0 { depth } else { 0.0 };
-    vec2(depth.min(body.width() / 3.0), depth.min(body.height() / 3.0))
+    Vec2::splat(depth.min(body.width().min(body.height()) / 4.0))
 }
 
 /// The outline of a drop zone of the group drawn at `rect`, as [`drop_zone`] finds it with the
@@ -152,8 +153,8 @@ pub fn tab_insertion_marker<P: Eq>(target: &DropTarget<P>, before: Option<&P>) -
 /// Resolve a pointer against visible groups. The frontmost containing group occludes groups
 /// behind it even if it rejects the drop. A strip reorders by midpoint; the body of the source
 /// group is a no-op at center. The body's side zones are [`drop_zone`]'s with `zone_depth` (see
-/// [`crate::docking::DockStyle::zone_depth`]). Floating groups normally set `allow_splits` to
-/// false.
+/// [`crate::docking::DockStyle::zone_depth`]): one depth on all four sides, at most a quarter of
+/// the body's smaller side. Floating groups normally set `allow_splits` to false.
 pub fn resolve_drop<P: Clone + Eq>(panel: &P, pointer: Pos2, targets: &[DropTarget<P>], zone_depth: f32) -> Option<DropProposal<P>> {
     if !pointer.is_finite() || targets.len() > super::MAX_PANELS {
         return None;

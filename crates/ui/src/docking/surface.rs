@@ -51,9 +51,9 @@ pub struct DockStyle {
     /// The outer edge band also runs along the left and right edges, where a drop adds a
     /// full-height column. Off: only the top and bottom edges add a full-width row.
     pub side_edge_zones: bool,
-    /// How far a group's side drop zones reach into its body, below the tab strip. A body less
-    /// than three times as wide or tall gets zones a third of its extent deep in that axis, so
-    /// it keeps a center.
+    /// How far a group's side drop zones reach into its body, below the tab strip. All four
+    /// zones share one depth: this, or a quarter of the body's smaller side when that is less,
+    /// so the body keeps a center.
     pub zone_depth: f32,
     /// [D] The docked area's left and right edges, where no dock is yet, take a drop as a new
     /// dock (see [`Self::new_dock_band`]).
@@ -875,7 +875,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             cross: Default::default(),
         };
         if let Some(root) = &view.root {
-            renderer.node(ui, root, rect, &mut Vec::new());
+            renderer.node(ui, root, rect, &mut Vec::new(), (root, rect));
             ui.allocate_rect(rect, Sense::hover());
         }
         renderer.flyout(ui.ctx());

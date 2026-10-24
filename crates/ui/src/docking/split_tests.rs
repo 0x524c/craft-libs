@@ -228,6 +228,24 @@ fn a_divider_resizes_only_the_groups_that_share_it() {
 }
 
 #[test]
+fn a_divider_dragged_past_a_groups_minimum_shrinks_the_next_group_along_the_row() {
+    // A | B | C | D, 357 pt each, as (A | B) | (C | D): the cascade runs on past B's split.
+    let row = hsplit(0.5, hsplit(0.5, tabs(&[1]), tabs(&[2])), hsplit(0.5, tabs(&[3]), tabs(&[4])));
+    let mut d = driver(Layout { root: Some(row), floating: Vec::new() }, Film::default());
+    let widths = |d: &Driver| [1, 2, 3, 4].map(|panel| group(d, panel).width().round());
+    assert_eq!(widths(&d), [357.0, 357.0, 357.0, 357.0]);
+    // B gives way down to its 40 pt minimum, then C.
+    drag_hit(&mut d, divider(&[false]), vec2(400.0, 0.0));
+    assert_eq!(widths(&d), [757.0, 40.0, 274.0, 357.0]);
+    // The drag stops when B, C and D are all at their minimums.
+    drag_hit(&mut d, divider(&[false]), vec2(670.0, 0.0));
+    assert_eq!(widths(&d), [1308.0, 40.0, 40.0, 40.0]);
+    // Back the other way, A gives way and only B, which touches the divider, grows.
+    drag_hit(&mut d, divider(&[false]), vec2(-1300.0, 0.0));
+    assert_eq!(widths(&d), [40.0, 1308.0, 40.0, 40.0]);
+}
+
+#[test]
 fn an_intersection_moves_both_dividers() {
     let mut d = film();
     let (project, tools, source) = (group(&d, PROJECT[0]), group(&d, TOOLS), group(&d, SOURCE[0]));
@@ -361,12 +379,16 @@ fn assert_sizes(d: &Driver, context: &str) {
             let room = g.rect.size() - g.limits.min;
             assert!(room.x >= -0.01 && room.y >= -0.01, "{context}: {:?} is below its minimum {:?}", g.rect, g.limits.min);
         }
-        let mut nodes = vec![(root, area)];
-        while let Some((node, rect)) = nodes.pop() {
-            let Some(children) = sizer.children(node, rect) else { continue };
-            let (lo, hi) = sizer.range(node, rect);
+        let mut nodes = vec![(root, area, Vec::new())];
+        while let Some((node, rect, path)) = nodes.pop() {
+            let Some([a, b]) = sizer.children(node, rect) else { continue };
+            let (lo, hi) = sizer.range((root, area), &path);
             assert!(lo < -0.5 && hi > 0.5, "{context}: a divider is stuck ({lo}, {hi}) at {rect:?} in {:?}", d.layout);
-            nodes.extend(children);
+            for (second, (child, rect)) in [(false, a), (true, b)] {
+                let mut path = path.clone();
+                path.push(second);
+                nodes.push((child, rect, path));
+            }
         }
     }
 }
