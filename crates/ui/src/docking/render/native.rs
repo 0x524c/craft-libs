@@ -449,11 +449,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         let moving = moving(ctx);
         // Set every frame from the drag state, so any way a drag ends (a drop, Escape, a focus
-        // loss, the window closing) brings the window back to full opacity.
+        // loss, the window closing) brings the window back to full opacity. AppKit finds the
+        // window by title, so a window sharing the dragged one's title stays faded with it.
         #[cfg(target_os = "macos")]
         {
             let main = ctx.input(|i| i.raw.viewports.get(&ViewportId::ROOT).and_then(|v| v.title.clone()));
-            set_window_opacity(&title, main.as_deref(), if moving { DRAG_OPACITY } else { 1.0 });
+            let dragged = ctx.data(|d| d.get_temp::<WindowDrag>(drag_key)).and_then(|drag| self.layout.floating.iter().find(|w| w.id == drag.window));
+            let faded = dragged.and_then(|w| crate::docking::dock_model::first_active(&w.root)).is_some_and(|p| self.label_of(p) == title);
+            set_window_opacity(&title, main.as_deref(), if faded { DRAG_OPACITY } else { 1.0 });
         }
         if let Some(placed) = report.placed.filter(|_| !moving) {
             let waiting = place.pending.is_some_and(|until| now < until);
