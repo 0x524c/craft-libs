@@ -530,12 +530,12 @@ fn malformed_streams_return_errors_not_panics() {
     assert!(decode_default(&streams[0][..40]).is_err());
 }
 
-/// Scans past `MAX_SCANS` aren't decoded (each one walks the whole MCU grid, with or without
-/// data): the image keeps what the earlier scans decoded and is reported damaged.
+/// Scans past the block budget (`SCAN_PASSES` passes over a one-block frame) aren't decoded:
+/// the image keeps what the earlier scans decoded and is reported damaged.
 #[test]
-fn scans_past_the_limit_are_not_decoded() {
+fn scans_past_the_block_budget_are_not_decoded() {
     let blocks = coefficients(1, 3, 500);
-    for (count, damaged) in [(MAX_SCANS, false), (MAX_SCANS + 1, true)] {
+    for (count, damaged) in [(SCAN_PASSES, false), (SCAN_PASSES + 1, true)] {
         let stream = arith_stream(8, 1, 1, &blocks, &vec![(0, 0, 0, 0); count], 0);
         let (frame, _, d) = decode_coefficients(&stream, &Limits::default()).unwrap();
         assert_eq!(d, damaged, "{count} scans");
@@ -549,6 +549,13 @@ fn limits_are_checked_before_allocating() {
     segment(&mut s, 0xC9, &[8, 0xFF, 0xFF, 0xFF, 0xFF, 3, 1, 0x44, 0, 2, 0x11, 0, 3, 0x11, 0]);
     let small = Limits { max_alloc: 1 << 20, ..Limits::default() };
     assert!(matches!(decode(&s, &small, None), Err(Error::LimitExceeded(_))));
+    // 64×64 gray: 32 KiB of coefficients and plane plus 4 KiB of output, each under the limit
+    // alone but not together.
+    let stream = arith_stream(8, 8, 8, &coefficients(64, 1, 100), &[(0, 63, 0, 0)], 0);
+    for (max_alloc, ok) in [(36 << 10, true), ((36 << 10) - 1, false), (32 << 10, false)] {
+        let limits = Limits { max_alloc, ..Limits::default() };
+        assert_eq!(decode(&stream, &limits, None).is_ok(), ok, "max_alloc {max_alloc}");
+    }
 }
 
 #[test]

@@ -37,7 +37,7 @@
 //! which also reads the APP14 `Adobe` segment and passes its transform byte to [`decode`].
 //!
 //! The decoder never panics on input: every read from the stream is bounds-checked, the work
-//! is bounded by the frame size times the scan count (capped at `MAX_SCANS`), and
+//! is bounded by 64 passes over the frame's blocks (`SCAN_PASSES`), and
 //! allocations are checked against the [`Limits`] first.
 //! Damaged entropy-coded data stops that scan; what was decoded is kept and the caller is told
 //! through [`Decoded::damaged`].
@@ -386,17 +386,19 @@ fn parse_frame(marker: u8, seg: &[u8], limits: &Limits) -> Result<Frame, Error> 
     }
     let hmax = raw.iter().map(|c| c.1).max().unwrap_or(1);
     let vmax = raw.iter().map(|c| c.2).max().unwrap_or(1);
-    limits.check(width, height, nf as u64 * if precision > 8 { 2 } else { 1 })?;
+    let bytes_per_pixel = nf as u64 * if precision > 8 { 2 } else { 1 };
+    limits.check(width, height, bytes_per_pixel)?;
     let mcux = width.div_ceil(8 * hmax);
     let mcuy = height.div_ceil(8 * vmax);
-    // Coefficients (4 bytes) and the reconstructed plane (4 bytes) per padded sample.
-    let mut internal: u64 = 0;
+    // `render` holds the coefficients (4 bytes) and the reconstructed plane (4 bytes) of every
+    // padded sample while it writes the output, so all three count against `max_alloc` together.
+    let mut total = (width as u64 * height as u64).saturating_mul(bytes_per_pixel);
     for &(_, h, v, _) in &raw {
         let samples = (mcux * h * 8) as u64 * (mcuy * v * 8) as u64;
-        internal = internal.saturating_add(samples.saturating_mul(8));
+        total = total.saturating_add(samples.saturating_mul(8));
     }
-    if internal > limits.max_alloc {
-        return Err(Error::LimitExceeded(format!("{internal} bytes of decoder buffers exceed max_alloc {}", limits.max_alloc)));
+    if total > limits.max_alloc {
+        return Err(Error::LimitExceeded(format!("{total} bytes of decoder buffers and output exceed max_alloc {}", limits.max_alloc)));
     }
     let mut comps = Vec::with_capacity(nf);
     for (id, h, v, tq) in raw {
@@ -426,21 +428,22 @@ fn scan_end(b: &[u8], start: usize) -> usize {
     b.len()
 }
 
-/// Past the next restart marker at or after `pos` (or at the next other marker, or the end).
-fn skip_restart(d: &[u8], mut pos: usize) -> usize {
+/// Past the next restart marker at or after `pos`, and `true`; or at the next other marker
+/// (or the end) and `false`.
+fn skip_restart(d: &[u8], mut pos: usize) -> (usize, bool) {
     while let Some(&v) = d.get(pos) {
         if v != 0xFF {
             pos += 1;
             continue;
         }
         match d.get(pos + 1) {
-            Some(0xD0..=0xD7) => return pos + 2,
+            Some(0xD0..=0xD7) => return (pos + 2, true),
             Some(0x00) => pos += 2,
             Some(0xFF) => pos += 1,
-            _ => return pos,
+            _ => return (pos, false),
         }
     }
-    pos
+    (pos, false)
 }
 
 /// Next data byte for the decoders: `FF 00` is a data `FF`; at a marker (or the end) zeros
@@ -519,7 +522,7 @@ impl<'a> Bits<'a> {
     }
 
     fn restart(&mut self) {
-        self.pos = skip_restart(self.d, self.pos);
+        self.pos = skip_restart(self.d, self.pos).0;
         self.acc = 0;
         self.n = 0;
         self.pad = 0;
@@ -581,16 +584,41 @@ struct Arith<'a> {
     c: u32,
     a: u32,
     ct: u32,
+    /// Zero bytes fed in since the start or the last restart because the data had ended.
+    pad: u32,
+    /// A restart was due but its marker was missing.
+    lost: bool,
 }
 
-impl Arith<'_> {
+impl<'a> Arith<'a> {
+    /// The most zero bytes a scan or restart interval may consume past the end of its data.
+    /// The decoder reads two bytes ahead (INITDEC), and encoders drop trailing zero bytes
+    /// (libjpeg's `finish_pass` does, as D.1.8 allows), so a valid stream consumes a few.
+    /// Past that the data was cut short, and the decoder would only decode the zeros.
+    const MAX_PAD: u32 = 8;
+
+    fn new(d: &'a [u8]) -> Self {
+        let mut ar = Arith { d, pos: 0, c: 0, a: 0, ct: 0, pad: 0, lost: false };
+        ar.init();
+        ar
+    }
+
     fn byte_in(&mut self) {
-        let v = next_byte(self.d, &mut self.pos).unwrap_or(0);
+        let v = next_byte(self.d, &mut self.pos).unwrap_or_else(|| {
+            self.pad = self.pad.saturating_add(1);
+            0
+        });
         self.c = self.c.wrapping_add(u32::from(v) << 8);
+    }
+
+    /// The scan's data ran out, or a restart marker is missing.
+    fn exhausted(&self) -> bool {
+        self.lost || self.pad > Self::MAX_PAD
     }
 
     /// INITDEC (D.2.7).
     fn init(&mut self) {
+        self.pad = 0;
         self.a = 0x10000;
         self.c = 0;
         self.byte_in();
@@ -650,7 +678,9 @@ impl Arith<'_> {
     }
 
     fn restart(&mut self) {
-        self.pos = skip_restart(self.d, self.pos);
+        let (pos, found) = skip_restart(self.d, self.pos);
+        self.pos = pos;
+        self.lost |= !found;
         self.init();
     }
 }
@@ -905,6 +935,9 @@ impl ScanDecoder for ArithScan<'_> {
             ArithMode::AcFirst => self.ac_first(ta, blk)?,
             ArithMode::AcRefine => self.ac_refine(ta, blk)?,
         }
+        if self.ar.exhausted() {
+            return Err(err("entropy-coded data ends before the scan does"));
+        }
         Ok(())
     }
 }
@@ -918,16 +951,25 @@ impl ArithScan<'_> {
     }
 }
 
+/// The scan's MCU grid (A.2): MCUs per line, MCU lines, and the blocks the scan decodes.
+fn scan_grid(frame: &Frame, scan: &Scan) -> Result<(usize, usize, usize), Error> {
+    if let [(ci, _, _)] = scan.comps[..] {
+        let c = frame.comps.get(ci).ok_or_else(|| err("bad scan component"))?;
+        let (mcux, mcuy) = (c.cw.div_ceil(8), c.ch.div_ceil(8));
+        return Ok((mcux, mcuy, mcux.saturating_mul(mcuy)));
+    }
+    let mut per_mcu = 0usize;
+    for &(ci, _, _) in &scan.comps {
+        let c = frame.comps.get(ci).ok_or_else(|| err("bad scan component"))?;
+        per_mcu += c.h * c.v;
+    }
+    Ok((frame.mcux, frame.mcuy, frame.mcux.saturating_mul(frame.mcuy).saturating_mul(per_mcu)))
+}
+
 /// Walk the scan's MCUs in order (A.2), handing each block to `dec`; counts decoded MCUs.
 fn walk_scan(frame: &mut Frame, scan: &Scan, restart: usize, dec: &mut dyn ScanDecoder, done: &mut usize) -> Result<(), Error> {
     let single = scan.comps.len() == 1;
-    let (mcux, mcuy) = if single {
-        let &(ci, _, _) = scan.comps.first().ok_or_else(|| err("empty scan"))?;
-        let c = frame.comps.get(ci).ok_or_else(|| err("bad scan component"))?;
-        (c.cw.div_ceil(8), c.ch.div_ceil(8))
-    } else {
-        (frame.mcux, frame.mcuy)
-    };
+    let (mcux, mcuy, _) = scan_grid(frame, scan)?;
     let total = mcux.saturating_mul(mcuy);
     for m in 0..total {
         if restart > 0 && m > 0 && m % restart == 0 {
@@ -990,7 +1032,7 @@ fn decode_scan(frame: &mut Frame, tables: &Tables, scan: &Scan, d: &[u8], done: 
             (true, _, _) => ArithMode::AcRefine,
         };
         let mut dec = ArithScan {
-            ar: Arith { d, pos: 0, c: 0, a: 0, ct: 0 },
+            ar: Arith::new(d),
             mode,
             ss: scan.ss,
             se: scan.se,
@@ -1004,7 +1046,6 @@ fn decode_scan(frame: &mut Frame, tables: &Tables, scan: &Scan, d: &[u8], done: 
             pred: [0; 4],
             ctx: [0; 4],
         };
-        dec.ar.init();
         walk_scan(frame, scan, tables.restart, &mut dec, done)
     } else {
         let mut sel = Vec::with_capacity(scan.comps.len());
@@ -1018,11 +1059,12 @@ fn decode_scan(frame: &mut Frame, tables: &Tables, scan: &Scan, d: &[u8], done: 
     }
 }
 
-/// The most scans decoded from one stream; later ones are dropped and the image is reported
-/// damaged. Every scan walks its whole MCU grid, and an arithmetic-coded scan does so even with
-/// no data (the decoder is fed zeros, D.2.6), so without a cap a small file repeating empty
-/// scan headers multiplies the work by the frame size. Real files have a few dozen at most.
-const MAX_SCANS: usize = 500;
+/// The blocks decoded from one stream are capped at this many times the frame's blocks; the
+/// scan that would pass the cap and every later one are dropped, and the image is reported
+/// damaged. Every scan walks its whole MCU grid, so without a cap a small file repeating scan
+/// headers multiplies the work by the frame size. 64 passes allow a progressive file one scan
+/// per coefficient for every component; real files make about 10.
+const SCAN_PASSES: usize = 64;
 
 /// Parse the stream and decode every scan into coefficients.
 fn decode_coefficients(b: &[u8], limits: &Limits) -> Result<(Frame, Tables, bool), Error> {
@@ -1034,6 +1076,7 @@ fn decode_coefficients(b: &[u8], limits: &Limits) -> Result<(Frame, Tables, bool
     let mut damaged = false;
     let mut mcus = 0usize;
     let mut scans = 0usize;
+    let mut blocks = 0usize;
     let mut i = 2;
     while let Some(&v) = b.get(i) {
         if v != 0xFF {
@@ -1079,11 +1122,13 @@ fn decode_coefficients(b: &[u8], limits: &Limits) -> Result<(Frame, Tables, bool
             }
             0xDA => {
                 let f = frame.as_mut().ok_or_else(|| err("scan before the frame header"))?;
-                if scans >= MAX_SCANS {
+                let scan = parse_scan(seg, f)?;
+                let budget = f.comps.iter().map(|c| c.coefs.len()).sum::<usize>().saturating_mul(SCAN_PASSES);
+                blocks = blocks.saturating_add(scan_grid(f, &scan)?.2);
+                if blocks > budget {
                     damaged = true;
                     break;
                 }
-                let scan = parse_scan(seg, f)?;
                 let end = scan_end(b, i);
                 let data = b.get(i..end).unwrap_or_default();
                 scans += 1;
