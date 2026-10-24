@@ -650,6 +650,8 @@ fn blend_modes_over_an_empty_part_of_the_page_keep_their_color() {
             assert_eq!(pixel(&p, 130, 100)[..3], over_red, "{mode} over the red square");
         }
         assert_eq!(pixel(&p, 280, 10), [255, 255, 255, 255], "{mode}: the paper stays white");
+    }
+}
 
 /// PdfCraft #3018 (ISO 32000-2 §8.6.5.6): the `/DefaultGray`, `/DefaultRGB` and `/DefaultCMYK`
 /// color spaces of a resource dictionary stand in for the device spaces its content selects,
