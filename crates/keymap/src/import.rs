@@ -29,11 +29,15 @@ pub const MAX_PATH_SEGMENTS: usize = 32;
 /// in [`ImportReport::truncated`]. Entries without keys get no suggestion and do not count.
 pub const MAX_SUGGESTIONS: usize = 200;
 
-/// A shortcut set as an app's reader found it.
+/// A shortcut set as an app's reader found it. Build it with [`ForeignSet::new`].
 #[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct ForeignSet {
     pub name: Option<String>,
     pub entries: Vec<ForeignEntry>,
+    /// Entries the reader dropped at its own limits; [`plan`] counts them in
+    /// [`ImportReport::truncated`].
+    pub truncated: usize,
 }
 
 /// One item of a foreign set.
@@ -57,6 +61,25 @@ pub struct ForeignEntry {
     /// is a segment of some catalog path. Without keys, an entry matched only these ways
     /// changes nothing ([`ImportReport::matched_without_change`]).
     pub panel_menu: bool,
+}
+
+impl ForeignSet {
+    /// A set without a name.
+    pub fn new(entries: Vec<ForeignEntry>) -> ForeignSet {
+        ForeignSet { entries, ..ForeignSet::default() }
+    }
+
+    /// The set's name as the source gives it.
+    pub fn with_name(mut self, name: impl Into<String>) -> ForeignSet {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Entries the reader dropped at its own limits ([`ForeignSet::truncated`]).
+    pub fn with_truncated(mut self, truncated: usize) -> ForeignSet {
+        self.truncated = truncated;
+        self
+    }
 }
 
 impl ForeignEntry {
@@ -411,8 +434,8 @@ pub struct ImportReport {
     pub unreadable: Vec<Unreadable>,
     pub approximated: Vec<Approximated>,
     pub suggestions: Vec<Suggestion>,
-    /// Entries, keys, path segments, bindings and text fields cut at the caps, and unmatched
-    /// entries past [`MAX_SUGGESTIONS`] that got no suggestion.
+    /// Entries, keys, path segments, bindings and text fields cut at the caps, unmatched entries
+    /// past [`MAX_SUGGESTIONS`] that got no suggestion, and [`ForeignSet::truncated`].
     pub truncated: usize,
 }
 
@@ -435,7 +458,7 @@ fn toggle_name(s: &str) -> String {
 pub fn plan(set: &ForeignSet, keymap: &Keymap, options: &ImportOptions) -> ImportPlan {
     let mut cut = 0usize;
     let mut report = ImportReport { set: set.name.as_deref().map(|n| cap_text(n, &mut cut)), ..ImportReport::default() };
-    cut += set.entries.len().saturating_sub(MAX_IMPORT_ENTRIES);
+    cut = cut.saturating_add(set.entries.len().saturating_sub(MAX_IMPORT_ENTRIES)).saturating_add(set.truncated);
     let index = Index::new(keymap);
     let contexts: Vec<(String, &ContextRule)> = options.contexts.iter().map(|(n, r)| (n.to_lowercase(), r)).collect();
     let mut commands: Vec<Planned> = Vec::new();
@@ -867,7 +890,7 @@ impl Names {
         for name in &names {
             add(&mut self.anywhere, name.clone(), i);
         }
-        for path in &b.paths {
+        for path in b.paths.iter().chain(&b.import_paths) {
             let mut segs: Vec<String> = path.iter().map(|s| normalize_label(s)).collect();
             if let [_, .., last] = segs.as_mut_slice() {
                 *last = form(last);
@@ -943,7 +966,7 @@ impl Index {
             ix.tool.push(matches!(b.kind, Kind::Tool { .. }));
             ix.keys.insert(b.command.key(), i);
             ix.names.add(i, b, str::to_string);
-            ix.segments.extend(b.paths.iter().flatten().map(|s| normalize_label(s)));
+            ix.segments.extend(b.paths.iter().chain(&b.import_paths).flatten().map(|s| normalize_label(s)));
             if b.is_toggle {
                 ix.toggles.add(i, b, toggle_name);
             }
@@ -1007,7 +1030,11 @@ fn suggest(keymap: &Keymap, entries: &[ToSuggest]) -> Vec<Suggestion> {
         let candidates: Vec<namematch::Candidate> = pool
             .iter()
             .map(|b| {
-                let labels = std::iter::once(&b.label).chain(&b.aliases).chain(b.paths.iter().filter_map(|p| p.last())).cloned().collect();
+                let labels = std::iter::once(&b.label)
+                    .chain(&b.aliases)
+                    .chain(b.paths.iter().chain(&b.import_paths).filter_map(|p| p.last()))
+                    .cloned()
+                    .collect();
                 namematch::Candidate { id: b.command.id.clone(), labels }
             })
             .collect();

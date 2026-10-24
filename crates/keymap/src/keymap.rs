@@ -141,6 +141,10 @@ pub struct Bindable {
     /// Menu paths, the main one first; used by search and import.
     #[serde(default)]
     pub paths: Vec<Vec<String>>,
+    /// Paths only import matching reads: where foreign sets file the command and the app's menus
+    /// do not, such as `["Tools", label]` for a tool. They make no areas or groups in the dialog.
+    #[serde(default)]
+    pub import_paths: Vec<Vec<String>>,
     /// Other names: labels in other UI languages, older names.
     #[serde(default)]
     pub aliases: Vec<String>,
@@ -163,6 +167,7 @@ impl Bindable {
             command: command.into(),
             label: label.into(),
             paths: Vec::new(),
+            import_paths: Vec::new(),
             aliases: Vec::new(),
             scope,
             kind: Kind::Command,
@@ -189,6 +194,12 @@ impl Bindable {
 
     pub fn with_path(mut self, path: Vec<String>) -> Bindable {
         self.paths.push(path);
+        self
+    }
+
+    /// Adds a path only import matching reads ([`Bindable::import_paths`]).
+    pub fn with_import_path(mut self, path: Vec<String>) -> Bindable {
+        self.import_paths.push(path);
         self
     }
 
@@ -772,6 +783,14 @@ impl Keymap {
         let (bx, by) = (self.bound(i, x), self.bound(j, y));
         let t = bx.0.effective(self.platform);
         t == by.0.effective(self.platform) && !self.twins(i, j, t) && self.scopes.relation(&bx.1, &by.1) == Some(true)
+    }
+
+    /// Whether both commands of `conflict` have its chord among their defaults, so they share it by
+    /// design and [`Keymap::clashing`] leaves them out.
+    #[cfg(feature = "ui")]
+    pub(crate) fn twins_in(&self, conflict: &Conflict) -> bool {
+        let (Some(i), Some(j)) = (self.find(&conflict.a.0), self.find(&conflict.b.0)) else { return false };
+        self.twins(i, j, conflict.chord)
     }
 
     fn find(&self, command: &CommandRef) -> Option<usize> {

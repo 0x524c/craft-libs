@@ -110,11 +110,11 @@ fn windows_set() -> ForeignSet {
         entry(None, &["Somewhere", "Zoom In"], &[(d, "Ctrl+F11")], Flavor::Windows),
         win("Scripts", &["Frobnicate"], &[(d, "Ctrl+Alt+R")]),
     ];
-    ForeignSet { name: Some("My Set".into()), entries }
+    ForeignSet::new(entries).with_name("My Set")
 }
 
 fn numpad_set() -> ForeignSet {
-    ForeignSet { name: None, entries: vec![win("Window", &["Layers"], &[("Default", "Num 7")]).at_line(2)] }
+    ForeignSet::new(vec![win("Window", &["Layers"], &[("Default", "Num 7")]).at_line(2)])
 }
 
 fn windows_options() -> ImportOptions {
@@ -254,15 +254,13 @@ fn the_set_wins_and_the_report_says_how() {
 fn a_mac_set_reads_its_modifiers_and_scopes_text_keys() {
     let mut km = keymap(Platform::Mac);
     let mac = |menu: &str, path: &[&str], keys: &[(&str, &str)]| entry(Some(menu), path, keys, Flavor::Mac);
-    let set = ForeignSet {
-        name: Some("Mac".into()),
-        entries: vec![
-            mac("File", &["Save"], &[("Default", "⇧⌘S")]),
-            mac("Edit", &["Paste"], &[("Default", "Cmd+Ctrl+V")]),
-            mac("Type", &["Style", "Italic"], &[("Text", "Shift+Cmd+I")]),
-            mac("Type", &["Style", "Bold"], &[("Default", "Cmd+B"), ("Tables", "Cmd+Opt+B")]),
-        ],
-    };
+    let set = ForeignSet::new(vec![
+        mac("File", &["Save"], &[("Default", "⇧⌘S")]),
+        mac("Edit", &["Paste"], &[("Default", "Cmd+Ctrl+V")]),
+        mac("Type", &["Style", "Italic"], &[("Text", "Shift+Cmd+I")]),
+        mac("Type", &["Style", "Bold"], &[("Default", "Cmd+B"), ("Tables", "Cmd+Opt+B")]),
+    ])
+    .with_name("Mac");
     let text = Scope::new("Text").unwrap();
     let options = ImportOptions {
         contexts: vec![("Default".into(), ContextRule::Home), ("Text".into(), ContextRule::Scope(text))],
@@ -282,7 +280,7 @@ fn a_mac_set_reads_its_modifiers_and_scopes_text_keys() {
 
 #[test]
 fn start_and_none_defined_options() {
-    let set = ForeignSet { name: None, entries: vec![win("File", &["Close"], &[("Default", "Ctrl+Q")]), win("Edit", &["Duplicate"], &[])] };
+    let set = ForeignSet::new(vec![win("File", &["Close"], &[("Default", "Ctrl+Q")]), win("Edit", &["Duplicate"], &[])]);
     let user = || {
         let mut o = Overrides::new();
         o.insert("file.save", vec!["Cmd+Alt+S".into()]);
@@ -314,14 +312,11 @@ fn a_failed_change_keeps_its_shortcut_when_a_later_change_frees_room() {
     // Save's change finds the overrides full. Close's change then frees an entry, and Zoom In
     // takes Cmd+S. Removing Cmd+S from Save would fit now, but Save's import failed, so Save
     // keeps it and Zoom In stays as it was.
-    let set = ForeignSet {
-        name: None,
-        entries: vec![
-            win("File", &["Save"], &[("Default", "Ctrl+Alt+S")]),
-            win("File", &["Close"], &[("Default", "Ctrl+W")]),
-            win("View", &["Zoom In"], &[("Default", "Ctrl+S")]),
-        ],
-    };
+    let set = ForeignSet::new(vec![
+        win("File", &["Save"], &[("Default", "Ctrl+Alt+S")]),
+        win("File", &["Close"], &[("Default", "Ctrl+W")]),
+        win("View", &["Zoom In"], &[("Default", "Ctrl+S")]),
+    ]);
     let mut o = Overrides::new();
     o.insert("file.close", vec!["Cmd+Q".into()]);
     o.insert("view.zoomIn", vec!["Cmd+Alt+Z".into()]);
@@ -343,14 +338,11 @@ fn a_failed_change_keeps_its_shortcut_when_a_later_change_frees_room() {
 
 #[test]
 fn changes_that_find_the_overrides_full_are_reported() {
-    let set = ForeignSet {
-        name: None,
-        entries: vec![
-            win("File", &["Close"], &[("Default", "Ctrl+J")]),
-            win("File", &["Save"], &[("Default", "Ctrl+Alt+S")]),
-            win("Edit", &["Duplicate"], &[]),
-        ],
-    };
+    let set = ForeignSet::new(vec![
+        win("File", &["Close"], &[("Default", "Ctrl+J")]),
+        win("File", &["Save"], &[("Default", "Ctrl+Alt+S")]),
+        win("Edit", &["Duplicate"], &[]),
+    ]);
     let full = || {
         let mut o = Overrides::new();
         o.insert("file.close", vec!["Cmd+Q".into()]);
@@ -402,10 +394,7 @@ fn changes_that_find_the_overrides_full_are_reported() {
     has(&km, "edit.duplicate", &[]);
 
     // A later entry whose change finds the overrides full leaves the chord with the earlier one.
-    let set = ForeignSet {
-        name: None,
-        entries: vec![win("File", &["Close"], &[("Default", "Ctrl+Alt+J")]), win("File", &["Save"], &[("Default", "Ctrl+Alt+J")])],
-    };
+    let set = ForeignSet::new(vec![win("File", &["Close"], &[("Default", "Ctrl+Alt+J")]), win("File", &["Save"], &[("Default", "Ctrl+Alt+J")])]);
     let mut km = keymap(Platform::Windows).with_overrides(full());
     let r = plan(&set, &km, &options(Start::Current)).apply(&mut km);
     has(&km, "file.close", &["Cmd+Alt+J"]);
@@ -417,7 +406,7 @@ fn changes_that_find_the_overrides_full_are_reported() {
 
 #[test]
 fn keys_in_unknown_scopes_are_skipped_and_the_rest_apply() {
-    let set = ForeignSet { name: None, entries: vec![win("File", &["Close"], &[("Default", "Ctrl+Q"), ("Story", "Ctrl+K"), ("Text", "Ctrl+L")])] };
+    let set = ForeignSet::new(vec![win("File", &["Close"], &[("Default", "Ctrl+Q"), ("Story", "Ctrl+K"), ("Text", "Ctrl+L")])]);
     let options = ImportOptions {
         contexts: vec![
             ("Default".into(), ContextRule::Home),
@@ -441,7 +430,7 @@ fn keys_in_unknown_scopes_are_skipped_and_the_rest_apply() {
 #[test]
 fn suggestions_are_reported_never_applied() {
     let mut km = keymap(Platform::Windows);
-    let set = ForeignSet { name: None, entries: vec![win("Edit", &["Chek Spelling Now"], &[("Default", "Ctrl+K")])] };
+    let set = ForeignSet::new(vec![win("Edit", &["Chek Spelling Now"], &[("Default", "Ctrl+K")])]);
     let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], suggest: true, ..ImportOptions::default() };
     let p = plan(&set, &km, &options);
     assert!(p.commands.is_empty());
@@ -452,6 +441,12 @@ fn suggestions_are_reported_never_applied() {
     has(&km, "edit.checkSpelling", &[]);
     assert!(km.overrides().is_empty());
     assert_eq!(r.imported, 0);
+}
+
+#[test]
+fn entries_the_reader_dropped_count_as_truncated() {
+    let set = ForeignSet::new(vec![win("File", &["Close"], &[("Default", "Ctrl+Q")])]).with_truncated(7);
+    assert_eq!(plan(&set, &keymap(Platform::Windows), &default_context()).report.truncated, 7);
 }
 
 #[test]
@@ -471,7 +466,7 @@ fn hostile_sets_are_capped_and_counted() {
     // Entries without keys fill the set to the cap and 500 past it.
     let keyless = MAX_IMPORT_ENTRIES - entries.len();
     entries.extend(std::iter::repeat_n(ForeignEntry::new(None, Vec::<String>::new()), keyless + 500));
-    let set = ForeignSet { name: Some(long.clone()), entries };
+    let set = ForeignSet::new(entries).with_name(long.clone());
     let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], suggest: true, ..ImportOptions::default() };
     let r = plan(&set, &km, &options).apply(&mut km);
     assert_eq!(r.suggestions.len(), MAX_SUGGESTIONS);
@@ -514,7 +509,7 @@ fn hostile_sets_finish_in_time() {
     }
     entries.insert(0, big);
     entries.insert(1, win("Edit", &["Paste"], &[("Default", &long), ("Default", "Ctrl+\u{0}"), ("Default", "Win+E")]));
-    let set = ForeignSet { name: Some(long.clone()), entries };
+    let set = ForeignSet::new(entries).with_name(long.clone());
     let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], suggest: true, ..ImportOptions::default() };
     let started = std::time::Instant::now();
     let r = plan(&set, &km, &options).apply(&mut km);
@@ -538,16 +533,13 @@ fn hostile_sets_finish_in_time() {
 fn rows_carry_source_lines_and_approximated_keys() {
     let mut km = keymap(Platform::Windows);
     let d = "Default";
-    let set = ForeignSet {
-        name: None,
-        entries: vec![
-            win("Window", &["Layers"], &[(d, "Ctrl+Num 5"), (d, "Num 7")]).at_line(3),
-            win("Window", &["Layers"], &[(d, "Shift+F7")]).at_line(4),
-            win("Edit", &["Paste"], &[(d, "Ctrl+Num 5")]).at_line(5),
-            win("Edit", &["Chek Spelling Now"], &[(d, "Ctrl+K")]).at_line(8),
-            win("File", &["Save"], &[(d, "Ctrl+Hyperspace")]).at_line(9),
-        ],
-    };
+    let set = ForeignSet::new(vec![
+        win("Window", &["Layers"], &[(d, "Ctrl+Num 5"), (d, "Num 7")]).at_line(3),
+        win("Window", &["Layers"], &[(d, "Shift+F7")]).at_line(4),
+        win("Edit", &["Paste"], &[(d, "Ctrl+Num 5")]).at_line(5),
+        win("Edit", &["Chek Spelling Now"], &[(d, "Ctrl+K")]).at_line(8),
+        win("File", &["Save"], &[(d, "Ctrl+Hyperspace")]).at_line(9),
+    ]);
     let options = ImportOptions { contexts: vec![(d.into(), ContextRule::Home)], suggest: true, ..ImportOptions::default() };
     let r = plan(&set, &km, &options).apply(&mut km);
     // A keypad key binds the main key and is reported. Paste, a later entry, takes Cmd+5.
@@ -623,7 +615,7 @@ fn report_json_uses_camel_case_names() {
 
 fn import_into(catalog: Vec<Bindable>, entries: Vec<ForeignEntry>, options: &ImportOptions) -> (Keymap, ImportReport) {
     let mut km = Keymap::new(catalog, Scopes::new(), Platform::Windows);
-    let report = plan(&ForeignSet { name: None, entries }, &km, options).apply(&mut km);
+    let report = plan(&ForeignSet::new(entries), &km, options).apply(&mut km);
     (km, report)
 }
 
@@ -705,6 +697,20 @@ fn aliases_match_like_labels() {
     has(&km, "app.preferences", &["Cmd+K"]);
     has(&km, "type.bold", &["Cmd+Shift+B"]);
     has(&km, "edit.paste", &["Cmd+Shift+V"]);
+    assert!(r.unmatched.is_empty(), "{:?}", r.unmatched);
+}
+
+#[test]
+fn import_paths_match_like_menu_paths() {
+    let catalog = vec![
+        command("object.color", "Apply Color", &["Object", "Apply Color"], &[]),
+        command("color.applyColor", "Apply Color", &[], &[]).with_import_path(vec!["Tools".into(), "Apply Color".into()]),
+    ];
+    let d = "Default";
+    let entries = vec![win("Tools", &["Apply Color"], &[(d, "Ctrl+,")])];
+    let (km, r) = import_into(catalog, entries, &default_context());
+    has(&km, "color.applyColor", &["Cmd+,"]);
+    has(&km, "object.color", &[]);
     assert!(r.unmatched.is_empty(), "{:?}", r.unmatched);
 }
 

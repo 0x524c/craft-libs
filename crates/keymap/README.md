@@ -1,14 +1,15 @@
 # Craft Keymap
 
 `craft-keymap` holds the data and logic for keyboard bindings in the Craft apps: chords and their
-text forms, bindings from chords to commands, scopes, conflicts, user overrides, and an import
-pipeline for other applications' shortcut sets. Each application supplies its command catalog,
-its file-format readers and its UI.
+text forms, bindings from chords to commands, scopes, conflicts, user overrides, named sets, an
+import pipeline for other applications' shortcut sets, and an editor model. Each application
+supplies its command catalog, its file-format readers and its UI.
 
 ## Boundaries
 
-- Data and logic only. The apps keep the command catalog (ids, labels, menu paths, defaults),
-  the readers for other applications' files, the shortcut editor UI and running the commands.
+- Data and logic, plus a shared Keyboard Shortcuts dialog behind the `ui` feature. The apps keep
+  the command catalog (ids, labels, menu paths, defaults), the readers for other applications'
+  files, file dialogs and running the commands.
 - Never crashes: no panics, no `unsafe`. Loading settings never fails; what cannot be used is
   kept or reported (`Keymap::problems`, the import report).
 - Hostile input is capped: commands, bindings per command, text lengths, import entries, keys,
@@ -16,7 +17,8 @@ its file-format readers and its UI.
 - Reserved chords are opt-in. A keymap reserves no chord unless the app passes a list to
   `Keymap::with_reserved`, e.g. `reserved::system(platform)` for the operating system's window
   switching and closing chords. A reserved chord cannot be assigned or bound.
-- Dependencies: `serde` and `serde_json`; `egui` with the `egui` feature.
+- Dependencies: `serde` and `serde_json`; `egui` with the `egui` feature; `craft-ui` and
+  `craft-i18n` with the `ui` feature.
 
 ## A catalog and dispatch
 
@@ -171,11 +173,75 @@ store.update(|p| p.shortcuts = keymap.overrides().clone());
 - `conflicts()` lists every pair of commands on one chord; `conflicts_with(&command)` lists the
   commands that share one command's chords, with that command as `a`.
 
+## Shortcut sets
+
+`Profiles` holds the user's named sets of overrides and which one is active. The app's built-in
+sets (`&[(&str, Overrides)]`, the first one the default) are passed to each call and never change.
+An app with sets stores only `Profiles`, in place of the `Overrides` field above: the keymap's
+overrides are the active set's, and the dialog's OK stores them there. The sets, and each set's
+overrides, are stored as arrays, so a deleted set or entry leaves a craft-settings file.
+
+```rust
+use craft_keymap::{Keymap, Platform, Profiles, Scopes};
+use craft_settings::{Location, SettingsStore};
+
+#[derive(Serialize, Deserialize, Default, Clone, PartialEq)]
+#[serde(default)]
+struct Prefs {
+    shortcut_sets: Profiles,
+}
+
+// `builtins` is the app's &[(&str, Overrides)], the first set the default.
+let (mut store, _report) = SettingsStore::<Prefs>::open(Location::Auto);
+let mut sets = store.get().shortcut_sets.clone();
+sets.reconcile(&builtins);
+let keymap = Keymap::new(catalog, Scopes::new(), Platform::current()).with_overrides(sets.active_overrides(&builtins).clone());
+
+// The dialog edits `sets` and `keymap`. On Outcome::Ok (or Changed, to save live):
+store.update(|p| p.shortcut_sets = sets.clone());
+```
+
+- `names`, `get`, `active_name`, `active_overrides` (hand them to `Keymap::set_overrides`);
+  `sets` (the user's sets) and `active` (the stored name, which `active_name` resolves to a set).
+- `select` switches sets; `duplicate(from, to)` copies a built-in or user set; `save_as`,
+  `rename` and `delete` work on user sets only.
+- `store(overrides, builtins, copy_name)` saves the editor's result to the active set. Editing a
+  built-in set makes a user copy named after `copy_name`, which becomes active.
+- New names are made unique (`Custom 2`, `Custom 3`) and compare without case. A user set named
+  like a built-in added later is renamed by `reconcile`.
+- `export(name)` writes one set as JSON
+  (`{"format":"craft-keymap","version":1,"name":…,"overrides":…}`); `import(text)` reads it into
+  a new set. A file from a newer version is refused (`ProfileError::NewerVersion`).
+- Loading never fails. `problems()` lists what loading dropped: sets with a bad or repeated name,
+  overrides that are neither a list nor a map, sets past `MAX_SETS`, and a `version` newer than
+  this crate writes. The app shows them before the next save writes the sets without them.
+  Stored `Profiles` carry `version = 1`; a file without it reads as version 1.
+- `import_plan(&plan, &keymap, name)` applies an import plan (see Importing a shortcut set) to a
+  copy of the keymap and keeps the result as a new set, so another application's set becomes one
+  the user can switch to and away from.
+
+```rust
+use craft_keymap::{Overrides, Profiles};
+
+let mut classic = Overrides::new();
+classic.insert("edit.copy", vec!["Cmd+Shift+C".into()]);
+let builtins = [("Craft", Overrides::new()), ("Classic", classic)];
+let mut sets = Profiles::default();
+assert_eq!(sets.active_name(&builtins), "Craft");
+
+sets.duplicate("Classic", "Mine", &builtins).unwrap();
+let text = sets.export("Mine", &builtins).unwrap();
+assert_eq!(sets.import(&text, &builtins), Ok("Mine 2".into()));
+assert_eq!(sets.active_overrides(&builtins), sets.get("Mine", &builtins).unwrap());
+```
+
 ## Importing a shortcut set
 
 The app's reader turns a file (an InDesign Show Set, an Illustrator `.kys`) into an
 [`import::ForeignSet`](src/import.rs): entries with a menu, a path and keys read by
-`ForeignKey::read`. `import::plan` matches each entry to one command and changes nothing;
+`ForeignKey::read`. The reader builds it with `ForeignSet::new(entries)`, `with_name` and
+`with_truncated`; the struct is `#[non_exhaustive]`, so struct literals outside the crate do not
+compile. `import::plan` matches each entry to one command and changes nothing;
 `ImportPlan::apply` applies the plan and returns an `ImportReport` (serde, camelCase). Report
 rows carry the entry's `item` (its path) and `line`.
 
@@ -189,13 +255,11 @@ let save = Bindable::new("file.save", "Save", Scope::app())
 let mut keymap = Keymap::new(vec![save], Scopes::new(), Platform::Windows);
 
 let read = |text: &str| ForeignKey::read(Some("Default"), text, Flavor::Windows);
-let set = ForeignSet {
-    name: Some("My Set".into()),
-    entries: vec![
-        ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(12),
-        ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(13),
-    ],
-};
+let set = ForeignSet::new(vec![
+    ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(12),
+    ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(13),
+])
+.with_name("My Set");
 let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() };
 let planned = plan(&set, &keymap, &options);
 // A review UI can show planned.commands and planned.report here.
@@ -211,7 +275,9 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
   it `in_panel_menu()`. Tool entries match only tools.
 - Names are compared after `import::normalize_label`: case, `…`, `...`, `&`, colons and extra
   spaces aside, so the alias `Preferences: General…` matches `Edit > Preferences > General...`.
-  Aliases (`Bindable::with_alias`) count wherever labels do.
+  Aliases (`Bindable::with_alias`) count wherever labels do, and import paths
+  (`Bindable::with_import_path`, such as `["Tools", label]` for a tool) wherever menu paths do;
+  the dialog makes no areas or groups from import paths.
 - Panel menus: sources list panel-menu items with the panel's name in front (InDesign's Panel
   Menus area writes `Character: All Caps`; Illustrator and Photoshop sets have similar areas).
   The reader splits the name into segments and marks the entry `ForeignEntry::in_panel_menu()`.
@@ -239,6 +305,124 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
   they are reported, never applied. Only the first 200 unmatched entries with keys get them, and
   only the first 200 characters of a name are compared. Keys in `ContextRule::Skip` contexts do
   not count: an unmatched entry with only such keys counts in `unmatched_without_shortcut`.
+- `truncated` counts what was cut at the caps (`MAX_IMPORT_ENTRIES` and the others), plus the
+  entries the app's reader dropped at its own limits, which it passes as `ForeignSet.truncated`.
+
+## Editor
+
+`editor` is the model behind a shortcut dialog; the app draws it.
+
+- `EditSession::begin(&keymap)` when the dialog opens. Each change is one undo step:
+  `assign`, `replace` (record over one key of a command), `remove`, `clear`, `reset`, `reset_all`,
+  or any keymap edit through `session.edit(&mut keymap, |km| …)`. `undo`, `redo`, `cancel` (back
+  to the state at open) and `is_modified`.
+- Conflicts: `editor::holders(&keymap, &command, &binding)` lists the commands that hold the key
+  while the user records; `Keymap::conflicts_with(&command)` marks the rows whose keys are
+  shared after a `Keep`. Assigning with `Policy::Refuse` returns `AssignError::Taken` and changes
+  nothing; the user's answer is a second call with `Policy::Steal` or `Policy::Keep`.
+- `Recorder::press(chord, time)` gives `Single`, `Double` (the same chord again within
+  `DOUBLE_PRESS`, 0.6 s) or `Cancel` (Escape).
+- `editor::search(&keymap, query, platform)` filters the catalog by label, alias, menu path,
+  command id and key text, canonical or as shown on `platform`.
+
+```rust
+use craft_keymap::editor::holders;
+use craft_keymap::{AssignError, Binding, Chord, EditSession, Policy, Recorded, Recorder};
+
+// `keymap` is the app's Keymap, `now` the input time in seconds.
+let mut session = EditSession::begin(&keymap);
+let mut recorder = Recorder::new();
+let save = "file.save".into();
+// The user presses Cmd+C in the shortcut field of Save.
+if let Recorded::Single(trigger) = recorder.press(Chord::parse("Cmd+C").unwrap(), now) {
+    let binding = Binding::new(trigger);
+    let _shown = holders(&keymap, &save, &binding);
+    if let Err(AssignError::Taken(_)) = session.assign(&mut keymap, &save, binding.clone(), Policy::Refuse) {
+        // The user chose to take the key from Copy.
+        session.assign(&mut keymap, &save, binding, Policy::Steal).ok();
+    }
+}
+// OK: store `keymap.overrides()` (`Profiles::store` for sets). Cancel:
+session.cancel(&mut keymap);
+```
+
+## Shortcuts dialog
+
+With the `ui` feature, `ui::ShortcutsDialog` draws the Keyboard Shortcuts dialog over a `Keymap`
+and, optionally, `Profiles`: a table of the catalog grouped by menu, recording, conflicts, undo,
+named sets, import review and a summary. It edits the keymap in place, so menus show new keys at
+once, and Cancel puts everything back as it was when the dialog opened.
+
+Adopt it in three steps:
+
+1. Build the `Keymap` from the catalog and keep the built-in sets (`Builtins`), as above.
+2. While the dialog is open, keep a `DialogState` and call `show` (a window) or `ui` (the body,
+   for the app's own modal or preferences page) every frame.
+3. Act on the `Outcome` it returns, and drop the state when `is_open()` turns false.
+
+Apps that import other applications' sets read each file into a `ForeignSet` built with
+`ForeignSet::new` ([Importing a shortcut set](#importing-a-shortcut-set)).
+
+```rust,ignore
+use craft_keymap::ui::{DialogState, I18nText, Options, Outcome, ShortcutsDialog};
+
+// "Keyboard Shortcuts…" opens it; "Edit Shortcut…" also calls `state.select(&command)`.
+self.shortcuts = Some(DialogState::new());
+
+// Every frame, before the app's own dispatch:
+if let Some(state) = &mut self.shortcuts {
+    let text = I18nText { i18n: &self.i18n, lang: self.lang };
+    let dialog = ShortcutsDialog::new(&mut self.keymap, &text).options(&self.shortcut_options);
+    let dialog = dialog.sets(&mut self.settings.shortcut_sets, &BUILTINS);
+    match dialog.show(ctx, state) {
+        Some(Outcome::Ok) => self.save_settings(),
+        // After each edit, and after a Cancel that undid edits.
+        Some(Outcome::Changed) => self.rebuild_menus(),
+        Some(Outcome::Import { formats }) => self.pick_import_file(formats),
+        Some(Outcome::Export { name, json }) => self.save_file(&name, json),
+        Some(Outcome::Summary { name, html, .. }) => self.show_summary(&name, html),
+        Some(Outcome::Remembered(answers)) => self.settings.import_answers.extend(answers),
+        _ => {}
+    }
+    if !state.is_open() {
+        self.shortcuts = None;
+    }
+}
+```
+
+Outcomes:
+
+| Outcome | The app |
+|---|---|
+| `Ok` | Saves `Profiles` (with sets) or `keymap.overrides()`. |
+| `Cancel` | Nothing to save: the keymap and the sets are as they were at open. When Cancel undid edits, `Changed` follows. |
+| `Changed` | Updates its menus, or saves at once if it saves live. It comes after each edit and after a Cancel that undid edits. When a frame also has another outcome, `Changed` comes on the next frame; `is_open()` stays true until it has. |
+| `Import { formats }` | Opens a file of one of the formats, then calls `import_json` (craft-keymap JSON, `ui::JSON_FORMAT`) or reads it into a `ForeignSet` and calls `review_import`. |
+| `Export { name, json }`, `ExportAs { format, name, keymap }` | Writes the set where the user chooses (a download on the web). |
+| `Summary { name, html, text }` | Shows, saves or prints the summary. |
+| `Remembered(answers)` | Keeps the user's import answers for the next import (`ImportOptions::remembered`). |
+
+The crate never opens a file dialog or touches the file system. When the app's own step fails
+while the dialog is open (a file it cannot read), `state.show_error(text)` shows the translated
+message under the table until the user dismisses it or the next action replaces it.
+
+Key dispatch while the dialog is open:
+
+- Skip `Dispatcher::dispatch` while `DialogState::is_open()` is true. The dialog takes the
+  frame's key, text and clipboard events itself while it records, so the chord the user presses
+  reaches the recorder and runs nothing.
+- A native macOS menu handles its key equivalents before egui sees them, so Cmd+Q, Cmd+, and
+  the other menu chords never reach the recorder. While `is_recording()` is true, pause them:
+  feed them to egui as key presses, or rebuild the menu without accelerators.
+
+Words come from `ui::Text`. Apps on craft-i18n pass `I18nText`; others implement `ui` and
+`plural` over their own lookup, and `rtl` and `visual` (the app's bidi reordering) for
+right-to-left languages, which mirror the layout. Chord text is never reordered. `ui::STRINGS`
+and `ui::PLURALS` list every string the dialog looks up, for the translation catalog.
+`Options` sets the conflict mode, double-press recording, area tabs, the on-screen keyboard,
+read-only rows for keys outside the catalog, the app's import and export formats, an `accept`
+rule for which keys a command may get, and a `visible` rule for which catalog entries the table
+lists (hidden entries keep their keys and still count in conflicts).
 
 ## Features
 
@@ -276,3 +460,9 @@ assert_eq!((report.unmatched[0].item.as_str(), report.unmatched[0].line), ("File
   typing, and stays when that chord has no binding. egui-winit sends no Paste event when the
   clipboard is empty or holds an image, so a binding on a Cmd+V chord cannot run then on the
   desktop.
+
+- `ui`: the Shortcuts dialog (see above). Implies `egui`.
+- `snapshot` (development): `tests/ui_snapshot.rs` writes PNGs of the dialog to
+  `CRAFT_KEYMAP_SNAPSHOT_DIR` for review. egui's default fonts lack ⇧ ⌥ ⌃ and the arrows; the
+  test adds the font in `CRAFT_KEYMAP_SNAPSHOT_FONT`, DejaVu Sans when it is installed, and BIZ
+  UDPGothic from a craft-fonts checkout in `CRAFT_FONTS_DIR` (⇧ ⌘ and arrows only).

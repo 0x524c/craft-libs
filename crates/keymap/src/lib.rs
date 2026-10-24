@@ -6,11 +6,13 @@
 //! protocols store, display text per platform, and a reader for other applications' key text.
 //! [`command`] names what a binding runs, [`scope`] where it works, and [`keymap`] holds an app's
 //! catalog with default bindings, the user's [`Overrides`], dispatch ([`Keymap::lookup`]),
-//! editing and conflicts. [`reserved`] lists the chords each operating system takes; a keymap
-//! reserves no chord unless the app opts in with [`Keymap::with_reserved`], e.g.
-//! `with_reserved(reserved::system(platform))`. [`import`] brings in other applications' shortcut
-//! sets. [`layout`] decides which chord a key press means on the user's keyboard layout, for
-//! matching, recording and labels. With the `egui` feature, the `egui` module
+//! editing and conflicts. [`profiles`] keeps named sets of overrides; [`reserved`] lists the
+//! chords each operating system takes, and a keymap reserves no chord unless the app opts in with
+//! [`Keymap::with_reserved`], e.g. `with_reserved(reserved::system(platform))`. [`import`] brings
+//! in other applications' shortcut sets. [`layout`] decides which chord a key press means on the
+//! user's keyboard layout, for matching, recording and labels. [`editor`] is the model of a
+//! shortcut editor: undo, a chord recorder, conflict queries and search. With the `egui` feature,
+//! the `egui` module
 //! converts to and from egui keys, matches key presses against bindings and dispatches a frame's
 //! key events.
 //!
@@ -99,6 +101,10 @@
 //! store.update(|p| p.shortcuts = keymap.overrides().clone());
 //! ```
 //!
+//! An app with named sets stores only [`Profiles`] in place of the `Overrides` field and builds
+//! the keymap from the active set:
+//! `with_overrides(prefs.shortcut_sets.active_overrides(&builtins).clone())`.
+//!
 //! # Importing a shortcut set
 //!
 //! The app's reader builds a [`ForeignSet`]; [`plan`] matches it without changing anything, so a
@@ -114,13 +120,11 @@
 //! let mut keymap = Keymap::new(vec![save], Scopes::new(), Platform::Windows);
 //!
 //! let read = |text: &str| ForeignKey::read(Some("Default"), text, Flavor::Windows);
-//! let set = ForeignSet {
-//!     name: Some("My Set".into()),
-//!     entries: vec![
-//!         ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(12),
-//!         ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(13),
-//!     ],
-//! };
+//! let set = ForeignSet::new(vec![
+//!     ForeignEntry::new(Some("File"), ["Save"]).with_key(read("Ctrl+Alt+S")).at_line(12),
+//!     ForeignEntry::new(Some("File"), ["Frobnicate"]).with_key(read("Ctrl+F")).at_line(13),
+//! ])
+//! .with_name("My Set");
 //! let options = ImportOptions { contexts: vec![("Default".into(), ContextRule::Home)], ..ImportOptions::default() };
 //! let planned = plan(&set, &keymap, &options);
 //! assert_eq!(planned.commands.len(), 1);
@@ -133,21 +137,27 @@
 
 pub mod chord;
 pub mod command;
+pub mod editor;
 #[cfg(feature = "egui")]
 pub mod egui;
 pub mod import;
 pub mod keymap;
 pub mod layout;
+pub mod profiles;
 pub mod reserved;
 pub mod scope;
+#[cfg(feature = "ui")]
+pub mod ui;
 
 pub use chord::foreign::Flavor;
 pub use chord::{Chord, Key, MAX_CHORD_TEXT, Mods, ParseError, Platform, Trigger};
 pub use command::{CommandRef, MAX_KEY};
+pub use editor::{DOUBLE_PRESS, EditSession, MAX_UNDO, MAX_UNDO_BYTES, Recorded, Recorder};
 pub use import::{ContextRule, ForeignEntry, ForeignKey, ForeignSet, ImportOptions, ImportPlan, ImportReport, NoneDefined, Start, plan};
 pub use keymap::{
     AssignError, Assigned, Bindable, Binding, BindingError, Conflict, ConflictKind, DropReason, Holder, Keymap, Kind, Lookup, MAX_BINDING_TEXT,
     MAX_BINDINGS, MAX_COMMANDS, MAX_CONFLICTS, Overrides, Policy, Problem, TypingRule, text_editing_chords,
 };
 pub use layout::{KeyInput, Layout};
+pub use profiles::{Builtins, MAX_EXPORT_BYTES, MAX_SET_NAME, MAX_SETS, ProfileError, Profiles, SetProblem};
 pub use scope::{Active, MAX_SCOPE_NAME, Scope, ScopeKind, Scopes};

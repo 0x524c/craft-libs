@@ -120,8 +120,7 @@ pub fn matches(binding: &Chord, key: EguiKey, mods: &Modifiers, platform: Platfo
     Layout::new().matches(binding, &KeyInput::new(Mods::from_egui(mods, platform)).with_typed(pressed), platform)
 }
 
-/// Seconds within which a second press of the same chord counts as a double press.
-pub const DOUBLE_PRESS: f64 = 0.6;
+pub use crate::editor::DOUBLE_PRESS;
 
 /// A command a key press runs.
 #[derive(Clone, Debug, PartialEq)]
@@ -333,7 +332,7 @@ impl Dispatcher {
                     Some(true) => continue,
                     Some(false) => {}
                     None => {
-                        let (key, held) = clipboard_chord(&event, frame_mods);
+                        let (key, held, _) = clipboard_chord(&event, frame_mods);
                         // A focused text field copies and pastes on the plain chords itself.
                         let look = !is_plain_clipboard(key, held) || (self.clipboard && !active.typing);
                         let hit = if look { self.press(&KeyInput::new(held).with_typed(key), false, now, keymap, active) } else { None };
@@ -403,7 +402,7 @@ impl Dispatcher {
 
 /// A clipboard event: Copy, Cut or Paste.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Clip {
+pub(crate) enum Clip {
     Copy,
     Cut,
     Paste,
@@ -503,7 +502,7 @@ fn event_clip(event: &Event) -> Option<Clip> {
 }
 
 /// The clipboard event a backend sends for a press, if any.
-fn clipboard_kind(key: Key, held: Mods) -> Option<Clip> {
+pub(crate) fn clipboard_kind(key: Key, held: Mods) -> Option<Clip> {
     match key {
         Key::C if held.cmd => Some(Clip::Copy),
         Key::X if held.cmd => Some(Clip::Cut),
@@ -526,17 +525,17 @@ fn is_plain_clipboard(key: Key, held: Mods) -> bool {
     }
 }
 
-/// The press a clipboard event stands for, with the modifiers held. Off macOS egui-winit also
-/// sends Cut for Shift+Delete and Paste for Shift+Insert.
-fn clipboard_chord(event: &Event, held: Mods) -> (Key, Mods) {
+/// The press a clipboard event stands for, with the modifiers held, and the event's kind. Off
+/// macOS egui-winit also sends Cut for Shift+Delete and Paste for Shift+Insert.
+pub(crate) fn clipboard_chord(event: &Event, held: Mods) -> (Key, Mods, Clip) {
     let with_cmd = Mods { cmd: true, ..held };
     let shift_only = held.shift && !held.cmd;
     match event {
-        Event::Cut if shift_only => (Key::Delete, held),
-        Event::Cut => (Key::X, with_cmd),
-        Event::Paste(_) if shift_only => (Key::Insert, held),
-        Event::Paste(_) => (Key::V, with_cmd),
-        _ => (Key::C, with_cmd),
+        Event::Cut if shift_only => (Key::Delete, held, Clip::Cut),
+        Event::Cut => (Key::X, with_cmd, Clip::Cut),
+        Event::Paste(_) if shift_only => (Key::Insert, held, Clip::Paste),
+        Event::Paste(_) => (Key::V, with_cmd, Clip::Paste),
+        _ => (Key::C, with_cmd, Clip::Copy),
     }
 }
 
