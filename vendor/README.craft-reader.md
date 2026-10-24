@@ -236,6 +236,19 @@ image, its header and the terminator fit within `MAX_DECODED_STREAM`, and otherw
 back to the look-ahead. Its unit tests in `content::tests` come with it. PdfCraft's raster
 test is not ported: the windowed tokenizer tests cover the same content streams.
 
+Rendering fixes from the [PdfCraft revision 0b670caf4a090e9d83a7f41a84b4cb2144a2d33e ledger](https://github.com/storytold/pdfcraft/blob/0b670caf4a090e9d83a7f41a84b4cb2144a2d33e/vendor/README.md),
+each marked `PdfCraft patch` in the source: hayro-interpret (40) (PdfCraft #2987), an optional
+content membership dictionary with a visibility expression (`/VE`: `/And`, `/Or` and `/Not`
+over groups the document lists in `/OCProperties /OCGs`) shows its content when the
+expression is true, ahead of `/OCGs` and `/P`; a malformed expression, or one nested deeper
+than 32 levels, is ignored and `/OCGs` and `/P` decide; and hayro (18) (PdfCraft #2972), the
+page renders as one transparency group over a transparent backdrop that is then put on the
+background, so a blend mode over an empty part of the page keeps its color; with a color
+replacement (reading colors) the background stays inside the group as its backdrop. A plate
+render (`InterpreterSettings::plate`) also keeps the background inside, marked `Craft patch`,
+so blend modes on a separation's film blend with the paper. The PdfCraft raster tests of both
+are adapted in `tests/upstream_raster.rs`.
+
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
 equivalence. The independent color oracles, backend tests and facade contracts cover
