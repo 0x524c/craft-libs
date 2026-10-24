@@ -267,6 +267,7 @@ fn ink_colors_write_as_cmyk_separation_or_device_n_and_separate_onto_their_plate
 
     let unknown = InkSet::new();
     assert_eq!(to_pdf_color(&colors[1], &unknown, &cms), None, "an ink not in the set");
+    assert_eq!(to_pdf_color(&InkColor::Tints(vec![]), &inks, &cms), None, "no ink: nothing to paint");
     let mut many = InkSet::new();
     let tints: Vec<(InkId, f32)> = (0..33)
         .map(|i| (many.add(Ink::Spot(Spot { name: format!("S{i}"), alternate: Alternate::Cmyk([0.0; 4]), solidity: None })).unwrap(), 1.0))

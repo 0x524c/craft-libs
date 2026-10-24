@@ -397,12 +397,15 @@ impl InkColor {
 ///
 /// Spot alternates are [`InkSet::spot_cmyk`]: a CMYK alternate as given, a Lab one through
 /// `cms` into the printing condition. A tint listed twice combines as overlapping halftones,
-/// as in `resolve`. `None` when a tint's ink is not in `inks`, a spot's Lab alternate can't be
-/// converted, a spot name is empty, or a `DeviceN` space would have more than 32 colorants.
+/// as in `resolve`. `None` when `Tints` lists no ink (there is nothing to paint; use
+/// [`InkColor::None`] to mark no plate), a tint's ink is not in `inks`, a spot's Lab alternate
+/// can't be converted, a spot name is empty, or a `DeviceN` space would have more than 32
+/// colorants.
 pub fn to_pdf_color(color: &InkColor, inks: &InkSet, cms: &dyn CmykConversion) -> Option<PdfColor> {
     let tints = match color {
         InkColor::All(tint) => return Some(separation(SeparationColorant::AllColorants, *tint, cmyk::Color::new(255, 255, 255, 255))),
         InkColor::None => return Some(separation(SeparationColorant::NoColorant, 0.0, cmyk::Color::new(0, 0, 0, 0))),
+        InkColor::Tints(tints) if tints.is_empty() => return None,
         InkColor::Tints(tints) => tints,
     };
     // Sorted by id: process inks first, in plate order, then spots in set order.
