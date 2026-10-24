@@ -15,6 +15,9 @@ use super::{dock::dock_rects, node_limits, split_bounds};
 use crate::docking::{DockContent, DockStyle, Node, PanelLimits};
 use crate::layout::{SplitAxis, SplitLayout, SplitSize, split_rect};
 
+/// A split's two children with the rects they are drawn in.
+type Children<'n, P> = [(&'n Node<P>, Rect); 2];
+
 /// Room a group keeps above its minimum after a drop, so each of its dividers can still
 /// travel both ways.
 pub(in crate::docking) const DROP_MARGIN: f32 = 1.0;
@@ -169,7 +172,7 @@ impl<P> Sizer<'_, P> {
     /// The ancestors that continue the line of the split at the end of `chain` along `axis`:
     /// each with its children and whether the line runs through its second child, nearest first.
     /// The line ends at a split across the axis or beside a dock.
-    fn line<'n>(&self, chain: &[(&'n Node<P>, Rect)], path: &[bool], axis: SplitAxis) -> Vec<(usize, [(&'n Node<P>, Rect); 2], bool)> {
+    fn line<'n>(&self, chain: &[(&'n Node<P>, Rect)], path: &[bool], axis: SplitAxis) -> Vec<(usize, Children<'n, P>, bool)> {
         let mut line = Vec::new();
         for depth in (0..path.len()).rev() {
             let Some(&(node, rect)) = chain.get(depth) else { break };

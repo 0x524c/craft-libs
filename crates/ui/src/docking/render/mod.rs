@@ -143,7 +143,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     let actions = self.divider_actions(root, path, response.delta);
                     self.output.actions.extend(actions);
                 }
-                self.intersections(ui, node, rect, path, split.divider, mark, root);
+                self.intersections(ui, (node, rect), path, split.divider, mark, root);
                 if self.dividers.len() < crate::docking::model::MAX_NODES {
                     self.dividers.push(DrawnDivider { path: path.clone(), axis: *axis, divider: split.divider });
                 }
@@ -285,7 +285,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 
     /// Four-way handles where a divider drawn inside the split `node` (since `mark`) ends on
     /// the split's own divider: dragging one moves both dividers.
-    fn intersections(&mut self, ui: &mut Ui, node: &Node<P>, rect: Rect, path: &[bool], divider: Rect, mark: usize, root: (&Node<P>, Rect)) {
+    fn intersections(&mut self, ui: &mut Ui, (node, rect): (&Node<P>, Rect), path: &[bool], divider: Rect, mark: usize, root: (&Node<P>, Rect)) {
         let Node::Split { axis, .. } = node else { return };
         let side = (self.style.gap * 3.0).max(12.0);
         let mut found = Vec::new();
