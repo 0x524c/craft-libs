@@ -1,7 +1,8 @@
 //! Floating windows in their own OS windows (feature `native-windows`). Where the backend has
 //! viewports, every floating window whose panels allow it is drawn with
-//! `show_viewport_immediate`, always on top of other windows and hidden while none of the
-//! application's windows has focus. Where egui embeds viewports (wasm, tests) windows stay
+//! `show_viewport_immediate`. Palettes stay on top of other windows and hide while none of the
+//! application's windows has focus; viewers are normal windows that come forward when the
+//! application is activated. Where egui embeds viewports (wasm, tests) windows stay
 //! in-window at their in-window rect, and so do they on Wayland, unless the app turns native
 //! windows on ([`crate::docking::DockArea::native_windows`]). Tabs, groups and whole windows
 //! drag between OS windows (see `cross.rs`).
@@ -25,6 +26,10 @@ const MIN_SIZE: [f32; 2] = [160.0, 100.0];
 /// How long floating windows stay after the application's last window lost focus, so focus
 /// moving between our own windows does not hide them.
 const HIDE_DELAY: f64 = 0.25;
+/// Whether normal windows are raised when the application is activated. macOS brings an
+/// application's windows forward itself: all of them on activation from the Dock or the
+/// application switcher, the clicked one alone on a click, as its own windows do.
+const RAISE_ON_ACTIVATION: bool = !cfg!(target_os = "macos");
 /// How long reports of a native window's place may lag a move the dock area commanded.
 const MOVE_WAIT: f64 = 0.5;
 /// How far the resize bands reach into a native window from its edges, where the window has
@@ -204,7 +209,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     pub(super) fn native_windows<'w>(&mut self, ctx: &Context, windows: Vec<&'w Floating<P>>) -> Vec<&'w Floating<P>> {
         let native = !ctx.embed_viewports() && self.native_windows.unwrap_or_else(|| !wayland(ctx, env_session()));
         let origin = ctx.input(|i| i.viewport().inner_rect.map(|r| r.min)).filter(|p| p.is_finite()).unwrap_or(Pos2::ZERO);
-        let visible = !native || self.float_visibility(ctx);
+        let (visible, activated) = if native { self.float_visibility(ctx) } else { (true, false) };
         self.cross.on = native;
         let mut shown = Vec::new();
         let mut in_window = Vec::new();
@@ -235,7 +240,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             if ctx.data(|d| d.get_temp::<WindowDrag>(key)).is_some_and(|d| !natives.iter().any(|(w, ..)| w.id == d.window)) {
                 ctx.data_mut(|d| d.remove::<WindowDrag>(key));
             }
-            self.map_desktop(ctx, &natives, visible);
+            self.map_desktop(ctx, &natives, visible, activated);
+            self.raise_next(ctx, &natives);
             // The main window owns drags of the panels it draws.
             let id = self.id;
             let dragged = ctx.data(|d| {
@@ -285,13 +291,21 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 
     /// The main window and the shown native windows on the desktop, front first: palettes
     /// above the rest, each the window focused most recently first. A window whose position is
-    /// unknown is left out. `visible`: palettes show.
-    fn map_desktop(&mut self, ctx: &Context, natives: &[(&Floating<P>, [f32; 4], ViewportId)], visible: bool) {
+    /// unknown is left out. `visible`: palettes show. `activated`: the application was just
+    /// activated, so the main window and its normal windows are raised (see
+    /// [`Self::raise_next`]).
+    fn map_desktop(&mut self, ctx: &Context, natives: &[(&Floating<P>, [f32; 4], ViewportId)], visible: bool, activated: bool) {
         let key = self.id.with("native-order");
         // Focus order, front first; `None` is the main window.
         let mut order = ctx.data(|d| d.get_temp::<Vec<Option<u64>>>(key)).unwrap_or_default();
         order.retain(|id| id.is_none_or(|id| natives.iter().any(|(w, ..)| w.id == id)));
-        if ctx.input(|i| i.viewport().focused == Some(true)) || !order.contains(&None) {
+        // The main window comes to the front when it gains focus, and on a press in it: the
+        // window system raises it then, though it may have kept focus.
+        let main_key = self.id.with("native-main-focused");
+        let (main_focused, pressed) = ctx.input(|i| (i.viewport().focused == Some(true), i.pointer.any_pressed()));
+        let gained = main_focused && !ctx.data(|d| d.get_temp::<bool>(main_key)).unwrap_or(false);
+        ctx.data_mut(|d| d.insert_temp(main_key, main_focused));
+        if gained || pressed || !order.contains(&None) {
             let front = order.contains(&None);
             order.retain(Option::is_some);
             if front { order.insert(0, None) } else { order.push(None) }
@@ -314,6 +328,19 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 windows.push((window.id, placed, normal));
             }
         }
+        if activated && RAISE_ON_ACTIVATION {
+            // The back one first, so each lands in front of those raised before it, and the
+            // window just focused, at the front of the order, last.
+            let queue: Vec<Option<u64>> = order
+                .iter()
+                .rev()
+                .filter(|id| id.is_none_or(|id| natives.iter().any(|(w, ..)| w.id == id && self.normal_window(w))))
+                .copied()
+                .collect();
+            if queue.iter().any(Option::is_some) {
+                ctx.data_mut(|d| d.insert_temp(self.id.with("native-raise"), queue));
+            }
+        }
         let rank = |id: Option<u64>| order.iter().position(|o| *o == id);
         windows.sort_by_key(|(id, _, normal)| (*normal, rank(Some(*id))));
         self.cross.front = windows.iter().filter(|(id, _, normal)| !normal || rank(Some(*id)) < rank(None)).count();
@@ -322,8 +349,40 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         self.cross.main = ctx.input(|i| i.viewport().outer_rect.and(i.viewport().inner_rect)).filter(|r| r.is_finite());
     }
 
-    /// Whether palettes show this frame.
-    fn float_visibility(&mut self, ctx: &Context) -> bool {
+    /// Raise the next window [`Self::map_desktop`] queued when the application was activated,
+    /// the main window (`None`) or a normal window: one per pass, since egui sends the commands
+    /// of different viewports in no fixed order. Toggling the window level raises a window without focusing it: on Windows
+    /// `HWND_NOTOPMOST` puts the window in front of every window that is not topmost, and on
+    /// X11 the window manager raises a window as it takes `_NET_WM_STATE_ABOVE`. winit has no
+    /// plain raise. `ViewportCommand::Focus` would take focus from the window the user
+    /// activated, and egui-winit ignores it for a window that has focus, so focus could not be
+    /// handed back. `Visible(true)` does nothing to a shown window.
+    fn raise_next(&self, ctx: &Context, natives: &[(&Floating<P>, [f32; 4], ViewportId)]) {
+        let key = self.id.with("native-raise");
+        let Some(mut queue) = ctx.data_mut(|d| d.remove_temp::<Vec<Option<u64>>>(key)) else { return };
+        // A window that became a palette since activation keeps its `AlwaysOnTop` level.
+        let viewport = |id: Option<u64>| match id {
+            None => Some(ViewportId::ROOT),
+            Some(id) => natives.iter().find(|(w, ..)| w.id == id && self.normal_window(w)).map(|(.., v)| *v),
+        };
+        queue.retain(|id| viewport(*id).is_some());
+        if queue.is_empty() {
+            return;
+        }
+        if let Some(viewport) = viewport(queue.remove(0)) {
+            ctx.send_viewport_cmd_to(viewport, ViewportCommand::WindowLevel(WindowLevel::AlwaysOnTop));
+            ctx.send_viewport_cmd_to(viewport, ViewportCommand::WindowLevel(WindowLevel::Normal));
+        }
+        if !queue.is_empty() {
+            ctx.data_mut(|d| d.insert_temp(key, queue));
+            ctx.request_repaint();
+        }
+    }
+
+    /// Whether palettes show this frame, and whether the application was just activated: one
+    /// of its windows has focus after none had it for long enough to hide the palettes.
+    /// Losing focus again stops the raise of normal windows that activation started.
+    fn float_visibility(&mut self, ctx: &Context) -> (bool, bool) {
         let (focused, now) = ctx.input(|i| {
             let infos = || i.raw.viewports.values();
             // A backend that reports no focus at all keeps the windows.
@@ -338,7 +397,15 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64((HIDE_DELAY - (now - last)).max(0.0)));
         }
         ctx.data_mut(|d| d.insert_temp(key, last));
-        visible
+        let away_key = self.id.with("native-away");
+        let away = ctx.data(|d| d.get_temp::<bool>(away_key)).unwrap_or(false);
+        ctx.data_mut(|d| {
+            d.insert_temp(away_key, !focused && (away || !visible));
+            if !focused {
+                d.remove::<Vec<Option<u64>>>(self.id.with("native-raise"));
+            }
+        });
+        (visible, focused && away)
     }
 
     /// A window holding a viewer is a normal window, so it neither vanishes nor sits over other

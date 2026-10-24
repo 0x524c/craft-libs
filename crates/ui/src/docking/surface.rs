@@ -640,7 +640,9 @@ pub enum WindowKind {
     #[default]
     Palette,
     /// A window of its own, such as a viewer on a second display: normal window level, and it
-    /// stays shown while the app is in the background.
+    /// stays shown while the app is in the background. When the app is activated, these
+    /// windows and the main window come forward, and the main window is left at the normal
+    /// level.
     Normal,
 }
 

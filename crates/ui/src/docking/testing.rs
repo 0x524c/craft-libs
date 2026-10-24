@@ -389,7 +389,7 @@ pub struct NativeHost {
     /// frame still reports the old place, and gets pointer events relative to it.
     pub lag: bool,
     pub windows: std::collections::HashMap<egui::ViewportId, HostWindow>,
-    /// Every command sent to a native window, in order.
+    /// Every command sent to a native window or the main window, in order.
     pub commands: Vec<(egui::ViewportId, egui::ViewportCommand)>,
     /// Moves waiting to land under `lag`: window, content position, frame sent.
     late: Vec<(egui::ViewportId, Pos2, usize)>,
@@ -527,9 +527,6 @@ impl NativeHost {
     /// Carry out the commands a frame sent to native windows.
     fn apply(&mut self, full: &egui::FullOutput) {
         for (id, output) in &full.viewport_output {
-            if *id == egui::ViewportId::ROOT {
-                continue;
-            }
             for command in &output.commands {
                 self.commands.push((*id, command.clone()));
                 let Some(window) = self.windows.get_mut(id) else { continue };
