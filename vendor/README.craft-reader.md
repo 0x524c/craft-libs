@@ -249,6 +249,24 @@ render (`InterpreterSettings::plate`) also keeps the background inside, marked `
 so blend modes on a separation's film blend with the paper. The PdfCraft raster tests of both
 are adapted in `tests/upstream_raster.rs`.
 
+Default color spaces from the [PdfCraft revision 0b670caf4a090e9d83a7f41a84b4cb2144a2d33e ledger](https://github.com/storytold/pdfcraft/blob/0b670caf4a090e9d83a7f41a84b4cb2144a2d33e/vendor/README.md):
+hayro-interpret (38) (PdfCraft #3018), marked `PdfCraft patch (#3018)` because the plate-mode
+code labels #2770's changes by that pull request's own patch numbers. The `/DefaultGray`,
+`/DefaultRGB` and `/DefaultCMYK` color spaces of the resources in scope (ISO 32000-2
+§8.6.5.6) replace the device space that `g`/`G`, `rg`/`RG`, `k`/`K` and `cs`/`CS` select (by
+name, or through a `/ColorSpace` resource that is a device space), and the device
+`/ColorSpace` of an image XObject, an inline image or a shading painted by `sh` or as a
+shading pattern (`DefaultColorSpaces`, looked up once per content window). A default that is
+a device, Lab, Indexed or Pattern space, or has the wrong number of components, is ignored.
+Decoded images and shadings are cached per default. Two local differences: a form XObject
+with `/Resources` of its own sees only its own defaults, as it sees only its own other
+resources here (`Resources::from_scope`), where PdfCraft falls back to the page's; and on a
+plate (patch 35) no default applies, so DeviceCMYK still separates as its components with
+the nonzero overprint mode, and DeviceGray on black alone, rather than through a DefaultCMYK
+or DefaultGray profile and the CMYK simulation of patch 36. PdfCraft's eight raster tests are
+adapted in `tests/upstream_raster.rs` (`default_color_spaces`); the plate case is
+`default_color_spaces_leave_device_color_on_its_plates` in `tests/plates.rs`.
+
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
 equivalence. The independent color oracles, backend tests and facade contracts cover

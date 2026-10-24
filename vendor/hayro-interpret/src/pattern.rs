@@ -1,7 +1,7 @@
 //! PDF patterns.
 
 use crate::cache::Cache;
-use crate::color::{Color, ColorSpace, Plate};
+use crate::color::{Color, ColorSpace, DefaultColorSpaces, Plate};
 use crate::context::{Context, InterpreterCache};
 use crate::device::Device;
 use crate::font::Glyph;
@@ -34,15 +34,19 @@ pub enum Pattern<'a> {
 }
 
 impl<'a> Pattern<'a> {
+    /// PdfCraft patch (#3018): `defaults` are those of the resources the pattern is selected
+    /// with, for a shading pattern's shading in a device space.
     pub(crate) fn new(
         object: Object<'a>,
         ctx: &Context<'a>,
         resources: &Resources<'a>,
+        defaults: &DefaultColorSpaces<'_, '_>,
     ) -> Option<Self> {
         match object {
             Object::Dict(dict) => Some(Self::Shading(ShadingPattern::new(
                 &dict,
                 &ctx.interpreter_cache.object_cache,
+                defaults,
             )?)),
             Object::Stream(stream) => Some(Self::Tiling(Box::new(TilingPattern::new(
                 stream, ctx, resources,
@@ -115,11 +119,15 @@ pub struct ShadingPattern {
 }
 
 impl ShadingPattern {
-    pub(crate) fn new(dict: &Dict<'_>, cache: &Cache) -> Option<Self> {
+    pub(crate) fn new(
+        dict: &Dict<'_>,
+        cache: &Cache,
+        defaults: &DefaultColorSpaces<'_, '_>,
+    ) -> Option<Self> {
         let shading = dict.get::<Object<'_>>(SHADING).and_then(|o| {
             let (dict, stream) = dict_or_stream(&o)?;
 
-            Shading::new(dict, stream, cache)
+            Shading::new(dict, stream, cache, defaults)
         })?;
         let matrix = dict
             .get::<[f64; 6]>(MATRIX)
