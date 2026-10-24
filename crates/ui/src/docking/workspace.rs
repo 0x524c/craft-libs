@@ -6,7 +6,7 @@
 
 use std::{collections::HashSet, hash::Hash};
 
-use super::model::{Action, DockError, Layout, Location, MAX_PANELS, Permissions};
+use super::model::{Action, DockError, Layout, Location, MAX_PANELS, Permissions, Placement, Zone};
 
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -121,7 +121,9 @@ impl<P: Clone + Eq + Hash> Workspace<P> {
 
     /// Show or hide one panel. Showing restores its recorded location, following the chain of
     /// hidden anchors when its own anchor is hidden too; otherwise it opens as
-    /// [`Action::Open`] with `fallback` as the anchor, following `permissions`.
+    /// [`Action::Open`] with `fallback` as the anchor, following `permissions`. The hidden
+    /// panels on that chain reopen beside it later, so a group or window closed one panel at a
+    /// time comes back as one.
     /// A shown panel becomes the active tab of its group. Hiding follows `permissions` and
     /// [`Self::locked`], as [`Self::apply`] does, so a protected canvas stays shown.
     pub fn set_visible(&mut self, panel: P, visible: bool, fallback: Option<P>, permissions: impl Fn(&P) -> Permissions) -> Result<(), DockError> {
@@ -136,7 +138,7 @@ impl<P: Clone + Eq + Hash> Workspace<P> {
             return self.apply(Action::Activate { panel }, |_| Permissions::default()).map(drop);
         }
         let mut layout = self.layout.clone();
-        if self.restore_into(&mut layout, &panel).is_err() {
+        if self.restore_from_hidden(&mut layout, &panel).is_err() {
             layout = self.layout.clone();
             layout.apply_with_permissions(Action::Open { panel: panel.clone(), anchor: fallback }, &permissions)?;
         }
@@ -146,19 +148,42 @@ impl<P: Clone + Eq + Hash> Workspace<P> {
         Ok(())
     }
 
-    fn restore_into(&self, layout: &mut Layout<P>, panel: &P) -> Result<(), DockError> {
+    /// Restore `panel` where the chain of hidden anchors from its location ends, else at the
+    /// nearest location before that end that restores. The hidden panels it passed then anchor
+    /// on the panel before them in the chain, on the recorded side, so reopening them joins it
+    /// instead of rebuilding their group or window a second time.
+    fn restore_from_hidden(&mut self, layout: &mut Layout<P>, panel: &P) -> Result<(), DockError> {
         let find = |p: &P| self.hidden.iter().find(|(q, _)| q == p).map(|(_, location)| location);
-        let mut location = find(panel).ok_or(DockError::MissingTarget)?;
-        for _ in 0..=self.hidden.len() {
-            match layout.restore(panel.clone(), location) {
-                Err(DockError::MissingTarget) => {
-                    let next = location.anchor.as_ref().filter(|anchor| *anchor != panel).and_then(find);
-                    location = next.ok_or(DockError::MissingTarget)?;
-                }
-                result => return result,
-            }
+        let mut chain = vec![(panel.clone(), find(panel).ok_or(DockError::MissingTarget)?.clone())];
+        while let Some(anchor) = chain.last().and_then(|(_, location)| location.anchor.as_ref())
+            && !chain.iter().any(|(p, _)| p == anchor)
+            && let Some(location) = find(anchor)
+        {
+            chain.push((anchor.clone(), location.clone()));
         }
-        Err(DockError::MissingTarget)
+        // A floating location whose anchor is hidden would open a window of its own, even when
+        // the chain leads to an open one. A neighbour's location brings the panel's own group
+        // and column state (height, width, icon-only), not the neighbour's.
+        let own = chain.first().and_then(|(_, location)| location.group.clone());
+        let used = (0..chain.len())
+            .rev()
+            .find_map(|i| {
+                let location = Location { group: own.clone().or_else(|| chain[i].1.group.clone()), ..chain[i].1.clone() };
+                match layout.restore(panel.clone(), &location) {
+                    Err(DockError::MissingTarget) => None,
+                    result => Some(result.map(|()| i)),
+                }
+            })
+            .unwrap_or(Err(DockError::MissingTarget))?;
+        // Past an outer-edge frame the relation can't be reversed: the rest of the chain keeps
+        // its forward anchors, so no two hidden panels anchor on each other.
+        for i in 1..=used {
+            let (before, location) = &chain[i - 1];
+            let Some((_, own)) = self.hidden.iter_mut().find(|(p, _)| p == &chain[i].0) else { continue };
+            let Some(location) = reversed(own, location, before) else { break };
+            *own = location;
+        }
+        Ok(())
     }
 
     /// Fit a loaded workspace to the panels the application registers now. An invalid
@@ -216,7 +241,7 @@ impl<P: Clone + Eq + Hash> Workspace<P> {
         let stuck: Vec<P> = self.hidden.iter().map(|(p, _)| p).filter(|p| registered(p) && !permissions(p).closable).cloned().collect();
         for panel in stuck {
             let mut layout = self.layout.clone();
-            let shown = self.restore_into(&mut layout, &panel).is_ok()
+            let shown = self.restore_from_hidden(&mut layout, &panel).is_ok()
                 || default.layout.location(&panel).is_ok_and(|location| layout.restore(panel.clone(), &location).is_ok())
                 || layout.open_at_edge(panel.clone()).is_ok();
             if shown {
@@ -267,4 +292,27 @@ fn close_locations<P: Clone + Eq + Hash>(layout: &Layout<P>, closed: &[P]) -> Ve
     }
     locations.reverse();
     locations
+}
+
+/// The location of a hidden panel beside `panel`, whose `location` anchors on it: the same
+/// relation from the other side. `None` for an outer-edge frame, which only sat beside it.
+fn reversed<P: Clone + Eq>(hidden: &Location<P>, location: &Location<P>, panel: &P) -> Option<Location<P>> {
+    let next = match &hidden.placement {
+        Placement::Tab { before } => before.clone(),
+        _ => None,
+    };
+    let (placement, size) = match &location.placement {
+        // `before` names the anchor only when `panel` came first and the anchor second; the
+        // anchor's own `before` then still names the tab after it.
+        Placement::Tab { before } if before == &location.anchor => (Placement::Tab { before: next }, None),
+        Placement::Tab { .. } | Placement::Split(Zone::Center) => (Placement::Tab { before: Some(panel.clone()) }, None),
+        Placement::Split(Zone::Left) => (Placement::Split(Zone::Right), location.size),
+        Placement::Split(Zone::Right) => (Placement::Split(Zone::Left), location.size),
+        Placement::Split(Zone::Top) => (Placement::Split(Zone::Bottom), location.size),
+        Placement::Split(Zone::Bottom) => (Placement::Split(Zone::Top), location.size),
+        Placement::Group { below, .. } => (Placement::Group { below: !below, height: None }, None),
+        Placement::Column { after } => (Placement::Column { after: !after }, None),
+        Placement::Edge(_) => return None,
+    };
+    Some(Location { floating: None, anchor: Some(panel.clone()), placement, size, sibling: Vec::new(), ..hidden.clone() })
 }
