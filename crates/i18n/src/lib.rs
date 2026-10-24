@@ -260,10 +260,11 @@ impl I18n {
         self.plural(lang, Some(PluralOperands::from(n)), n == 1, &format.integer(n), one, other)
     }
 
-    /// [`I18n::trn`] with `{n}` in `0`–`9` without grouping (`Copy 1234`), for text that goes into
-    /// documents, file names or anything read back later.
+    /// [`I18n::trn`] with `{n}` in `0`–`9` without grouping (`Copy 1234`) and no isolate marks
+    /// ([`strip_isolates`]), for text that goes into documents, file names or anything read back
+    /// later.
     pub fn trn_plain(&self, lang: Lang, n: u64, one: &str, other: &str) -> String {
-        self.plural(lang, Some(PluralOperands::from(n)), n == 1, &n.to_string(), one, other)
+        strip_isolates(&self.plural(lang, Some(PluralOperands::from(n)), n == 1, &n.to_string(), one, other))
     }
 
     /// [`I18n::trn`] for a count with `decimals` digits after the decimal separator (`1.5 files`).
@@ -923,9 +924,9 @@ mod tests {
     fn counts_follow_the_region() {
         let i = all(P).0;
         i.set_format(Format::from_tag("ar-EG"));
-        assert_eq!(i.trn(lang(&i, "ar"), 1234, "{n} file", "{n} files"), "١٬٢٣٤ ملفًا");
+        assert_eq!(i.trn(lang(&i, "ar"), 1234, "{n} file", "{n} files"), "\u{2066}١٬٢٣٤\u{2069} ملفًا");
         i.set_format(Format::new(&Region::from_tag("ar-EG"), Digits::Latin));
-        assert_eq!(i.trn(lang(&i, "ar"), 1234, "{n} file", "{n} files"), "1,234 ملفًا");
+        assert_eq!(i.trn(lang(&i, "ar"), 1234, "{n} file", "{n} files"), "\u{2066}1,234\u{2069} ملفًا");
         // An English interface with a German region.
         i.set_format(Format::from_tag("de-DE"));
         assert_eq!(i.trn(Lang::EN, 12_345, "{n} file", "{n} files"), "12.345 files");
@@ -960,8 +961,8 @@ mod tests {
         // Arabic decimals are `other`.
         i.set_format(Format::from_tag("ar-EG"));
         let ar = lang(&i, "ar");
-        assert_eq!(i.trn_decimal(ar, 2.5, 1, "{n} file", "{n} files"), "٢٫٥ ملف");
-        assert_eq!(i.trn_decimal(ar, 3.0, 0, "{n} file", "{n} files"), "٣ ملفات");
+        assert_eq!(i.trn_decimal(ar, 2.5, 1, "{n} file", "{n} files"), "\u{2066}٢٫٥\u{2069} ملف");
+        assert_eq!(i.trn_decimal(ar, 3.0, 0, "{n} file", "{n} files"), "\u{2066}٣\u{2069} ملفات");
         // Not a number: the translated `other` form.
         assert_eq!(i.trn_decimal(ru, f64::NAN, 1, "{n} file", "{n} files"), "NaN файла");
         assert_eq!(i.trn_decimal(Lang::EN, f64::INFINITY, 1, "{n} file", "{n} files"), "∞ files");

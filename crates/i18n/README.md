@@ -105,7 +105,7 @@ The app keeps its `tl!` macro, its language setting (`"auto"` → `I18N.system_l
   system region's until `I18n::set_format` (the user's region setting or digit choice), and again
   after `I18n::reset_format`. A count in `trn` is therefore grouped and in the region's digits
   (`1.234 Dateien`, `١٬٢٣٤ ملفًا`); for names written into documents or files (`Copy 1234`), use
-  `trn_plain`, which writes `0`–`9` without grouping.
+  `trn_plain`, which writes `0`–`9` without grouping or isolate marks.
 - **CLDR data:** decimal symbols, digits and plural rules (`data/numbers.postcard`, about 10 KB) and
   percent patterns (`data/locales.rs`) cover every CLDR locale; `data/generate.sh` rebuilds both
   from CLDR. The ICU4X crates are pinned to one minor version (`~2.3`), the one the data is
