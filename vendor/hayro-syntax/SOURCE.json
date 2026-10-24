@@ -68,7 +68,7 @@
       "path": "src/content/mod.rs",
       "source_sha256": "b0f36badb2688c90691c27a4e5dcdfec7639858081553242744dd7bc39ffc0d0",
       "source_git_blob": "8e47324d0b0bd90ed15efe5ff1e9de0cb46e75d9",
-      "sha256": "aa0883ba92dd05655bfd8d54195584bab2c0b28111d76ec73c5381a0f23b6181"
+      "sha256": "ae0b0596d2304adc4109294cc7af681698071060d9e8cd6d44f0bb46baffec6b"
     },
     {
       "path": "src/content/ops.rs",

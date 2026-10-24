@@ -196,6 +196,17 @@ precision of the indices; an image without a palette keeps its own. Tests:
 PdfCraft's raster test `a_jp2_palette_keeps_its_colours_whatever_the_index_precision` is not
 ported: the unit tests show the same behavior.
 
+From [PdfCraft revision 0b670caf4a090e9d83a7f41a84b4cb2144a2d33e](https://github.com/storytold/pdfcraft/tree/0b670caf4a090e9d83a7f41a84b4cb2144a2d33e/vendor),
+unledgered and marked `PdfCraft patch` in the source: hayro-syntax #3438 (issue #3107), with
+its look-ahead bound from 01af6cba3. An inline image without a filter ends at the byte
+length its `/W`, `/H`, `/CS`, `/BPC` and `/IM` give (rows padded to whole bytes) when white
+space and `EI` follow there, so an `EI` inside its samples does not end it. Conflicting
+long and short keys, filters and other color spaces keep the `EI` look-ahead. When the
+computed end lies past the content window, the tokenizer asks for more data only while the
+image, its header and the terminator fit within `MAX_DECODED_STREAM`, and otherwise falls
+back to the look-ahead. Its unit tests in `content::tests` come with it. PdfCraft's raster
+test is not ported: the windowed tokenizer tests cover the same content streams.
+
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
 equivalence. The independent color oracles, backend tests and facade contracts cover
