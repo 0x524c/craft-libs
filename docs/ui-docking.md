@@ -439,7 +439,8 @@ that is not floatable, stays in-window. Floating windows get no taskbar or Alt-T
     `DockStyle::title_bar_docks`; the only tab or group docks either way, since it is the way
     back in with that flag off. Targets: in the
     main window a dock line, a frame's tab row or edge zone, or the layout's outer edge; in a
-    floating window a frame zone or tab row. A frame body's center takes no whole window. Over
+    floating window a frame zone or tab row. A frame body's center takes a window moved by its
+    only tab or group, as that tab or group drag would, but not one moved by its bar. Over
     the desktop, or with Ctrl/Cmd held, it stays where it was moved, and the layout takes its
     place once, at the release. Escape puts it back. An
     in-window floating window's title bar still splits only groups of other floating windows.
