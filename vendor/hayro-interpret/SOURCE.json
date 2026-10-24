@@ -206,7 +206,7 @@
       "path": "src/encode.rs",
       "source_sha256": "674a97c48cc62e9a218f843246776528173c36c00aa96a1e4c291c1d912c29c6",
       "source_git_blob": "b3f830ba2dcdb7069ea73706be43c55be398f670",
-      "sha256": "025ce1ce561229c005ac0f72b632e22bf782d34739d81c321334fc1dedd96933"
+      "sha256": "46c9773f05c329cad20f3126394f89a551ee393569c58911b0a921be8c020376"
     },
     {
       "path": "src/font/blob.rs",
