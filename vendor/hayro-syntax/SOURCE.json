@@ -164,7 +164,7 @@
       "path": "src/filter/jpx.rs",
       "source_sha256": "f0a2b01c692c086d30a26562d7548f9e837af166be737d2c543de7c886a45f82",
       "source_git_blob": "74efd8b31e2b2935ff2bbceda2c1ffd36ea9c20d",
-      "sha256": "f0a2b01c692c086d30a26562d7548f9e837af166be737d2c543de7c886a45f82"
+      "sha256": "b0c295f815547377409a8810e9cbef35e4d6b506a3c3507669da71fcfe9d4701"
     },
     {
       "path": "src/filter/lzw_flate.rs",

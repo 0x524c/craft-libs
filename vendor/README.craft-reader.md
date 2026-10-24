@@ -185,6 +185,16 @@ are seen. Each section's entries are read before its `Prev` is followed; the loc
 xref-stream bounds above apply to them unchanged. Tests:
 `xref::tests::prev_as_reference_reaches_the_earlier_section` and
 `xref::tests::prev_as_reference_to_an_object_holding_the_offset_reads_that_offset`.
+hayro-syntax (P5), PdfCraft #3184: `filter::jpx::decode` applies a JP2 palette (`pclr`) when
+the image dictionary has no `/ColorSpace`, or one that does not resolve, since the colors then
+come from the JP2 header (ISO 32000-2 §7.4.9). With a `/ColorSpace` the raw indices are kept,
+as an `/Indexed` space needs. Resolved palette colors are 8-bit samples whatever the
+precision of the indices; an image without a palette keeps its own. Tests:
+`filter::jpx::tests::jpx_palette_is_applied_without_a_color_space`,
+`filter::jpx::tests::jpx_palette_indices_stay_raw_for_an_indexed_color_space` and
+`filter::jpx::tests::palette_colours_are_eight_bit_and_other_samples_keep_their_precision`.
+PdfCraft's raster test `a_jp2_palette_keeps_its_colours_whatever_the_index_precision` is not
+ported: the unit tests show the same behavior.
 
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
