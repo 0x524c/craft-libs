@@ -13,12 +13,17 @@ libjpeg-turbo's tools, as described below.
 | `testimgari-huffman.jpg` | `testimgari.jpg` losslessly transcoded to baseline Huffman (SOF0) |
 | `testorig12.jpg` | 227×149 YCbCr, 12-bit extended sequential Huffman (SOF1) |
 | `testorig12.ppm` | libjpeg-turbo's decode of `testorig12.jpg`: 12-bit RGB, binary PPM, maxval 4095 |
+| `testorig-ari-progressive.jpg` | `testorig.jpg` transcoded to progressive arithmetic (SOF10) |
+| `testorig-ari-progressive-restart.jpg` | the same with a restart interval of 3 MCU rows |
+| `testorig12-ari.jpg` | `testorig12.jpg` transcoded to 12-bit arithmetic (SOF9) |
+| `testorig12-ari-progressive.jpg` | `testorig12.jpg` transcoded to 12-bit progressive arithmetic (SOF10) |
 | `whitetail-ari.jpg` | 512×512 gray, arithmetic coded (SOF9), noise in the top 16 rows, white below |
 | `whitetail-huffman.jpg` | `whitetail-ari.jpg` losslessly transcoded to baseline Huffman (SOF0) |
 
 `testimgari.jpg` and `testorig.jpg` share their quantization tables but not their coefficients:
 libjpeg-turbo decodes them to different pixels. `testimgari-huffman.jpg` holds exactly the
-coefficients of `testimgari.jpg`, so the two must decode to identical samples.
+coefficients of `testimgari.jpg`, so the two must decode to identical samples. The same holds
+for each jpegtran transcode below and its source.
 
 ## How the derived files were made
 
@@ -27,6 +32,16 @@ coefficients of `testimgari.jpg`, so the two must decode to identical samples.
 
 ```sh
 jpegtran -copy none testimgari.jpg > testimgari-huffman.jpg
+```
+
+The arithmetic transcodes of `testorig.jpg` and `testorig12.jpg`, with jpegtran from
+libjpeg-turbo 3.1.3 (Alpine 3.24, `libjpeg-turbo-utils`):
+
+```sh
+jpegtran -copy none -arithmetic -progressive testorig.jpg > testorig-ari-progressive.jpg
+jpegtran -copy none -arithmetic -progressive -restart 3 testorig.jpg > testorig-ari-progressive-restart.jpg
+jpegtran -copy none -arithmetic testorig12.jpg > testorig12-ari.jpg
+jpegtran -copy none -arithmetic -progressive testorig12.jpg > testorig12-ari-progressive.jpg
 ```
 
 `testorig12.ppm`, with libjpeg-turbo 3.2.0 through imagecodecs 2026.10.10 (default settings:

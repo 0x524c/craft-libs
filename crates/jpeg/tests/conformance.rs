@@ -41,6 +41,21 @@ fn arithmetic_coded_image_matches_its_huffman_transcode() {
     assert!(huffman.samples == arithmetic.samples, "testimgari.jpg decodes differently from testimgari-huffman.jpg");
 }
 
+/// The arithmetic and progressive arithmetic transcodes jpegtran made of testorig.jpg and
+/// testorig12.jpg hold their coefficients, so they decode to exactly the same samples.
+#[test]
+fn arithmetic_transcodes_match_their_huffman_sources() {
+    for (source, transcodes) in [
+        ("testorig.jpg", &["testorig-ari-progressive.jpg", "testorig-ari-progressive-restart.jpg"]),
+        ("testorig12.jpg", &["testorig12-ari.jpg", "testorig12-ari-progressive.jpg"]),
+    ] {
+        let reference = decode_fixture(source);
+        for name in transcodes {
+            assert!(decode_fixture(name).samples == reference.samples, "{name} decodes differently from {source}");
+        }
+    }
+}
+
 /// libjpeg's arithmetic encoder drops the trailing zero bytes of a scan, so the white lower
 /// part of whitetail-ari.jpg decodes from zeros supplied at the EOI marker. It must decode
 /// whole and match its Huffman transcode.
