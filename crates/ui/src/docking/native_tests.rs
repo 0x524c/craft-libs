@@ -1,7 +1,7 @@
 //! Floating windows in their own OS windows (feature `native-windows`), drawn by the driver's
 //! stand-in for OS windows.
 
-use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, Vec2, ViewportCommand, epaint::ClippedShape, pos2, vec2};
+use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, ViewportCommand, epaint::ClippedShape, pos2, vec2};
 
 use super::render::{APPKIT_CORNER, DragPointer, MACOS_CLOSE, WindowDrag, appkit_resize_areas, close_rects, floats_shown, resize_bands};
 use super::testing::DockDriver;
@@ -1015,14 +1015,15 @@ fn a_drag_ends_when_its_native_window_or_panel_goes() {
 /// Press at `from` in the native window of panel 5, move the pointer by `by` on the desktop
 /// and release. Returns the window's OS rect, the resize the window handed to the window
 /// system, and the driver.
-fn press_and_drag(from: Pos2, by: Vec2) -> (Rect, Option<egui::ResizeDirection>, DockDriver<u32, Content>) {
+#[cfg(not(target_os = "macos"))]
+fn press_and_drag(from: Pos2, by: egui::Vec2) -> (Rect, Option<egui::ResizeDirection>, DockDriver<u32, Content>) {
     let mut d = driver(layout(true));
     let id = window(&d, 5).id;
     let viewport = d.viewport(id);
     let press = os_window(&d, 5).map_or(Pos2::ZERO, |(rect, _)| rect.min) + from.to_vec2();
     d.window_step(id, vec![Event::PointerMoved(from), button(from, true)]);
     // The pointer is where it was moved on the desktop, wherever the window is now.
-    let local = |d: &DockDriver<u32, Content>, step: Vec2| d.window_local(id, press + step).unwrap_or_default();
+    let local = |d: &DockDriver<u32, Content>, step: egui::Vec2| d.window_local(id, press + step).unwrap_or_default();
     for step in [vec2(3.0, 3.0), by] {
         let pos = local(&d, step);
         d.window_step(id, vec![Event::PointerMoved(pos)]);
@@ -1037,6 +1038,9 @@ fn press_and_drag(from: Pos2, by: Vec2) -> (Rect, Option<egui::ResizeDirection>,
     (os_window(&d, 5).map_or(Rect::NOTHING, |(rect, _)| rect), resize, d)
 }
 
+// On macOS AppKit resizes the window and there are no bands; the macOS × layout has its own
+// test.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn the_bars_close_button_wins_over_the_resize_bands() {
     use egui::ResizeDirection as D;
