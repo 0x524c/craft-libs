@@ -212,8 +212,9 @@ A flyout fits its content the same way, without the title bar.
 - Over a frame, the tab strip and the middle join its tabs, and the nearest side splits it. The
   side zones are trapezoids along the four edges of the body below the tab strip, like a picture
   frame, all four the same depth: `DockStyle::zone_depth` (40 pt), or a quarter of the body's
-  smaller side when that is less, so every frame keeps a center. A split that would leave either half without
-  `DockStyle::min_pane` joins the frame's tabs instead. The gap between two frames is no target.
+  smaller side when that is less, so every frame keeps a center. A frame too narrow or short for two
+  halves of `DockStyle::min_pane` still splits when the frames beyond it can give the room, as they
+  do for a dragged divider; when they cannot, the drop joins the frame's tabs instead. The gap between two frames is no target.
 - The outer edge band (`DockStyle::edge_band`) takes a drop as a new frame across the whole
   window side: top and bottom, and left and right with `side_edge_zones`. It takes a quarter of
   the window and is offered only when every frame keeps its minimum. Past the band, a frame's own
