@@ -349,10 +349,10 @@ index ad0e783..74c56f3 100644
      sc: &mut SerializeContext,
      chunk: &mut Chunk,
 diff --git a/src/serialize.rs b/src/serialize.rs
-index 5577245..4093136 100644
+index 9b22240..587e2c6 100644
 --- a/src/serialize.rs
 +++ b/src/serialize.rs
-@@ -343,6 +343,9 @@ pub(crate) enum MaybeDeviceColorSpace {
+@@ -353,6 +353,9 @@ pub(crate) enum MaybeDeviceColorSpace {
  pub(crate) struct SerializeContext {
      /// An unfinished or failed page/surface must never serialize as a complete document.
      pub(crate) poisoned: bool,
@@ -362,7 +362,7 @@ index 5577245..4093136 100644
      /// The ref of the page tree.
      page_tree_ref: Ref,
      /// PDF 2.0 namespaces.
-@@ -403,6 +406,7 @@ impl SerializeContext {
+@@ -413,6 +416,7 @@ impl SerializeContext {
  
          Self {
              poisoned: false,
@@ -370,7 +370,7 @@ index 5577245..4093136 100644
              cached_mappings: HashMap::new(),
              pdf2_ns,
              global_objects: GlobalObjects::default(),
-@@ -614,6 +618,9 @@ impl SerializeContext {
+@@ -624,6 +628,9 @@ impl SerializeContext {
          if self.serialize_settings.pdfx_version.is_some() {
              self.register_validation_error(ValidationError::PdfxVersionWithoutExtensionSchema);
          }

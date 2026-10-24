@@ -234,8 +234,8 @@ version. DesignCraft and VectorCraft added these by rewriting the serialized byt
   `GTS_PDFA1` entry names the same profile object and condition instead of sRGB, because
   PDF/A requires every output intent to share one destination profile.
 - `SerializeSettings::trapped: Option<Trapped>` writes `/Trapped` to the document
-  information dictionary and `pdf:Trapped` to XMP. XMP has no `Unknown`, so
-  `Trapped::Unknown` goes only to the dictionary.
+  information dictionary and `pdf:Trapped` to XMP, `Unknown` included (the Adobe PDF schema
+  allows it, and PDF/A-1 requires the two to match).
 - `SerializeSettings::pdfx_version: Option<String>` writes `/GTS_PDFXVersion` to the
   dictionary and `pdfxid:GTS_PDFXVersion` to XMP. PDF/A-1, -2 and -3 require an extension
   schema for the XMP property, which this patch does not write, so the setting registers

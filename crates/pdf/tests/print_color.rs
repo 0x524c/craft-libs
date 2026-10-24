@@ -1082,8 +1082,8 @@ fn print_settings_reject_a_profile_that_is_not_cmyk() {
     assert!(matches!(print::settings(PrintColor::fogra39(b"not a profile")), Err(WriteError::InvalidProfile)));
 }
 
-/// `/Trapped` and `GTS_PDFXVersion` go to the information dictionary and to XMP; without
-/// settings neither appears.
+/// `/Trapped` (`Unknown` included) and `GTS_PDFXVersion` go to the information dictionary and
+/// to XMP; without settings neither appears.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn trapped_and_pdfx_version_are_written_to_info_and_xmp() {
@@ -1093,6 +1093,10 @@ fn trapped_and_pdfx_version_are_written_to_info_and_xmp() {
     assert!(marked.contains("/GTS_PDFXVersion(PDF/X-4)"), "Info /GTS_PDFXVersion");
     assert!(marked.contains("<pdf:Trapped>True</pdf:Trapped>"), "XMP pdf:Trapped");
     assert!(marked.contains("<pdfxid:GTS_PDFXVersion>PDF/X-4</pdfxid:GTS_PDFXVersion>"), "XMP GTS_PDFXVersion");
+
+    let unknown = SerializeSettings { trapped: Some(Trapped::Unknown), ..Default::default() };
+    let unknown = String::from_utf8_lossy(&sample(unknown, None).unwrap()).into_owned();
+    assert!(unknown.contains("/Trapped/Unknown") && unknown.contains("<pdf:Trapped>Unknown</pdf:Trapped>"));
 
     let plain = String::from_utf8_lossy(&sample(SerializeSettings::default(), None).unwrap()).into_owned();
     assert!(!plain.contains("Trapped") && !plain.contains("GTS_PDFX"));

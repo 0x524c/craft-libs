@@ -250,7 +250,7 @@ index b331053..099a9d4 100644
 +/// PDF/X markers.
 +pub const CRAFT_PRINT_COLOR: bool = true;
 diff --git a/src/serialize.rs b/src/serialize.rs
-index d16261c..5577245 100644
+index d16261c..9b22240 100644
 --- a/src/serialize.rs
 +++ b/src/serialize.rs
 @@ -6,9 +6,10 @@ use std::rc::Rc;
@@ -262,11 +262,11 @@ index d16261c..5577245 100644
 +use pdf_writer::types::{OutputIntentSubtype, StructRole, StructRole2, TrappingStatus};
 +use pdf_writer::writers::{DocumentInfo, OutputIntent as OutputIntentWriter, StructTreeRoot};
  use pdf_writer::{Chunk, Content, Finish, Limits, Name, Pdf, Ref, Settings, Str, TextStr};
-+use xmp_writer::XmpWriter;
++use xmp_writer::{Namespace, XmpWriter};
  
  use crate::chunk_container::ChunkContainer;
  use crate::color::{CieBasedColorSpace, DeviceColorSpace, SpecialColorSpace};
-@@ -121,6 +122,49 @@ pub struct SerializeSettings {
+@@ -121,6 +122,48 @@ pub struct SerializeSettings {
      ///
      /// See [`GroupColorSpace`].
      pub group_color_space: GroupColorSpace,
@@ -310,13 +310,12 @@ index d16261c..5577245 100644
 +    True,
 +    /// The document has not been trapped.
 +    False,
-+    /// The document is partly trapped or the state is unknown. XMP has no value for this,
-+    /// so only the information dictionary records it.
++    /// The document is partly trapped or the state is unknown.
 +    Unknown,
  }
  
  /// The color space in which transparency groups blend.
-@@ -154,6 +198,34 @@ impl SerializeSettings {
+@@ -154,6 +197,45 @@ impl SerializeSettings {
          self.configuration.validators()
      }
  
@@ -340,8 +339,19 @@ index d16261c..5577245 100644
 +    }
 +
 +    pub(crate) fn write_print_xmp(&self, xmp: &mut XmpWriter) {
-+        if let Some(trapped @ (Trapped::True | Trapped::False)) = self.trapped {
-+            xmp.trapped(trapped == Trapped::True);
++        match self.trapped {
++            Some(Trapped::True) => {
++                xmp.trapped(true);
++            }
++            Some(Trapped::False) => {
++                xmp.trapped(false);
++            }
++            // The Adobe PDF schema allows `Unknown`, which `XmpWriter::trapped` can't write.
++            // PDF/A-1 requires it to match the information dictionary.
++            Some(Trapped::Unknown) => {
++                xmp.element("Trapped", Namespace::AdobePdf).value("Unknown");
++            }
++            None => {}
 +        }
 +        if let Some(version) = &self.pdfx_version {
 +            xmp.pdfx_version(version);
@@ -351,7 +361,7 @@ index d16261c..5577245 100644
      /// Whether the `/AF` key is supported, accounting for the PDF version and active standards.
      pub(crate) fn supports_associated_files(&self) -> bool {
          self.configuration.version().specifies_associated_files()
-@@ -174,6 +246,9 @@ impl Default for SerializeSettings {
+@@ -174,6 +256,9 @@ impl Default for SerializeSettings {
              enable_tagging: true,
              render_svg_glyph_fn: |_, _, _, _, _| None,
              group_color_space: GroupColorSpace::Rgb,
@@ -361,7 +371,7 @@ index d16261c..5577245 100644
          }
      }
  }
-@@ -536,6 +611,9 @@ impl SerializeContext {
+@@ -536,6 +621,9 @@ impl SerializeContext {
          {
              return Err(KrillaError::MissingGroupCmykProfile);
          }
@@ -371,7 +381,7 @@ index d16261c..5577245 100644
  
          // We need to be careful here that we serialize the objects in the right order,
          // as in some cases we use MaybeTake::take to remove an object, which means that
-@@ -781,18 +859,42 @@ impl SerializeContext {
+@@ -781,18 +869,42 @@ impl SerializeContext {
  impl SerializeContext {
      fn serialize_destination_profiles(&mut self, chunk_container: &mut ChunkContainer) {
          let validators = self.serialize_settings.validators();
@@ -423,7 +433,7 @@ index d16261c..5577245 100644
                  .subtype(subtype)
                  .output_condition_identifier(TextStr("Custom"))
                  .output_condition(TextStr("sRGB"))
-@@ -805,14 +907,12 @@ impl SerializeContext {
+@@ -805,14 +917,12 @@ impl SerializeContext {
                      )
                      .as_str(),
                  ));

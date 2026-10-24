@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use pdf_writer::types::{OutputIntentSubtype, StructRole, StructRole2, TrappingStatus};
 use pdf_writer::writers::{DocumentInfo, OutputIntent as OutputIntentWriter, StructTreeRoot};
 use pdf_writer::{Chunk, Content, Finish, Limits, Name, Pdf, Ref, Settings, Str, TextStr};
-use xmp_writer::XmpWriter;
+use xmp_writer::{Namespace, XmpWriter};
 
 use crate::chunk_container::ChunkContainer;
 use crate::color::{CieBasedColorSpace, DeviceColorSpace, SpecialColorSpace};
@@ -162,8 +162,7 @@ pub enum Trapped {
     True,
     /// The document has not been trapped.
     False,
-    /// The document is partly trapped or the state is unknown. XMP has no value for this,
-    /// so only the information dictionary records it.
+    /// The document is partly trapped or the state is unknown.
     Unknown,
 }
 
@@ -218,8 +217,19 @@ impl SerializeSettings {
     }
 
     pub(crate) fn write_print_xmp(&self, xmp: &mut XmpWriter) {
-        if let Some(trapped @ (Trapped::True | Trapped::False)) = self.trapped {
-            xmp.trapped(trapped == Trapped::True);
+        match self.trapped {
+            Some(Trapped::True) => {
+                xmp.trapped(true);
+            }
+            Some(Trapped::False) => {
+                xmp.trapped(false);
+            }
+            // The Adobe PDF schema allows `Unknown`, which `XmpWriter::trapped` can't write.
+            // PDF/A-1 requires it to match the information dictionary.
+            Some(Trapped::Unknown) => {
+                xmp.element("Trapped", Namespace::AdobePdf).value("Unknown");
+            }
+            None => {}
         }
         if let Some(version) = &self.pdfx_version {
             xmp.pdfx_version(version);

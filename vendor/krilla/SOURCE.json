@@ -312,7 +312,7 @@
     {
       "path": "src/serialize.rs",
       "upstream_sha256": "4f2c439dbd20006eea112e056b2f1a5ba98a1ede9227a45f66a6df46fb1a07e8",
-      "sha256": "5920403c6ac509ef563d4c844e0f13cd04ca76a0a637b15bcf84f67f88b4368b"
+      "sha256": "ff5a2f067010b729b7f4e48dcdadf1d648b6acf67fd59eefd51c2a3a812b7ef9"
     },
     {
       "path": "src/stream.rs",
