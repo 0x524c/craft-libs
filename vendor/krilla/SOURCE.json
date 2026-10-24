@@ -177,7 +177,7 @@
     {
       "path": "src/graphics/image.rs",
       "upstream_sha256": "61324d6426ac79aa5322d0d33a95532934cd1e41797a9dad6302210a2b799d5d",
-      "sha256": "c72c9624744aff9c75ff9f08a85c533e9e10f84faeddff70642cab9e01d08cec"
+      "sha256": "38df0034f19f19eabd84a5ca5e5ba310af17ba9ec55646c96beb8618620459e3"
     },
     {
       "path": "src/graphics/mask.rs",

@@ -20,6 +20,7 @@ itself omits those texts. Its examples and four CC0 ICC profiles are retained wi
 | `patches/08-print-output-intent.patch` | Print output intent and PDF/X markers | `chunk_container.rs`, `configure/{PDF_A1,PDF_A2,PDF_A4}.md`, `interchange/metadata.rs`, `lib.rs`, `serialize.rs` |
 | `patches/09-rendition-class.patch` | Master rendition in XMP | `chunk_container.rs` |
 | `patches/10-mesh-gradients.patch` | Mesh gradients | `content.rs`, `error.rs`, `graphics/{mask,paint,shading_function}.rs`, `serialize.rs`, `surface.rs` |
+| `patches/11-png-decode-cap.patch` | PNG decode cap | `graphics/image.rs` |
 
 Each patch applies with `patch -p1` from this directory, in numeric order, to the pristine
 crate. `SOURCE.json` records, for every retained file, the upstream hash (`upstream_sha256`)
@@ -277,3 +278,11 @@ space's component count, so the document fails with `KrillaError::MixedMeshColor
 instead. The soft mask is written in gray from the opacities and is unaffected.
 
 Tests: `crates/pdf/tests/print_color.rs` (`mesh_*`, `rgb_mesh_*`) and the plate-test scene S17.
+
+## 11: PNG decode cap
+
+A PNG whose header implies more than 1 GiB of decoded output is refused by
+`Image::from_png` and by the deferred decoder, and the decoded buffer is reserved
+fallibly, so a small file (or a bitmap glyph in a font) cannot request an allocation that
+ends the process. The color and alpha buffers that PNG, GIF and WebP decoding split an
+image into are reserved fallibly too, and a failure there is an image error.
