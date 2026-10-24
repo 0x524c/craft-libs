@@ -62,7 +62,7 @@
       "path": "src/lib.rs",
       "source_sha256": "682db2a32fbf4d875c0e9dd7ac5dc875a6b09ade375efbce6f104de9197de078",
       "source_git_blob": "6333ed5808ae0cf9cf158e4730e973c1d7089bab",
-      "sha256": "682db2a32fbf4d875c0e9dd7ac5dc875a6b09ade375efbce6f104de9197de078"
+      "sha256": "8396b90516603079bb43012621e8089621fec58fdd3d9c9aa9a8d2aa840265da"
     },
     {
       "path": "src/renderer.rs",

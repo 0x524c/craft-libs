@@ -618,3 +618,37 @@ fn visibility_expressions_decide_what_a_membership_dictionary_shows() {
     let deep = format!("<< /Type /OCMD /OCGs [5 0 R] /VE {}5 0 R{} >>", "[/Not ".repeat(41), "]".repeat(41));
     assert!(!render(&deep, &[5]), "too deep: /OCGs decides");
 }
+
+/// PdfCraft ledger hayro (18) (#2972): a page's objects composite with a transparent backdrop
+/// and the page group is then put on the paper, so a blend mode only blends where something
+/// was drawn. A green fill with `/BM /Screen` (or Lighten, Difference…) half over a red square
+/// takes the mode's color over the red and stays plain green over the empty page.
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn blend_modes_over_an_empty_part_of_the_page_keep_their_color() {
+    for (mode, over_red) in [
+        ("Normal", Some([0, 255, 0])),
+        ("Multiply", Some([0, 0, 0])),
+        ("Screen", Some([255, 255, 0])),
+        ("Lighten", Some([255, 255, 0])),
+        ("Difference", Some([255, 255, 0])),
+        ("Exclusion", Some([255, 255, 0])),
+        ("ColorDodge", Some([255, 0, 0])),
+        ("Overlay", Some([255, 0, 0])),
+        // The non-separable modes mix hue, saturation and luminosity; over an empty part of
+        // the page they too keep the source color.
+        ("Hue", None),
+        ("Saturation", None),
+        ("Color", None),
+        ("Luminosity", None),
+    ] {
+        let page = format!("/MediaBox [0 0 300 200] /Resources << /ExtGState << /G1 << /Type /ExtGState /BM /{mode} >> >> >>");
+        let p = render(&one_page(&page, b"1 0 0 rg 20 20 150 150 re f /G1 gs 0 1 0 rg 100 50 150 120 re f", b""));
+        // Pixel rows run top down: PDF (210, 100) and (130, 100) are rows 100 from the top.
+        assert_eq!(pixel(&p, 210, 100), [0, 255, 0, 255], "{mode} over the empty page");
+        if let Some(over_red) = over_red {
+            assert_eq!(pixel(&p, 130, 100)[..3], over_red, "{mode} over the red square");
+        }
+        assert_eq!(pixel(&p, 280, 10), [255, 255, 255, 255], "{mode}: the paper stays white");
+    }
+}

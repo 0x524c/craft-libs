@@ -210,8 +210,13 @@ each marked `PdfCraft patch` in the source: hayro-interpret (40) (PdfCraft #2987
 content membership dictionary with a visibility expression (`/VE`: `/And`, `/Or` and `/Not`
 over groups the document lists in `/OCProperties /OCGs`) shows its content when the
 expression is true, ahead of `/OCGs` and `/P`; a malformed expression, or one nested deeper
-than 32 levels, is ignored and `/OCGs` and `/P` decide. Its PdfCraft raster test is adapted in
-`tests/upstream_raster.rs`.
+than 32 levels, is ignored and `/OCGs` and `/P` decide; and hayro (18) (PdfCraft #2972), the
+page renders as one transparency group over a transparent backdrop that is then put on the
+background, so a blend mode over an empty part of the page keeps its color; with a color
+replacement (reading colors) the background stays inside the group as its backdrop. A plate
+render (`InterpreterSettings::plate`) also keeps the background inside, marked `Craft patch`,
+so blend modes on a separation's film blend with the paper. The PdfCraft raster tests of both
+are adapted in `tests/upstream_raster.rs`.
 
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8

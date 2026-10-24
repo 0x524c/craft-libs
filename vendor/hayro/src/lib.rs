@@ -254,15 +254,22 @@ pub fn render_into<'a>(
         interpreter_settings.preview,
     );
 
-    // PdfCraft patch (18): the page renders as one transparency group with the background
-    // painted *inside* it, as the initial backdrop. A group isolates what it wraps from what
-    // was painted before it, so with the background outside, a Multiply highlight blended
-    // only with the group's transparent backdrop and stayed its own colour — over a dark
-    // reading-colours background the whole quad became one flat bar and the words under it
-    // vanished. Inside the group the highlight multiplies with the background too: the words
-    // keep the highlight's colour and the band between them takes the background (white
-    // backgrounds are unaffected — multiplying with white is the identity).
-    device.push_transparency_group(1.0, None, BlendMode::Normal);
+    // PdfCraft patch (18): the page renders as one transparency group (the page group). Its
+    // objects composite with an initially transparent backdrop, and the group is then put on
+    // the paper (ISO 32000-2, page group), so a blend mode only blends where something was
+    // drawn: a /BM /Screen fill over an empty part of the page keeps its color (#2970).
+    // Under reading colors the background is painted *inside* the group instead, as its
+    // initial backdrop, so a Multiply highlight blends with the dark background: outside it,
+    // the highlight kept its own flat color and the words under it vanished into the band
+    // (#1548). Reading colors replace the page's colors anyway; for document colors the
+    // background stays outside, or every separable mode but Normal, Multiply, Darken and
+    // HardLight would blend with the white paper. Craft patch: a plate render keeps the
+    // background inside as well, so blend modes on a separation's film blend with the paper.
+    let backdrop_inside =
+        render_settings.color_replacement.is_some() || interpreter_settings.plate.is_some();
+    if backdrop_inside {
+        device.push_transparency_group(1.0, None, BlendMode::Normal);
+    }
 
     device.ctx.set_paint(render_settings.bg_color);
     device
@@ -274,11 +281,19 @@ pub fn render_into<'a>(
         path: clip_path,
         fill: FillRule::NonZero,
     });
+    if !backdrop_inside {
+        device.push_transparency_group(1.0, None, BlendMode::Normal);
+    }
 
     interpret_page(page, &mut state, &mut device);
 
+    if !backdrop_inside {
+        device.pop_transparency_group();
+    }
     device.pop_clip_path();
-    device.pop_transparency_group();
+    if backdrop_inside {
+        device.pop_transparency_group();
+    }
 
     let mut resources = vello_cpu::Resources::default();
     device.ctx.render_to_buffer(
