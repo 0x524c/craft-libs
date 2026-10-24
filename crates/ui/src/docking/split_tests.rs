@@ -193,8 +193,10 @@ fn groups_have_one_small_minimum_and_no_maximum() {
     drag_hit(&mut d, divider(&[true, true]), vec2(-2000.0, 0.0));
     assert_eq!(group(&d, TOOLS).width(), 40.0, "and shrinks to the minimum, no further");
 
-    // A group too narrow for two halves takes a drop on its edge as a tab.
+    // At its minimum, with Project left of it at its own, it has no room for two halves and
+    // takes a drop on its edge as a tab.
     let tools = group(&d, TOOLS);
+    assert_eq!(group(&d, PROJECT[0]).width(), 40.0);
     let out = d.drag(tab(&d, INFO), pos2(tools.right() - 4.0, tools.center().y + 30.0));
     assert!(
         matches!(&out.actions[..], [Action::Move { panel: INFO, anchor: TOOLS, placement: Placement::Split(Zone::Center) | Placement::Tab { .. } }]),
@@ -800,4 +802,46 @@ fn zones_a_group_does_not_take_are_not_drawn() {
     let mut d = film();
     d.hold(tab(&d, TIMELINE), timeline.center() + vec2(0.0, 13.0));
     assert!(zone_outlines(&d).is_empty());
+}
+
+#[test]
+fn a_narrow_group_splits_on_every_side_and_its_neighbours_give_the_room() {
+    // Tools at 80 pt: two halves need 84, so a side split takes the rest from Timeline.
+    let narrow = || {
+        let mut d = film();
+        let width = group(&d, TOOLS).width();
+        drag_hit(&mut d, divider(&[true, true]), vec2(80.0 - width, 0.0));
+        d
+    };
+    let d = narrow();
+    let (tools, timeline) = (group(&d, TOOLS), group(&d, TIMELINE));
+    assert_eq!(tools.width().round(), 80.0);
+    let body_top = tools.top() + 26.0;
+    for (zone, at) in [
+        (Zone::Left, pos2(tools.left() + 5.0, tools.center().y)),
+        (Zone::Right, pos2(tools.right() - 5.0, tools.center().y)),
+        (Zone::Top, pos2(tools.center().x, body_top + 5.0)),
+        (Zone::Bottom, pos2(tools.center().x, tools.bottom() - 15.0)),
+    ] {
+        let mut d = narrow();
+        d.hold(tab(&d, INFO), at);
+        assert_eq!(zone_outlines(&d).len(), 6, "{zone:?}: four sides, the center and the strip");
+        assert!(d.filled_polygon(&zone_shape(tools, 26.0, 40.0, zone).unwrap()), "{zone:?} is filled");
+        let out = d.release(at);
+        assert_eq!(out.actions, vec![Action::Move { panel: INFO, anchor: TOOLS, placement: Placement::Split(zone) }]);
+        d.settle();
+        let (info, split) = (group(&d, INFO), group(&d, TOOLS));
+        let beside = match zone {
+            Zone::Left => info.right() < split.left(),
+            Zone::Right => info.left() > split.right(),
+            Zone::Top => info.bottom() < split.top(),
+            _ => info.top() > split.bottom(),
+        };
+        assert!(beside, "{zone:?}: Info {info:?}, Tools {split:?}");
+        if matches!(zone, Zone::Left | Zone::Right) {
+            assert_eq!((info.width(), split.width()), (40.0, 40.0), "{zone:?}");
+            assert!((group(&d, TIMELINE).width() - (timeline.width() - 4.0)).abs() < 1.0, "{zone:?}: Timeline gives the room");
+        }
+        assert_sizes(&d, &format!("{zone:?}"));
+    }
 }

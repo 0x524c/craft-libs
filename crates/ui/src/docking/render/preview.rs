@@ -8,6 +8,7 @@ use crate::docking::{
     Action, Drag, DropProposal, DropRequest, DropTarget, GroupDrag, GroupGesture, Layout, Node, Placement, Target, Zone, cancel_drag,
     dock_model::Place, resolve_drop, surface::TAB_PADDING,
 };
+use crate::layout::SplitAxis;
 
 /// Ctrl (Windows, Linux) or Cmd (macOS) held: the drop floats and no target is offered.
 fn float_only(ctx: &Context) -> bool {
@@ -183,29 +184,39 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     /// Whether `action`, a drop that splits a group or the outer edge, leaves room: every group
-    /// it makes smaller stays [`DROP_MARGIN`] above its minimum, so each divider can still
-    /// travel both ways. An action the model rejects is left to the model's check.
+    /// it makes smaller keeps its minimum, and each divider can still travel both ways. A group
+    /// within [`DROP_MARGIN`] of its minimum along an axis passes when the dividers along its
+    /// sides can travel, the groups beyond it giving way as they do for a dragged divider, so a
+    /// narrow group still splits when its neighbours have room for both halves. An action the
+    /// model rejects is left to the model's check.
     pub(super) fn leaves_room(&self, action: Action<P>) -> bool {
         let mut candidate = self.layout.clone();
         if candidate.apply_with_permissions(action, |p| self.permissions(p)).is_err() {
             return true;
         }
         let sizer = self.sizer();
-        let drawn = |layout: &Layout<P>| {
+        let drawn = |root: &Node<P>, area: Rect| {
             let mut out: Vec<Drawn<'_, P>> = Vec::new();
-            if let Some(root) = &layout.root {
-                sizer.groups(root, self.workspace, &mut out);
-            }
-            for window in layout.floating.iter().filter(|w| !w.minimized) {
-                sizer.groups(&window.root, self.window_body(window), &mut out);
-            }
-            out.into_iter().filter_map(|d| Some((lead(d.node)?.clone(), d.rect.size(), d.limits.min))).collect::<Vec<_>>()
+            sizer.groups(root, area, &mut out);
+            out.into_iter().filter_map(|d| Some((lead(d.node)?.clone(), d.rect, d.limits.min))).collect::<Vec<_>>()
         };
-        let before: HashMap<P, Vec2> = drawn(self.layout).into_iter().map(|(panel, size, _)| (panel, size)).collect();
-        drawn(&candidate).into_iter().all(|(panel, size, min)| {
-            let room = size - min;
-            (room.x >= DROP_MARGIN && room.y >= DROP_MARGIN) || before.get(&panel).is_some_and(|old| size.x >= old.x - 0.5 && size.y >= old.y - 0.5)
+        let before: HashMap<P, Vec2> =
+            self.trees(self.layout).into_iter().flat_map(|(root, area)| drawn(root, area)).map(|(panel, rect, _)| (panel, rect.size())).collect();
+        self.trees(&candidate).into_iter().all(|(root, area)| {
+            drawn(root, area).into_iter().all(|(panel, rect, min)| {
+                let (size, room) = (rect.size(), rect.size() - min);
+                let fits = |room: f32, axis| room >= DROP_MARGIN || sizer.frees((root, area), rect, axis);
+                before.get(&panel).is_some_and(|old| size.x >= old.x - 0.5 && size.y >= old.y - 0.5)
+                    || (room.min_elem() > -0.01 && fits(room.x, SplitAxis::Horizontal) && fits(room.y, SplitAxis::Vertical))
+            })
         })
+    }
+
+    /// The trees of `layout` as drawn: the docked root in the workspace and each open floating
+    /// window's tree in its body.
+    fn trees<'l>(&self, layout: &'l Layout<P>) -> Vec<(&'l Node<P>, Rect)> {
+        let windows = layout.floating.iter().filter(|w| !w.minimized).map(|w| (&w.root, self.window_body(w)));
+        layout.root.iter().map(|root| (root, self.workspace)).chain(windows).collect()
     }
 
     /// Release of a group drag: join or split at the target, or float at the ghost with the

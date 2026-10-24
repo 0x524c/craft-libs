@@ -18,8 +18,8 @@ use crate::layout::{SplitAxis, SplitLayout, SplitSize, split_rect};
 /// A split's two children with the rects they are drawn in.
 type Children<'n, P> = [(&'n Node<P>, Rect); 2];
 
-/// Room a group keeps above its minimum after a drop, so each of its dividers can still
-/// travel both ways.
+/// How far each divider beside a group that a drop makes smaller can still travel both ways:
+/// the group keeps this much above its minimum, or the groups beyond it give the room.
 pub(in crate::docking) const DROP_MARGIN: f32 = 1.0;
 
 pub(in crate::docking) struct Sizer<'a, P> {
@@ -276,6 +276,34 @@ impl<P> Sizer<'_, P> {
             }
         }
         (-first_in.min(second_out), first_out.min(second_in))
+    }
+
+    /// Whether every divider of `root` across `axis` that runs along a side of the group drawn
+    /// at `group` can travel [`DROP_MARGIN`] both ways, by [`Self::range`]: a group at its
+    /// minimum holds no divider still while the groups beyond it can give way.
+    pub(in crate::docking) fn frees(&self, root: (&Node<P>, Rect), group: Rect, axis: SplitAxis) -> bool {
+        let edges = |rect: Rect| match axis {
+            SplitAxis::Horizontal => (rect.left(), rect.right()),
+            SplitAxis::Vertical => (rect.top(), rect.bottom()),
+        };
+        let (start, end) = edges(group);
+        let beside = |child: Rect, edge: f32, own: f32| child.contains(group.center()) && (edge - own).abs() < 0.5;
+        let mut nodes = vec![(root.0, root.1, Vec::new())];
+        while let Some((node, rect, path)) = nodes.pop() {
+            let (Node::Split { axis: split_axis, .. }, Some([a, b])) = (node, self.children(node, rect)) else { continue };
+            if *split_axis == axis && (beside(a.1, edges(a.1).1, end) || beside(b.1, edges(b.1).0, start)) {
+                let (lo, hi) = self.range(root, &path);
+                if -lo < DROP_MARGIN || hi < DROP_MARGIN {
+                    return false;
+                }
+            }
+            for (second, (child, rect)) in [(false, a), (true, b)] {
+                let mut path = path.clone();
+                path.push(second);
+                nodes.push((child, rect, path));
+            }
+        }
+        true
     }
 }
 
