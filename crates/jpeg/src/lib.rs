@@ -1,45 +1,136 @@
-//! Clean-room decoder for the JPEG processes `zune-jpeg` doesn't handle, written from ITU-T T.81
-//! (ISO/IEC 10918-1):
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+//! Clean-room decoder for the JPEG processes most Rust JPEG decoders don't handle, written from
+//! ITU-T T.81 (ISO/IEC 10918-1).
 //!
-//! - extended sequential DCT, Huffman coded, 12-bit samples (SOF1, and SOF0 files that declare
-//!   12 bits) (#4934);
-//! - extended sequential DCT, arithmetic coded, 8 or 12-bit (SOF9) (#5003);
+//! [`decode`] supports these frames:
+//!
+//! - sequential DCT, Huffman coded, 8 or 12-bit samples (SOF0 and SOF1; SOF0 files that declare
+//!   12 bits are read as SOF1);
+//! - extended sequential DCT, arithmetic coded, 8 or 12-bit (SOF9);
 //! - progressive DCT, arithmetic coded, 8 or 12-bit (SOF10).
+//!
+//! Every other frame returns [`Error::Unsupported`]: progressive Huffman (SOF2), lossless (SOF3,
+//! SOF11) and hierarchical (SOF5–SOF7, SOF13–SOF15) files, and DCT precisions other than 8 and
+//! 12 bits.
+//!
+//! An app that also uses a baseline decoder routes each file with [`frame`], which reports the
+//! first frame marker and its precision without decoding. For example, to send this crate the
+//! arithmetic-coded files and the Huffman-coded ones that aren't 8-bit:
+//!
+//! ```
+//! fn use_craft_jpeg(bytes: &[u8]) -> bool {
+//!     match craft_jpeg::frame(bytes) {
+//!         Some(f) if (0xC9..=0xCB).contains(&f.marker) => true,
+//!         Some(f) if matches!(f.marker, 0xC0 | 0xC1) => f.precision != 8,
+//!         _ => false,
+//!     }
+//! }
+//! # assert!(!use_craft_jpeg(&[0xFF, 0xD8]));
+//! ```
 //!
 //! Every scan is decoded into a whole-image buffer of quantized coefficients (Annex F for the
 //! sequential scans, Annex G for the progressive ones; the arithmetic decoder of Annex D with the
 //! conditioning of `DAC`), then dequantized, inverse transformed in floating point (A.3.3),
-//! upsampled and colour converted. 12-bit images come out as 16-bit samples (scaled, not
+//! upsampled and color converted. 12-bit images come out as 16-bit samples (scaled, not
 //! truncated). Restart intervals, 1, 3 and 4 components and any sampling factors are supported.
+//! Metadata (ICC profiles, EXIF, XMP, Photoshop resources, resolution) is left to the caller,
+//! which also reads the APP14 `Adobe` segment and passes its transform byte to [`decode`].
 //!
 //! The decoder never panics on input: every read from the stream is bounds-checked, the work
 //! is bounded by the frame size times the scan count (capped at `MAX_SCANS`), and
 //! allocations are checked against the [`Limits`] first.
-//! Damaged entropy-coded data stops that scan; what was decoded is kept and the caller is told.
+//! Damaged entropy-coded data stops that scan; what was decoded is kept and the caller is told
+//! through [`Decoded::damaged`].
 
-use crate::Format;
-use crate::error::CodecError;
-use crate::image::{ChannelLayout, SampleType};
-use crate::options::Limits;
-
-const F: Format = Format::Jpeg;
-
-fn err(m: impl std::fmt::Display) -> CodecError {
-    CodecError::malformed(F, m)
+/// Why a stream could not be decoded.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum Error {
+    /// The stream breaks T.81 in a way the decoder cannot recover from.
+    #[error("malformed JPEG: {0}")]
+    Malformed(String),
+    /// A valid JPEG process or feature this decoder does not implement.
+    #[error("{0}")]
+    Unsupported(String),
+    /// Decoding would exceed the caller's [`Limits`].
+    #[error("limit exceeded: {0}")]
+    LimitExceeded(String),
 }
 
-fn unsupported(m: impl Into<String>) -> CodecError {
-    CodecError::unsupported(F, m)
+fn err(m: impl std::fmt::Display) -> Error {
+    Error::Malformed(m.to_string())
+}
+
+fn unsupported(m: impl Into<String>) -> Error {
+    Error::Unsupported(m.into())
+}
+
+/// Decompression-bomb guards, checked against the frame header before any image buffer is
+/// allocated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// Maximum `width * height`.
+    pub max_pixels: u64,
+    /// Maximum bytes for the decoded output, and separately for the decoder's own
+    /// coefficient and sample buffers.
+    pub max_alloc: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        // 2^30 pixels (e.g. 32768²) and, on 64-bit targets, 8 GiB. On 32-bit targets (wasm32 has
+        // a 4 GiB address space shared with the rest of the app) 1 GiB is the most one buffer can
+        // safely ask for.
+        let max_alloc = if cfg!(target_pointer_width = "64") { 8 << 30 } else { 1 << 30 };
+        Limits { max_pixels: 1 << 30, max_alloc }
+    }
+}
+
+impl Limits {
+    /// Check an output buffer of `width × height` pixels of `bytes_per_pixel` bytes.
+    fn check(&self, width: usize, height: usize, bytes_per_pixel: u64) -> Result<(), Error> {
+        if width == 0 || height == 0 {
+            return Err(err(format!("zero-sized image {width}x{height}")));
+        }
+        let pixels = (width as u64).saturating_mul(height as u64);
+        if pixels > self.max_pixels {
+            return Err(Error::LimitExceeded(format!("{pixels} pixels exceed max {}", self.max_pixels)));
+        }
+        let bytes = pixels.saturating_mul(bytes_per_pixel);
+        if bytes > self.max_alloc {
+            return Err(Error::LimitExceeded(format!("{bytes} bytes exceed max_alloc {}", self.max_alloc)));
+        }
+        if usize::try_from(bytes).is_err() {
+            return Err(Error::LimitExceeded(format!("{bytes} bytes do not fit in memory")));
+        }
+        Ok(())
+    }
 }
 
 /// Zigzag scan position `k` → natural (row-major) coefficient index (Figure A.6).
 const ZIGZAG: [usize; 64] = [
-    0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29,
-    22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
+    0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43,
+    36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
 ];
 
-/// The first frame marker (SOFn) and its sample precision.
-fn frame_marker(b: &[u8]) -> Option<(u8, u8)> {
+/// The first frame header of a stream, as reported by [`frame`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameKind {
+    /// The second byte of the SOFn marker: `0xC0` (SOF0) to `0xCF` (SOF15), never `0xC4`,
+    /// `0xC8` or `0xCC`.
+    pub marker: u8,
+    /// The sample precision in bits (P in B.2.2), as declared; not validated.
+    pub precision: u8,
+}
+
+/// The first frame marker (SOFn) and its sample precision, found by walking the marker
+/// segments that precede it. `None` when the stream doesn't start with SOI or reaches a scan,
+/// EOI or the end of the data first. Reads only the headers, so it is cheap enough to route
+/// every JPEG an app opens.
+pub fn frame(b: &[u8]) -> Option<FrameKind> {
+    if b.get(..2) != Some(&[0xFF, 0xD8]) {
+        return None;
+    }
     let mut i = 2;
     loop {
         if *b.get(i)? != 0xFF {
@@ -53,7 +144,7 @@ fn frame_marker(b: &[u8]) -> Option<(u8, u8)> {
             _ => {
                 let len = usize::from(u16::from_be_bytes([*b.get(i + 2)?, *b.get(i + 3)?]));
                 if matches!(m, 0xC0..=0xCF) && !matches!(m, 0xC4 | 0xC8 | 0xCC) {
-                    return Some((m, *b.get(i + 4)?));
+                    return Some(FrameKind { marker: m, precision: *b.get(i + 4)? });
                 }
                 i = i.checked_add(2 + len)?;
             }
@@ -61,24 +152,32 @@ fn frame_marker(b: &[u8]) -> Option<(u8, u8)> {
     }
 }
 
-/// Whether this decoder (rather than `zune-jpeg`) should decode the file: arithmetic coding
-/// (SOF9–SOF11) or a DCT frame whose precision isn't 8 bits.
-pub(crate) fn handles(b: &[u8]) -> bool {
-    match frame_marker(b) {
-        Some((0xC9..=0xCB, _)) => true,
-        Some((0xC0 | 0xC1, p)) => p != 8,
-        _ => false,
-    }
+/// Decoded samples, interleaved by pixel (`components` values per pixel), rows top to bottom.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Samples {
+    /// 8-bit frames: `0..=255`.
+    U8(Vec<u8>),
+    /// 12-bit frames, scaled to the full 16-bit range: `round(v × 65535 / 4095)`.
+    U16(Vec<u16>),
 }
 
-/// A decoded image: layout, sample type and interleaved native-endian sample bytes, plus
-/// whether entropy-coded data was damaged (the rest of that scan was left out).
-pub(crate) struct Decoded {
+/// A decoded image.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decoded {
     pub width: u32,
     pub height: u32,
-    pub layout: ChannelLayout,
-    pub sample: SampleType,
-    pub data: Vec<u8>,
+    /// Samples per pixel: 1 for gray, 3 for RGB, 4 for CMYK.
+    ///
+    /// Three-component frames are converted from YCbCr to RGB (JFIF, T.871) unless the Adobe
+    /// transform is 0 or the component IDs are `R`, `G`, `B`. Four-component samples are ink
+    /// amounts (0 = no ink): the stored values are taken to follow Adobe's convention, inverted
+    /// (maximum = no ink), and are inverted back. With Adobe transform 2 (YCCK) the first three
+    /// components are converted from YCbCr, which yields the ink amounts of C, M and Y directly,
+    /// and K is inverted.
+    pub components: u8,
+    pub samples: Samples,
+    /// Entropy-coded data was damaged or cut short: the rest of that scan, and any scans past
+    /// the decoder's cap, were left out, and those blocks keep what earlier scans decoded.
     pub damaged: bool,
 }
 
@@ -95,7 +194,7 @@ struct Huffman {
 }
 
 impl Huffman {
-    fn new(counts: &[u8], values: &[u8]) -> Result<Self, CodecError> {
+    fn new(counts: &[u8], values: &[u8]) -> Result<Self, Error> {
         let mut h = Huffman { maxcode: [-1; 17], valptr: [0; 17], mincode: [0; 17], values: values.to_vec() };
         let mut code: i32 = 0;
         let mut k: i32 = 0;
@@ -116,7 +215,7 @@ impl Huffman {
         Ok(h)
     }
 
-    fn decode(&self, bits: &mut Bits) -> Result<u8, CodecError> {
+    fn decode(&self, bits: &mut Bits) -> Result<u8, Error> {
         let mut code: i32 = 0;
         for l in 1..=16 {
             code = (code << 1) | bits.bit() as i32;
@@ -176,18 +275,18 @@ struct Frame {
     comps: Vec<Component>,
 }
 
-fn be16(s: &[u8], at: usize) -> Result<u16, CodecError> {
+fn be16(s: &[u8], at: usize) -> Result<u16, Error> {
     match (s.get(at), s.get(at + 1)) {
         (Some(&a), Some(&b)) => Ok(u16::from_be_bytes([a, b])),
         _ => Err(err("segment too short")),
     }
 }
 
-fn byte(s: &[u8], at: usize) -> Result<u8, CodecError> {
+fn byte(s: &[u8], at: usize) -> Result<u8, Error> {
     s.get(at).copied().ok_or_else(|| err("segment too short"))
 }
 
-fn parse_dqt(seg: &[u8], t: &mut Tables) -> Result<(), CodecError> {
+fn parse_dqt(seg: &[u8], t: &mut Tables) -> Result<(), Error> {
     let mut i = 0;
     while i < seg.len() {
         let pq_tq = byte(seg, i)?;
@@ -209,7 +308,7 @@ fn parse_dqt(seg: &[u8], t: &mut Tables) -> Result<(), CodecError> {
     Ok(())
 }
 
-fn parse_dht(seg: &[u8], t: &mut Tables) -> Result<(), CodecError> {
+fn parse_dht(seg: &[u8], t: &mut Tables) -> Result<(), Error> {
     let mut i = 0;
     while i < seg.len() {
         let tc_th = byte(seg, i)?;
@@ -228,7 +327,7 @@ fn parse_dht(seg: &[u8], t: &mut Tables) -> Result<(), CodecError> {
     Ok(())
 }
 
-fn parse_dac(seg: &[u8], t: &mut Tables) -> Result<(), CodecError> {
+fn parse_dac(seg: &[u8], t: &mut Tables) -> Result<(), Error> {
     for pair in seg.chunks(2) {
         let [tc_tb, cs] = *pair else { return Err(err("DAC segment too short")) };
         let tb = usize::from(tc_tb & 15);
@@ -253,7 +352,7 @@ fn parse_dac(seg: &[u8], t: &mut Tables) -> Result<(), CodecError> {
     Ok(())
 }
 
-fn parse_frame(marker: u8, seg: &[u8], limits: &Limits) -> Result<Frame, CodecError> {
+fn parse_frame(marker: u8, seg: &[u8], limits: &Limits) -> Result<Frame, Error> {
     let (arithmetic, progressive) = match marker {
         0xC0 | 0xC1 => (false, false),
         0xC9 => (true, false),
@@ -287,8 +386,7 @@ fn parse_frame(marker: u8, seg: &[u8], limits: &Limits) -> Result<Frame, CodecEr
     }
     let hmax = raw.iter().map(|c| c.1).max().unwrap_or(1);
     let vmax = raw.iter().map(|c| c.2).max().unwrap_or(1);
-    let (layout, sample) = output_format(nf, precision);
-    limits.check(width as u32, height as u32, layout, sample)?;
+    limits.check(width, height, nf as u64 * if precision > 8 { 2 } else { 1 })?;
     let mcux = width.div_ceil(8 * hmax);
     let mcuy = height.div_ceil(8 * vmax);
     // Coefficients (4 bytes) and the reconstructed plane (4 bytes) per padded sample.
@@ -298,24 +396,15 @@ fn parse_frame(marker: u8, seg: &[u8], limits: &Limits) -> Result<Frame, CodecEr
         internal = internal.saturating_add(samples.saturating_mul(8));
     }
     if internal > limits.max_alloc {
-        return Err(CodecError::LimitExceeded(format!("{internal} bytes of decoder buffers exceed max_alloc {}", limits.max_alloc)));
+        return Err(Error::LimitExceeded(format!("{internal} bytes of decoder buffers exceed max_alloc {}", limits.max_alloc)));
     }
     let mut comps = Vec::with_capacity(nf);
     for (id, h, v, tq) in raw {
         let (bw, bh) = (mcux * h, mcuy * v);
-        let blocks = bw.checked_mul(bh).ok_or_else(|| CodecError::LimitExceeded("too many blocks".into()))?;
+        let blocks = bw.checked_mul(bh).ok_or_else(|| Error::LimitExceeded("too many blocks".into()))?;
         comps.push(Component { id, h, v, tq, cw: (width * h).div_ceil(hmax), ch: (height * v).div_ceil(vmax), bw, bh, coefs: vec![[0; 64]; blocks] });
     }
     Ok(Frame { arithmetic, progressive, precision, width, height, hmax, vmax, mcux, mcuy, comps })
-}
-
-fn output_format(nf: usize, precision: u8) -> (ChannelLayout, SampleType) {
-    let layout = match nf {
-        1 => ChannelLayout::Gray,
-        4 => ChannelLayout::Cmyk,
-        _ => ChannelLayout::Rgb,
-    };
-    (layout, if precision > 8 { SampleType::U16 } else { SampleType::U8 })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -566,7 +655,7 @@ impl Arith<'_> {
     }
 }
 
-fn bin(st: &mut [u8], i: usize) -> Result<&mut u8, CodecError> {
+fn bin(st: &mut [u8], i: usize) -> Result<&mut u8, Error> {
     st.get_mut(i).ok_or_else(|| err("arithmetic statistics index out of range"))
 }
 
@@ -574,7 +663,7 @@ fn bin(st: &mut [u8], i: usize) -> Result<&mut u8, CodecError> {
 trait ScanDecoder {
     fn restart(&mut self);
     /// Decode one block of scan component `sc` into `blk` (zigzag order).
-    fn block(&mut self, sc: usize, blk: &mut [i32; 64]) -> Result<(), CodecError>;
+    fn block(&mut self, sc: usize, blk: &mut [i32; 64]) -> Result<(), Error>;
 }
 
 /// The parameters of a scan header (B.2.3).
@@ -600,7 +689,7 @@ impl ScanDecoder for HuffmanScan<'_> {
         self.pred = [0; 4];
     }
 
-    fn block(&mut self, sc: usize, blk: &mut [i32; 64]) -> Result<(), CodecError> {
+    fn block(&mut self, sc: usize, blk: &mut [i32; 64]) -> Result<(), Error> {
         let &(dc, ac) = self.tables.get(sc).ok_or_else(|| err("bad scan component"))?;
         let pred = self.pred.get_mut(sc).ok_or_else(|| err("bad scan component"))?;
         let t = u32::from(dc.decode(&mut self.bits)?);
@@ -663,7 +752,7 @@ struct ArithScan<'a> {
 
 impl ArithScan<'_> {
     /// Decode_DC_DIFF (F.2.4.1, Figures F.19 and F.22).
-    fn dc_diff(&mut self, sc: usize, tbl: usize) -> Result<i32, CodecError> {
+    fn dc_diff(&mut self, sc: usize, tbl: usize) -> Result<i32, Error> {
         let st = self.dc_stats.get_mut(tbl).ok_or_else(|| err("bad DC table"))?;
         let ctx = self.ctx.get_mut(sc).ok_or_else(|| err("bad scan component"))?;
         let s0 = *ctx;
@@ -709,7 +798,7 @@ impl ArithScan<'_> {
     }
 
     /// Decode_AC_coefficients (F.2.4.2, Figures F.20 and F.24) over `ss..=se`, scaled by `al`.
-    fn ac_first(&mut self, tbl: usize, blk: &mut [i32; 64]) -> Result<(), CodecError> {
+    fn ac_first(&mut self, tbl: usize, blk: &mut [i32; 64]) -> Result<(), Error> {
         let kx = usize::from(self.ac_kx.get(tbl).copied().unwrap_or(5));
         let st = self.ac_stats.get_mut(tbl).ok_or_else(|| err("bad AC table"))?;
         let mut k = self.ss.max(1);
@@ -755,7 +844,7 @@ impl ArithScan<'_> {
     }
 
     /// Successive approximation of AC coefficients (G.1.3.3, Figure G.10).
-    fn ac_refine(&mut self, tbl: usize, blk: &mut [i32; 64]) -> Result<(), CodecError> {
+    fn ac_refine(&mut self, tbl: usize, blk: &mut [i32; 64]) -> Result<(), Error> {
         let st = self.ac_stats.get_mut(tbl).ok_or_else(|| err("bad AC table"))?;
         let p1: i32 = 1 << self.al;
         let m1: i32 = -1 << self.al;
@@ -796,7 +885,7 @@ impl ScanDecoder for ArithScan<'_> {
         self.reset();
     }
 
-    fn block(&mut self, sc: usize, blk: &mut [i32; 64]) -> Result<(), CodecError> {
+    fn block(&mut self, sc: usize, blk: &mut [i32; 64]) -> Result<(), Error> {
         let &(td, ta) = self.ids.get(sc).ok_or_else(|| err("bad scan component"))?;
         match self.mode {
             ArithMode::Sequential | ArithMode::DcFirst => {
@@ -830,7 +919,7 @@ impl ArithScan<'_> {
 }
 
 /// Walk the scan's MCUs in order (A.2), handing each block to `dec`; counts decoded MCUs.
-fn walk_scan(frame: &mut Frame, scan: &Scan, restart: usize, dec: &mut dyn ScanDecoder, done: &mut usize) -> Result<(), CodecError> {
+fn walk_scan(frame: &mut Frame, scan: &Scan, restart: usize, dec: &mut dyn ScanDecoder, done: &mut usize) -> Result<(), Error> {
     let single = scan.comps.len() == 1;
     let (mcux, mcuy) = if single {
         let &(ci, _, _) = scan.comps.first().ok_or_else(|| err("empty scan"))?;
@@ -861,7 +950,7 @@ fn walk_scan(frame: &mut Frame, scan: &Scan, restart: usize, dec: &mut dyn ScanD
     Ok(())
 }
 
-fn parse_scan(seg: &[u8], frame: &Frame) -> Result<Scan, CodecError> {
+fn parse_scan(seg: &[u8], frame: &Frame) -> Result<Scan, Error> {
     let ns = usize::from(byte(seg, 0)?);
     if !(1..=4).contains(&ns) {
         return Err(err("bad number of scan components"));
@@ -891,7 +980,7 @@ fn parse_scan(seg: &[u8], frame: &Frame) -> Result<Scan, CodecError> {
 }
 
 /// Decode one scan's entropy-coded data `d`, counting the decoded MCUs in `done`.
-fn decode_scan(frame: &mut Frame, tables: &Tables, scan: &Scan, d: &[u8], done: &mut usize) -> Result<(), CodecError> {
+fn decode_scan(frame: &mut Frame, tables: &Tables, scan: &Scan, d: &[u8], done: &mut usize) -> Result<(), Error> {
     if frame.arithmetic {
         let mode = match (frame.progressive, scan.ss, scan.ah) {
             (false, _, _) => ArithMode::Sequential,
@@ -936,7 +1025,7 @@ fn decode_scan(frame: &mut Frame, tables: &Tables, scan: &Scan, d: &[u8], done: 
 const MAX_SCANS: usize = 500;
 
 /// Parse the stream and decode every scan into coefficients.
-fn decode_coefficients(b: &[u8], limits: &Limits) -> Result<(Frame, Tables, bool), CodecError> {
+fn decode_coefficients(b: &[u8], limits: &Limits) -> Result<(Frame, Tables, bool), Error> {
     if b.get(..2) != Some(&[0xFF, 0xD8]) {
         return Err(err("not a JPEG stream"));
     }
@@ -1063,8 +1152,8 @@ fn reconstruct(comp: &Component, q: &[u16; 64], basis: &[[f32; 8]; 8], max: f32)
     plane
 }
 
-/// For each output coordinate: the two neighbouring component samples and the weight of the
-/// second (centred linear interpolation of a subsampled component).
+/// For each output coordinate: the two neighboring component samples and the weight of the
+/// second (centered linear interpolation of a subsampled component).
 fn upsample_map(out: usize, samples: usize, factor: usize, fmax: usize) -> Vec<(usize, usize, f32)> {
     let last = samples.saturating_sub(1);
     (0..out)
@@ -1077,7 +1166,7 @@ fn upsample_map(out: usize, samples: usize, factor: usize, fmax: usize) -> Vec<(
 }
 
 /// Turn the coefficients into interleaved output samples.
-fn render(frame: Frame, tables: &Tables, adobe_transform: Option<u8>) -> Result<(ChannelLayout, SampleType, Vec<u8>), CodecError> {
+fn render(frame: Frame, tables: &Tables, adobe_transform: Option<u8>) -> Result<(u8, Samples), Error> {
     let max = if frame.precision > 8 { 4095.0 } else { 255.0 };
     let basis = idct_basis();
     let (w, h) = (frame.width, frame.height);
@@ -1090,14 +1179,19 @@ fn render(frame: Frame, tables: &Tables, adobe_transform: Option<u8>) -> Result<
         planes.push((plane, comp.bw * 8, xs, ys));
     }
     let nc = planes.len();
-    let (layout, sample) = output_format(nc, frame.precision);
+    let sixteen = frame.precision > 8;
     let rgb_ids = frame.comps.iter().map(|c| c.id).eq(*b"RGB");
     let ycc = match nc {
         3 => adobe_transform != Some(0) && !rgb_ids,
         4 => adobe_transform == Some(2),
         _ => false,
     };
-    let mut data = Vec::with_capacity(w * h * nc * sample.bytes());
+    let (mut wide, mut narrow) = (Vec::new(), Vec::new());
+    if sixteen {
+        wide.reserve_exact(w * h * nc);
+    } else {
+        narrow.reserve_exact(w * h * nc);
+    }
     let mut px = [0f32; 4];
     let center = (max + 1.0) / 2.0;
     for y in 0..h {
@@ -1131,23 +1225,31 @@ fn render(frame: Frame, tables: &Tables, adobe_transform: Option<u8>) -> Result<
             }
             for &p in px.iter().take(nc) {
                 let p = p.clamp(0.0, max);
-                if sample == SampleType::U16 {
-                    data.extend_from_slice(&((p * 65535.0 / max).round() as u16).to_ne_bytes());
+                if sixteen {
+                    wide.push((p * 65535.0 / max).round() as u16);
                 } else {
-                    data.push(p.round() as u8);
+                    narrow.push(p.round() as u8);
                 }
             }
         }
     }
-    Ok((layout, sample, data))
+    let samples = if sixteen { Samples::U16(wide) } else { Samples::U8(narrow) };
+    Ok((nc as u8, samples))
 }
 
-/// Decode a JPEG this module [`handles`].
-pub(crate) fn decode(b: &[u8], limits: &Limits, adobe_transform: Option<u8>) -> Result<Decoded, CodecError> {
-    let (frame, tables, damaged) = decode_coefficients(b, limits)?;
+/// Decode a JPEG stream of one of the frame types listed in the [crate docs](crate).
+///
+/// `adobe_transform` is the transform byte of the stream's APP14 `Adobe` segment, if the caller
+/// found one: it selects the color conversion of 3 and 4-component images (see
+/// [`Decoded::components`]). The decoder ignores every APPn segment itself.
+///
+/// Damaged entropy-coded data after at least one decoded MCU returns `Ok` with
+/// [`Decoded::damaged`] set; a stream that yields no image data returns an error.
+pub fn decode(bytes: &[u8], limits: &Limits, adobe_transform: Option<u8>) -> Result<Decoded, Error> {
+    let (frame, tables, damaged) = decode_coefficients(bytes, limits)?;
     let (width, height) = (frame.width as u32, frame.height as u32);
-    let (layout, sample, data) = render(frame, &tables, adobe_transform)?;
-    Ok(Decoded { width, height, layout, sample, data, damaged })
+    let (components, samples) = render(frame, &tables, adobe_transform)?;
+    Ok(Decoded { width, height, components, samples, damaged })
 }
 
 #[cfg(test)]
