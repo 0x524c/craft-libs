@@ -147,11 +147,11 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         pointer
     }
 
-    /// In a window that does not own the drag a native window owns (`window`, `None` for the
-    /// main window): an Escape pressed here cancels the drag, and is no shortcut.
+    /// In a window that does not own the drag (`window`, `None` for the main window): an Escape
+    /// pressed here cancels the drag, and is no shortcut.
     pub(super) fn escape_elsewhere(&self, ctx: &Context, window: Option<u64>) {
         let owner = ctx.data(|d| d.get_temp::<DragPointer>(self.id.with(POINTER))).filter(|p| p.down).map(|p| p.owner);
-        if owner.is_some_and(|owner| owner.is_some() && owner != window) && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
+        if owner.is_some_and(|owner| owner != window) && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
             ctx.data_mut(|d| d.insert_temp(self.id.with(ESCAPE), true));
         }
     }

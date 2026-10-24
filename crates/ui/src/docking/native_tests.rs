@@ -924,6 +924,23 @@ fn escape_or_focus_loss_ends_a_drag_a_native_window_owns() {
 }
 
 #[test]
+fn escape_in_a_focused_native_window_cancels_a_main_window_drag() {
+    let mut d = driver(two_windows());
+    let id = window(&d, 7).id;
+    let viewport = d.viewport(id);
+    let tab = d.hit(&Hit::Tab(1)).unwrap().center();
+    let body = d.host().windows[&viewport].rect.center() - ORIGIN.to_vec2();
+    d.hold(tab, body);
+    d.host().focus = Some(viewport);
+    let out = d.window_step(id, vec![escape()]);
+    assert!(out.forwarded_events.is_empty(), "the Escape is no shortcut: {:?}", out.forwarded_events);
+    d.step(vec![Event::PointerMoved(body)]);
+    let out = d.release(body);
+    assert!(!out.actions.iter().any(|a| matches!(a, Action::Move { .. } | Action::MovePanel { .. } | Action::Float { .. })), "{:?}", out.actions);
+    assert!(!super::is_dragging::<u32>(&d.ctx, d.id));
+}
+
+#[test]
 fn focus_moving_to_a_native_window_mid_drag_keeps_the_drag() {
     let mut d = driver(two_windows());
     let viewport = d.viewport(window(&d, 7).id);
