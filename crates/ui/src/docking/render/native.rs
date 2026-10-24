@@ -80,6 +80,32 @@ pub(in crate::docking) const MACOS_CLOSE: CloseLayout =
 pub(in crate::docking) const OTHER_CLOSE: CloseLayout =
     CloseLayout { glyph_top: 4.5, glyph_trailing: 11.5, glyph_size: 9.0, hit_left: 4.5, hit_right: 4.5, hit_up: 4.5, hit_down: 4.5 };
 
+/// Opacity of a native window while its bar or only tab drags it: the window stays above the
+/// main window, so the drop preview under the pointer shows only through it.
+#[cfg(target_os = "macos")]
+const DRAG_OPACITY: f64 = 0.5;
+
+/// Sets the opacity of the AppKit windows titled `title`, never one titled `main` (the main
+/// window's title). egui has no viewport command for a window's opacity, and a transparent
+/// surface would need the main window transparent too (eframe picks one alpha mode for every
+/// viewport), so this goes to AppKit, which fades the content, corners and shadow together.
+/// The window is found by title: its native handle is a raw `NSView` pointer, and turning that
+/// into an `NSWindow` needs `unsafe`, which the workspace forbids. Two floats with one title
+/// fade together.
+#[cfg(target_os = "macos")]
+fn set_window_opacity(title: &str, main: Option<&str>, opacity: f64) {
+    if title.is_empty() || main == Some(title) {
+        return;
+    }
+    let Some(mtm) = objc2::MainThreadMarker::new() else { return };
+    let title = objc2_foundation::NSString::from_str(title);
+    for window in objc2_app_kit::NSApplication::sharedApplication(mtm).windows().iter() {
+        if window.title().isEqualToString(&title) && window.alphaValue() != opacity {
+            window.setAlphaValue(opacity);
+        }
+    }
+}
+
 /// Whether native windows outline their ×'s hit area, and on macOS AppKit's resize areas:
 /// `CRAFT_DOCK_DEBUG_CLOSE=1`, read once.
 fn debug_close() -> bool {
@@ -344,7 +370,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let spawn = place.spawn;
         let title = crate::docking::dock_model::first_active(&window.root).map(|p| self.label_of(p)).unwrap_or_default();
         let builder = ViewportBuilder::default()
-            .with_title(title)
+            .with_title(title.clone())
             .with_position([spawn[0], spawn[1]])
             .with_inner_size([spawn[2], spawn[3]])
             .with_min_inner_size(MIN_SIZE)
@@ -421,6 +447,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             (place.known[0], place.known[1], place.pending) = (to.x, to.y, Some(now + MOVE_WAIT));
         }
         let moving = moving(ctx);
+        // Set every frame from the drag state, so any way a drag ends (a drop, Escape, a focus
+        // loss, the window closing) brings the window back to full opacity.
+        #[cfg(target_os = "macos")]
+        {
+            let main = ctx.input(|i| i.raw.viewports.get(&ViewportId::ROOT).and_then(|v| v.title.clone()));
+            set_window_opacity(&title, main.as_deref(), if moving { DRAG_OPACITY } else { 1.0 });
+        }
         if let Some(placed) = report.placed.filter(|_| !moving) {
             let waiting = place.pending.is_some_and(|until| now < until);
             if !differs(placed, place.known) {
