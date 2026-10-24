@@ -267,6 +267,19 @@ or DefaultGray profile and the CMYK simulation of patch 36. PdfCraft's eight ras
 adapted in `tests/upstream_raster.rs` (`default_color_spaces`); the plate case is
 `default_color_spaces_leave_device_color_on_its_plates` in `tests/plates.rs`.
 
+A rendering speedup from the [PdfCraft revision 0b670caf4a090e9d83a7f41a84b4cb2144a2d33e ledger](https://github.com/storytold/pdfcraft/blob/0b670caf4a090e9d83a7f41a84b4cb2144a2d33e/vendor/README.md),
+hayro-interpret (35) with hayro (19), PdfCraft #3296, marked `PdfCraft patch (#3296)` because
+the plate-mode code uses (35) for #2770's own numbers. `EncodedShadingPattern::extent` is the
+device-space rectangle of the pixels a mesh shading's triangles touched when it was encoded
+(`None` for function-based, axial and radial shadings, and for a mesh with a `/Background`).
+`Renderer::set_paint` returns `PaintSetup`: a mesh texture covers that extent (and a
+transparent pixel around it, padded instead of repeated) rather than the whole path, and a
+mesh with no triangle on the canvas returns `PaintSetup::Nothing`, which the fill, stroke,
+rect and stencil callers skip. The rendered output is the same. The knockout erase pass
+returns before the extent is used, so it still clears under the whole path. Tests:
+`mesh_extent_tests::{a_mesh_paints_its_triangles_alone, a_mesh_keeps_the_graphics_state_alpha,
+a_mesh_off_the_canvas_paints_nothing}` in hayro.
+
 This remains the patched 0.7 backend. It retains the existing Bradford Lab conversion,
 floating component precision and codec versions, rather than claiming full 0.8
 equivalence. The independent color oracles, backend tests and facade contracts cover
