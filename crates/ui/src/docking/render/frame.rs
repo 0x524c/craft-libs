@@ -198,6 +198,12 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if !self.style.float_hint || self.style.float_hint_label.is_empty() {
             return;
         }
+        // A window other than the drag's source: the source shows the hint.
+        #[cfg(feature = "native-windows")]
+        if self.cross.quiet {
+            self.cross.offered.set(true);
+            return;
+        }
         let key = if ctx.os() == egui::os::OperatingSystem::Mac { "⌘" } else { "Ctrl" };
         let painter = self.preview_painter(ctx);
         let galley = painter.layout_no_wrap(self.style.float_hint_label.replace("{key}", key), self.style.font.clone(), self.style.text);
@@ -220,7 +226,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     /// The menu tail: Close Other Panels in Group and Maximize Frame when the style shows
-    /// them, and Move Panel to New Window where native windows are available.
+    /// them.
     pub(super) fn frame_items(&mut self, ui: &mut egui::Ui, owner: &TabGroup<'_, P>, panel: &P) {
         let others = owner.panels.iter().filter(|p| *p != panel).all(|p| self.permissions(p).closable);
         if self.style.close_others_item
@@ -239,7 +245,5 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 self.output.events.push(DockEvent::ToggleMaximize { panel });
             }
         }
-        #[cfg(feature = "native-windows")]
-        self.new_window_item(ui, owner, panel);
     }
 }

@@ -194,11 +194,13 @@ pub(super) struct Moving<P> {
     pub iconic_width: Option<f32>,
     pub rect: Option<[f32; 4]>,
     pub native: Option<[f32; 4]>,
+    /// The id of a whole floating window in transit, which a new window keeps.
+    pub id: Option<u64>,
 }
 
 impl<P> Moving<P> {
     pub fn group(group: Group<P>) -> Self {
-        Self { groups: vec![group], node: None, minimized: false, width: None, iconic: false, iconic_width: None, rect: None, native: None }
+        Self { groups: vec![group], node: None, minimized: false, width: None, iconic: false, iconic_width: None, rect: None, native: None, id: None }
     }
 
     fn into_column(self, width: f32) -> Column<P> {
@@ -574,10 +576,10 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                 let (window, path) = place.tree_path().map(|(w, p)| (w, p.to_vec())).ok_or(DockError::MissingPanel)?;
                 // A group leaving a floating window keeps its width; the window's only group
                 // takes the window's rect along.
-                let source = window.and_then(|w| self.floating.get(w)).map(|w| (w.rect, w.native, w.minimized));
+                let source = window.and_then(|w| self.floating.get(w)).map(|w| (w.rect, w.native, w.minimized, w.id));
                 let whole = |moving: Moving<P>| match source {
-                    Some((rect, native, minimized)) if path.is_empty() => {
-                        Moving { width: rect.get(2).copied(), rect: Some(rect), native, minimized, ..moving }
+                    Some((rect, native, minimized, id)) if path.is_empty() => {
+                        Moving { width: rect.get(2).copied(), rect: Some(rect), native, minimized, id: Some(id), ..moving }
                     }
                     Some((rect, ..)) => Moving { width: rect.get(2).copied(), ..moving },
                     None => moving,
@@ -589,7 +591,7 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                     let entry = entries.remove(index);
                     let group = Group { panels: vec![entry.panel], active: 0, minimized: !entry.open, height: entry.height };
                     let moving = whole(Moving::group(group));
-                    return Ok(Moving { rect: None, native: None, ..moving });
+                    return Ok(Moving { rect: None, native: None, id: None, ..moving });
                 }
                 match self.take_node_in(window, &path) {
                     Some(Node::Tabs { panels, active }) => Ok(whole(Moving::group(Group::new(panels, active)))),
@@ -638,6 +640,7 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             iconic_width: taken.iconic_width,
             rect: None,
             native: None,
+            id: None,
         })
     }
 
@@ -656,6 +659,7 @@ impl<P: Clone + Eq + Hash> Layout<P> {
             iconic_width: None,
             rect: Some(taken.rect),
             native: taken.native,
+            id: Some(taken.id),
         })
     }
 
@@ -678,7 +682,8 @@ impl<P: Clone + Eq + Hash> Layout<P> {
                     Some(node) => node,
                     None => stack_tree(moving.groups).ok_or(DockError::MissingPanel)?,
                 };
-                self.floating.push(Floating { root, rect, native, minimized: moving.minimized });
+                let window = Floating { native, minimized: moving.minimized, ..Floating::new(root, rect) };
+                self.floating.push(Floating { id: moving.id.unwrap_or(window.id), ..window });
                 Ok(())
             }
             Target::NewDock { side } => {

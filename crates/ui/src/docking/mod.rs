@@ -8,10 +8,14 @@
 pub mod chrome;
 #[cfg(feature = "serde")]
 mod command;
+#[cfg(feature = "native-windows")]
+mod desktop;
 mod dock_model;
 mod hits;
 mod labels;
 mod model;
+#[cfg(feature = "native-windows")]
+mod placement;
 mod render;
 mod resize;
 mod surface;
@@ -24,7 +28,7 @@ mod workspace;
 pub use command::{DockCommand, DockOperation, UiDock, ZoneName};
 pub use dock_model::{Column, ColumnLocation, Group, GroupLocation, PanelState, Side, Target};
 pub use hits::{Divider, Hit, ResizeEdge};
-pub use model::{Action, DockError, Floating, Layout, Location, MAX_DEPTH, MAX_PANELS, Node, Permissions, Placement, StackEntry, Zone};
+pub use model::{Action, DockError, Floating, Layout, Location, MAX_DEPTH, MAX_PANELS, Monitor, Node, Permissions, Placement, StackEntry, Zone};
 pub use render::{close_flyout, flyout, open_flyout};
 pub use surface::{
     DockArea, DockContent, DockEvent, DockOutput, DockStyle, DropFeedback, DropRequest, FloatSpace, HidePanels, PanelLimits, begin_drag, cancel_drag,
@@ -47,6 +51,8 @@ mod group_tests;
 mod iconic_tests;
 #[cfg(test)]
 mod model_tests;
+#[cfg(all(test, feature = "native-windows"))]
+mod native_tests;
 #[cfg(test)]
 mod split_tests;
 #[cfg(test)]

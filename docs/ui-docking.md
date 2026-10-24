@@ -38,10 +38,15 @@ their sides.
 | `Dock` | A side and its columns. A `Column` has `Group`s, a width, and `iconic`. |
 
 A `Floating` window holds a tree like the docked layout's (`root`: splits, tab groups and
-accordions, no docks), a rect, an optional native-window rect and `minimized`.
+accordions, no docks), a rect, an optional native-window rect with the monitor it is on, and
+`minimized`. Its `id` names the window across panel moves (see [Native windows](#native-windows)).
 `Floating::single` makes a window with one group, `Floating::new` one with a tree, and
 `Floating::stack` one with groups stacked top to bottom (a vertical split sized by the groups'
-heights, as an app's own stacked layouts migrate); `panels()` and `contains()` read it. Saved layouts keep loading: a window stored as one group (v1) or as a
+heights, as an app's own stacked layouts migrate); `panels()` and `contains()` read it. Each of
+these calls makes a new window with a fresh `id`. Build a layout once and keep it, or give its
+windows ids with `with_id`: a layout built anew each frame, as an unsaved default layout might
+be, otherwise opens new OS windows each frame and loses their drags and places. Debug builds log
+a warning when native windows are replaced by new ones with the same panels three frames running. Saved layouts keep loading: a window stored as one group (v1) or as a
 stack of groups loads as that group or as a vertical split of the stacked groups, sized by their
 heights.
 
@@ -55,7 +60,7 @@ use craft_ui::docking::{Action, Floating, Layout, Node, Placement};
 
 let mut layout = Layout {
     root: Some(Node::Tabs { panels: vec!["layers", "properties"], active: 0 }),
-    floating: vec![Floating::single(vec!["brushes"], 0, [40.0, 80.0, 240.0, 300.0])],
+    floating: vec![Floating::single(vec!["brushes"], 0, [40.0, 80.0, 240.0, 300.0]).with_id(1)],
 };
 layout.apply(Action::Move {
     panel: "brushes",
@@ -80,7 +85,8 @@ layout.apply(Action::Move {
   half the new frame takes.
 - Other actions select, minimize, collapse to icons, resize splits (`ResizeSplit` in the docked
   layout, `ResizeWindowSplit` in the floating window holding a panel), columns and groups, and
-  move a floating window to its own OS window (`SetNative`, feature `native-windows`).
+  move a floating window to its own OS window (`SetNative`, and `SetMonitor` for the monitor it
+  is on, feature `native-windows`).
 - A move between windows (docked to floating, floating to floating) is one action, checked as a
   whole like any other.
 
@@ -318,6 +324,125 @@ panel and Lock change the workspace directly. Named workspaces and Reset belong 
 `is_app_owned` is true for them and `apply` refuses them. `DockCommand::IDS` lists every id for
 the app's command registry. App-specific aliases stay in the app.
 
+## Native windows
+
+With feature `native-windows`, on a backend with egui viewports (`!ctx.embed_viewports()`,
+eframe on desktop), every floating window opens in its own OS window: a Ctrl/Cmd-drag, Undock
+Panel and Undock Panel Group, every other drop that floats, and the floating windows of a
+restored layout. A window still in-window opens over its place in the app window (the main
+viewport's `inner_rect.min` plus its rect). A window with a panel whose
+`DockContent::allow_native` returns false (it returns true unless the app overrides it), or
+that is not floatable, stays in-window. Floating windows get no taskbar or Alt-Tab entry
+(`with_taskbar(false)`).
+
+- **Identity.** `Floating::id` names the OS window, so a window keeps it when its panels change,
+  including when its first panel moves out. `Floating::new` and loading draw fresh ids, and
+  `Floating::with_id` sets one; a layout
+  loads with unique ids; a window that merges into another takes the receiver's id, and a whole
+  window that moves (floated again, or its only group dragged) keeps its own.
+- **Level.** The windows stay above other windows (`WindowLevel::AlwaysOnTop`), so clicking the
+  document does not bury them. While none of the app's windows has focus they hide
+  (`ViewportCommand::Visible(false)`), and they come back when one has it again. The hide waits
+  250 ms, so focus moving between the app's own windows does not flicker.
+- **Bar.** Each window has a bar at the top, 18 points high, in the floating title bar's style:
+  the title (the shown panel of its first group) and ×. Dragging the bar moves the window. On
+  Wayland, where a window cannot be placed, the bar hands the move to the compositor. On
+  Windows and Linux the OS frame is off. On macOS the frame stays for its shadow and rounded
+  corners, with its title bar and buttons hidden, and is not resizable: AppKit's resize areas
+  reach well into the content and would take clicks from the ×.
+- **Resize.** A movable window resizes from bands 4 pt deep along its edges. Each corner is an
+  L along both edges, 12 pt long and as deep as the edges. The bands leave out the bar's
+  buttons, which sit 4 pt in from the window's edge so the corner's grab runs down beside
+  them; elsewhere the top band lies over the bar's drag area. The OS runs the resize
+  (`ViewportCommand::BeginResize`), except on macOS, where winit cannot: there the window
+  follows the pointer by `InnerSize` and `OuterPosition`, keeping the opposite edges and the
+  160 by 100 pt minimum, and a window released with too little of its bar on a monitor moves
+  back onto the nearest one, as after a bar drag.
+- **Close.** The bar's × and the OS close request close the window's panels, as the
+  floating window's × does. They reopen from the app's Window menu.
+- **Place.** `Floating::native` is the desktop rect of the window's content (egui's
+  `inner_rect`), and the in-window `rect` follows it for builds that draw the window in-window.
+  The content is also the window's origin for drags; only `ViewportCommand::OuterPosition`
+  takes the outer position, which the renderer works out from the reported outer and inner
+  rects. Where the window system puts a new window's frame, not its content, at the place asked
+  for, the window is moved once so its content is there. When the app changes `native` (undo,
+  a workspace reset, a reloaded layout whose ids match), the OS window moves there; a report
+  that differs from `native` while a commanded move has not landed (up to 0.5 s) is ignored. `Floating::monitor` is the monitor
+  holding the window's center, from the list the app passes to `DockArea::monitors` (each a
+  `Monitor { name, rect, scale }` in desktop logical points). egui 0.36 reports no monitors, so
+  an app fills the list from its backend when it can; without one, `Floating::monitor_size`
+  keeps the monitor size egui reports.
+- **Restore.** Only the windows of a loaded layout (a `native` the session has not shown yet)
+  are restored. A window made this session (a drag out, Undock, a Ctrl/Cmd drop) opens at the
+  rect it was given, only made safe, wherever that is on the desktop. A restored window opens on
+  its saved monitor when one with that name (or else that rect) is connected, moved in
+  proportion if the monitor's rect changed, and moved onto it when too little of its bar lies on
+  a monitor to grab (40 by 9 points). Otherwise it opens on the main window's monitor at the
+  same offset from that monitor's origin, wholly on screen. Without a monitor list, it is
+  clamped onto the main window's monitor, taken from `monitor_size` and the main window's
+  position. Hostile rects are made safe first. With a monitor list, a window whose `native` the
+  app changes, or whose bar drag ends with too little of the bar on a monitor, goes onto the
+  nearest monitor too.
+- **Mixed scale factors.** Rects are stored in egui points as the window reports them, and
+  `Monitor::scale` is kept but not used. On macOS every window shares one point space, so this
+  is exact. On Windows egui-winit divides each window's physical position by that window's own
+  scale factor, so with monitors at different scales (say 100 % and 150 %) the points of windows
+  on different monitors are in different units. Across such monitors, a restored or
+  app-changed place can land off by the ratio of the scales, and a drop across windows on
+  different monitors can resolve against the wrong point. Same-scale setups are unaffected.
+- **Shortcuts.** egui gives each OS window only its own input. Key, text, copy, cut and paste
+  events that reach a native window and that none of its widgets used come back in
+  `DockOutput::forwarded_events`, with the modifiers held in that window in
+  `DockOutput::forwarded_modifiers` (egui-winit sends Cmd/Ctrl+C, X and V as `Copy`, `Cut` and
+  `Paste` without the key). The app feeds them to the shortcut handling it runs on the main
+  window. A window where any widget has keyboard focus forwards nothing, and an Escape that
+  cancels a drag is not forwarded.
+- **Drags.** Tabs, groups and whole windows drag between the app's OS windows.
+  - *Ownership.* The window where the button went down owns the drag: the window system sends it
+    the pointer's moves and the release while the button is held, inside the window or not. So
+    the pointer leaving a window (`PointerGone`) is not a release. A drag ends on release,
+    Escape (pressed in any of the app's windows, since keys go to the one with keyboard focus),
+    when none of the app's windows has focus, or when its window closes or its panel goes.
+  - *Hit-testing.* The owner adds its desktop origin to the pointer: a native window's reported
+    `inner_rect.min`, or while it moves by its bar, the place it was last put less the pointer's
+    offset from the pressed point. The window under that
+    desktop point is a floating native window first, most recently focused first, then the main
+    window. A window moving by its bar is never its own target. A point in no window is on the
+    desktop.
+  - *Targets and previews.* Each window draws its drop targets in its own coordinates, and the
+    window under the pointer draws the drop preview (zone, dock line, ghost) in its own frame.
+    The source window shows only the "Hold {key} to undock" hint. The release is resolved at the
+    end of the main window's frame, after every native window has drawn.
+  - *Drops.* Over a window, a tab or group docks or joins there with the usual targets: dock lines
+    and frame zones in the main window, frame zones and tab rows in floating windows. Over the
+    desktop, it floats into a new OS window placed so the grabbed tab stays under the pointer
+    (the window's top-left is the pointer minus the grab offset, less the bar's height). A
+    Ctrl/Cmd-drag floats there wherever it is released.
+  - *Moving a window.* Dragging the bar, the only tab of a window, or the drag area of its only
+    group moves the window, so the pressed point stays under the pointer. Each move is worked
+    out from a pointer move of that frame and the window's reported place, which the pointer's
+    position is relative to; a move commanded earlier may land late. A frame with no pointer
+    move leaves the window. X11 sends no move whose position in the window repeats the last
+    one, so while the pointer keeps exact pace with the window the window can trail it by one
+    move until the next. Released over a target in another window, the whole window docks or
+    joins there as its groups (`Action::MoveWindow`). The bar docks only with
+    `DockStyle::title_bar_docks`; the only tab or group docks either way, since it is the way
+    back in with that flag off. Targets: in the
+    main window a dock line, a frame's tab row or edge zone, or the layout's outer edge; in a
+    floating window a frame zone or tab row. A frame body's center takes no whole window. Over
+    the desktop, or with Ctrl/Cmd held, it stays where it was moved, and the layout takes its
+    place once, at the release. Escape puts it back. An
+    in-window floating window's title bar still splits only groups of other floating windows.
+  - *Wayland.* Where `outer_rect` is `None`, desktop positions are unknown, so drops across
+    windows cannot be resolved. A drag works inside its own window, and a release outside it
+    floats a new window that the compositor places. Moving a window hands the move to the
+    compositor, which never docks it.
+
+On the web and wherever egui embeds viewports, nothing changes: floating windows stay in the
+page at their in-window rect, `native` and the monitor fields are kept but unused, and
+`forwarded_events` stays empty. Without the feature, the fields exist and are never set by the
+renderer.
+
 ## Labels
 
 Every visible and accessibility label is a `*_label` field of `DockStyle`, with an English
@@ -357,7 +482,16 @@ assert!(driver.hit(&Hit::ColumnBar(PanelId::Layers)).is_some());
 ```
 
 It also has `press`, `release`, `click`, `hold`, `key`, `focus`, `hits`, and checks for painted
-previews (`filled`, `outlined`).
+previews (`filled`, `outlined`). With `native-windows`, `with_native_host(origin)` stands in for
+OS windows: the main window's content sits at `origin` on the desktop, and each native window
+runs its own frame with its own input and desktop rect (`host()`, `window_step`,
+`window_click`). `NativeHost` can report a monitor size (`monitor_size`), give windows a frame
+between their outer position and content (`frame`), land `OuterPosition` a frame late (`lag`),
+and report no positions (`no_position`, as on Wayland).
+
+`crates/ui/examples/docking_native.rs` (`cargo run -p craft-ui --example docking_native
+--features native-windows`) shows a dock with two native floating windows and prints every
+action and window place, for checking moves on a real window system.
 
 craft-ui's own tests in `crates/ui/tests/docking_workflows.rs`:
 

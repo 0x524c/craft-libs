@@ -220,11 +220,21 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         matches!(self.place(panel), Some(crate::docking::dock_model::Place::Floating { path, .. }) if path.is_empty())
     }
 
+    /// Whether moving a whole window docks it: [`crate::docking::DockStyle::title_bar_docks`],
+    /// or a native window moved by its only tab or group.
+    pub(super) fn title_bar_docks(&self) -> bool {
+        #[cfg(feature = "native-windows")]
+        if self.cross.docks {
+            return true;
+        }
+        self.style.title_bar_docks
+    }
+
     /// Release of a title bar drag. The window already sits where it was dragged; a dock or
     /// group target docks or merges every group in it, else hosts get the release in
     /// `group_drop`.
     pub(super) fn drop_window(&mut self, drag: &GroupDrag<P>, pointer: Pos2, float_only: bool) {
-        let float_only = float_only || !self.style.title_bar_docks;
+        let float_only = float_only || !self.title_bar_docks();
         if !float_only && let Some((action, _)) = self.dock_group_proposal(drag, pointer) {
             self.output.actions.extend(action);
             return;

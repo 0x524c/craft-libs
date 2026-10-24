@@ -6,12 +6,22 @@ use crate::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis};
 
 use super::{Action, DockContent, DockOutput, DockStyle, DropTarget, Layout, Node, PanelLimits, Permissions, dock_model::Place};
 
+#[cfg(feature = "native-windows")]
+mod cross;
 mod dock;
 mod floating;
 mod frame;
 mod iconic;
 #[cfg(feature = "native-windows")]
 mod native;
+#[cfg(all(test, feature = "native-windows"))]
+pub(in crate::docking) use {cross::DragPointer, native::WindowDrag, native::floats_shown, native::resize_bands, native::resized};
+
+/// The viewport of the native window `window` of the dock area `area`.
+#[cfg(feature = "native-windows")]
+pub(in crate::docking) fn native_viewport(area: Id, window: u64) -> egui::ViewportId {
+    native::viewport_id(area, window, 0)
+}
 
 pub(in crate::docking) use frame::{FrameState, view};
 
@@ -58,6 +68,12 @@ pub(super) struct Renderer<'a, P> {
     /// The floating window whose tree is being drawn: its first panel, which names it in
     /// ids and actions, and its rect. `None` while the docked layout draws.
     pub(super) tree: Option<(P, Rect)>,
+    /// [`crate::docking::DockArea::monitors`].
+    #[cfg_attr(not(feature = "native-windows"), allow(dead_code))]
+    pub(super) monitors: Vec<crate::docking::Monitor>,
+    /// The other OS windows a drag may cross into.
+    #[cfg(feature = "native-windows")]
+    pub(super) cross: cross::Cross<P>,
 }
 
 pub(super) struct DrawnDivider {
