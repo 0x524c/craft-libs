@@ -332,7 +332,7 @@
       "path": "src/function/type0.rs",
       "source_sha256": "84cb6ccb45536ca5731394558883350f43b5e66330e07eb8d5a0e070c8e20704",
       "source_git_blob": "02bbc41b84caddc9b5dfc8f49b2da081eb281199",
-      "sha256": "84cb6ccb45536ca5731394558883350f43b5e66330e07eb8d5a0e070c8e20704"
+      "sha256": "89aab3f20d8c3c30629dbccc18ce099a39eff7e4a88b4ef4685fc0415008c233"
     },
     {
       "path": "src/function/type2.rs",
