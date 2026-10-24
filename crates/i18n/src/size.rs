@@ -235,6 +235,7 @@ mod tests {
     fn numbers_are_left_to_right_isolates_in_rtl_units() {
         let (i18n, problems) = I18n::new(&[("ar", "unit\t{n} KB\t{n} ك.ب\n", "")], &["ar"]);
         assert!(problems.is_empty(), "{problems:?}");
+        i18n.set_format(Format::from_tag("en-US"));
         let ar = i18n.from_code("ar").unwrap();
         assert_eq!(i18n.file_size(ar, 1536, FileSize::BINARY), "\u{2066}1.5\u{2069} ك.ب");
         assert_eq!(en(1536, FileSize::BINARY), "1.5 KB", "no marks in left-to-right text");
