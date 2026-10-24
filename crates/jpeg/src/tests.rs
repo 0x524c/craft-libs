@@ -492,6 +492,74 @@ fn arithmetic_progressive_round_trips_coefficients() {
     }
 }
 
+/// Every component's coefficients, and whether the stream was damaged.
+fn decoded_components(stream: &[u8]) -> (Vec<Vec<[i32; 64]>>, bool) {
+    let (frame, _, damaged) = decode_coefficients(stream, &Limits::default()).unwrap();
+    (frame.comps.into_iter().map(|c| c.coefs).collect(), damaged)
+}
+
+/// Non-default DC conditioning (L, U) and AC Kx from a DAC segment round-trip, and the decoder
+/// applies them: the same data read with the default conditioning comes out different.
+#[test]
+fn arithmetic_conditioning_from_dac_round_trips() {
+    let blocks = coefficients(12, 21, 1000);
+    for (l, u, kx) in [(2, 4, 2), (1, 1, 20), (0, 0, 1), (3, 7, 63), (5, 15, 40)] {
+        let cond = Cond { l, u, kx };
+        for progressive in [false, true] {
+            let bands: &[(usize, usize, u8, u8)] = if progressive { &[(0, 0, 0, 0), (1, 63, 0, 0)] } else { &[(0, 63, 0, 0)] };
+            let stream = TestFrame {
+                precision: 8,
+                progressive,
+                width: 32,
+                height: 24,
+                comps: vec![TestComp { id: 1, h: 1, v: 1, tq: 0, blocks: blocks.clone() }],
+                cond: [cond, DEFAULT_COND, DEFAULT_COND, DEFAULT_COND],
+                ri: 0,
+                scans: bands.iter().map(|&band| TestScan { comps: vec![0], band, before: Vec::new() }).collect(),
+            }
+            .encode();
+            assert_eq!(decoded_blocks(&stream), blocks, "L={l} U={u} Kx={kx} progressive={progressive}");
+            let dac = stream.windows(2).position(|p| p == [0xFF, 0xCC]).unwrap();
+            let len = usize::from(u16::from_be_bytes([stream[dac + 2], stream[dac + 3]]));
+            let mut without = stream.clone();
+            without.drain(dac..dac + 2 + len);
+            let differs = decode_coefficients(&without, &Limits::default()).map_or(true, |(f, _, _)| f.comps[0].coefs != blocks);
+            assert!(differs, "L={l} U={u} Kx={kx} progressive={progressive}: DAC ignored");
+        }
+    }
+}
+
+/// Interleaved scans of a subsampled frame (2×2 luma, two 1×1 chroma components sharing
+/// entropy table 1 with non-default conditioning), sequential with and without restarts, and
+/// progressive.
+#[test]
+fn arithmetic_interleaved_subsampled_round_trips() {
+    let comps = |seed: u32| {
+        vec![
+            TestComp { id: 1, h: 2, v: 2, tq: 0, blocks: coefficients(8, seed, 800) },
+            TestComp { id: 2, h: 1, v: 1, tq: 0, blocks: coefficients(2, seed + 1, 300) },
+            TestComp { id: 3, h: 1, v: 1, tq: 0, blocks: coefficients(2, seed + 2, 300) },
+        ]
+    };
+    let cond = [DEFAULT_COND, Cond { l: 1, u: 3, kx: 8 }, DEFAULT_COND, DEFAULT_COND];
+    let scan = |comps: &[usize], band| TestScan { comps: comps.to_vec(), band, before: Vec::new() };
+    let progressive = vec![
+        scan(&[0, 1, 2], (0, 0, 0, 1)),
+        scan(&[0], (1, 63, 0, 0)),
+        scan(&[2], (1, 63, 0, 0)),
+        scan(&[1], (1, 63, 0, 0)),
+        scan(&[0, 1, 2], (0, 0, 1, 0)),
+    ];
+    for (seed, ri, scans) in [(1, 0, vec![scan(&[0, 1, 2], (0, 63, 0, 0))]), (2, 1, vec![scan(&[0, 1, 2], (0, 63, 0, 0))]), (3, 0, progressive)] {
+        let frame = TestFrame { precision: 8, progressive: scans.len() > 1, width: 32, height: 16, comps: comps(seed), cond, ri, scans };
+        let (got, damaged) = decoded_components(&frame.encode());
+        assert!(!damaged, "seed {seed}");
+        for (c, want) in got.iter().zip(&frame.comps) {
+            assert_eq!(c, &want.blocks, "seed {seed} component {}", want.id);
+        }
+    }
+}
+
 /// Each component dequantizes with the table in its slot at its first scan, not the one the
 /// slot holds when the stream ends.
 #[test]
