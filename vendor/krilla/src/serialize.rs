@@ -131,8 +131,9 @@ pub struct SerializeSettings {
     /// The PDF/X version the caller claims, such as `PDF/X-4`: `/GTS_PDFXVersion` in the
     /// document information dictionary and `pdfxid:GTS_PDFXVersion` in the XMP metadata.
     ///
-    /// krilla does not check PDF/X conformance; the caller does. Under PDF/A, the XMP
-    /// property needs an extension schema that krilla does not write.
+    /// krilla does not check PDF/X conformance; the caller does. PDF/A-1, -2 and -3 need an
+    /// extension schema for the XMP property, which krilla does not write, so export under
+    /// them fails with [`ValidationError::PdfxVersionWithoutExtensionSchema`].
     pub pdfx_version: Option<String>,
 }
 
@@ -613,6 +614,9 @@ impl SerializeContext {
             && settings.cmyk_profile.is_none()
         {
             return Err(KrillaError::MissingGroupCmykProfile);
+        }
+        if self.serialize_settings.pdfx_version.is_some() {
+            self.register_validation_error(ValidationError::PdfxVersionWithoutExtensionSchema);
         }
         if let Some(location) = self.mixed_mesh_colors {
             return Err(KrillaError::MixedMeshColorSpaces(location));

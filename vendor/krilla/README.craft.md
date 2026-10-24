@@ -17,7 +17,7 @@ itself omits those texts. Its examples and four CC0 ICC profiles are retained wi
 | `patches/05-soft-mask-backdrop.patch` | Soft-mask backdrop and transfer function | `configure/{PDF_A2,PDF_A4}.md`, `graphics/mask.rs` |
 | `patches/06-device-n.patch` | DeviceN colors | `configure/{PDF_A1.md,PDF_A2.md,PDF_A4.md,validate.rs}`, `graphics/{color,device_n,mod,paint}.rs`, `serialize.rs` |
 | `patches/07-device-n-images-shadings.patch` | DeviceN images and shadings | `graphics/{image,paint,shading_function}.rs` |
-| `patches/08-print-output-intent.patch` | Print output intent and PDF/X markers | `chunk_container.rs`, `configure/{PDF_A1,PDF_A2,PDF_A4}.md`, `interchange/metadata.rs`, `lib.rs`, `serialize.rs` |
+| `patches/08-print-output-intent.patch` | Print output intent and PDF/X markers | `chunk_container.rs`, `configure/{PDF_A1.md,PDF_A2.md,PDF_A4.md,validate.rs}`, `interchange/metadata.rs`, `lib.rs`, `serialize.rs` |
 | `patches/09-rendition-class.patch` | Master rendition in XMP | `chunk_container.rs` |
 | `patches/10-mesh-gradients.patch` | Mesh gradients | `content.rs`, `error.rs`, `graphics/{mask,paint,shading_function}.rs`, `serialize.rs`, `surface.rs` |
 | `patches/11-png-decode-cap.patch` | PNG decode cap | `graphics/image.rs` |
@@ -237,8 +237,10 @@ version. DesignCraft and VectorCraft added these by rewriting the serialized byt
   information dictionary and `pdf:Trapped` to XMP. XMP has no `Unknown`, so
   `Trapped::Unknown` goes only to the dictionary.
 - `SerializeSettings::pdfx_version: Option<String>` writes `/GTS_PDFXVersion` to the
-  dictionary and `pdfxid:GTS_PDFXVersion` to XMP. Under PDF/A the XMP property needs an
-  extension schema, which this patch does not write.
+  dictionary and `pdfxid:GTS_PDFXVersion` to XMP. PDF/A-1, -2 and -3 require an extension
+  schema for the XMP property, which this patch does not write, so the setting registers
+  `ValidationError::PdfxVersionWithoutExtensionSchema`, which they prohibit. PDF/A-4 has no
+  extension schema requirement and allows it.
 - The dictionary entries follow the dictionary's PDF 2.0 deprecation: from PDF 2.0 only XMP
   carries them. The dictionary is written without `Metadata` when it has print markers.
 - All three default to `None`, which keeps upstream's output.

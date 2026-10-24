@@ -77,12 +77,12 @@
     {
       "path": "src/configure/PDF_A1.md",
       "upstream_sha256": "e6ea127125ec0984f3fcd57f9886fc960aa90c9f751dd59cd61fe9cbc2cdb903",
-      "sha256": "422807bc786591d1b1599d7abb38874478fb34afab583f885011f200d239fa27"
+      "sha256": "f647baeb6bd3152c688cefb71462ba05e969e0a9572c3f95779b2b18bf384220"
     },
     {
       "path": "src/configure/PDF_A2.md",
       "upstream_sha256": "47c87d3b29aff6e87703ba6f6021a2cfa88b4faf7f2c35101719b8b9f1bb9705",
-      "sha256": "cc6cc2184d21165fc36fbd635681a8c0c8d3abb76f0f7e5adbb7131fb3921f37"
+      "sha256": "af366de5b86fa3995bf08b1f71d9d901acbf2130560fcdb537cac75b1c65b599"
     },
     {
       "path": "src/configure/PDF_A3.md",
@@ -112,7 +112,7 @@
     {
       "path": "src/configure/validate.rs",
       "upstream_sha256": "7e2a0ac6d7ecaac1ed2158cdc9e94411c2499c98e541ffb471f2bb06d5069c33",
-      "sha256": "521290c6dda727233d4629b4c9175d28bd212bd956437a180ace3b3a529354aa"
+      "sha256": "65de778c777253d369917f002809672deac4f5f579200d8194778fc6c94d9ea9"
     },
     {
       "path": "src/configure/version.rs",
@@ -312,7 +312,7 @@
     {
       "path": "src/serialize.rs",
       "upstream_sha256": "4f2c439dbd20006eea112e056b2f1a5ba98a1ede9227a45f66a6df46fb1a07e8",
-      "sha256": "63d970d8a6b65a83de47a8abf564417131c663e8fb50eb53615b6fecd6f7e7cf"
+      "sha256": "5920403c6ac509ef563d4c844e0f13cd04ca76a0a637b15bcf84f67f88b4368b"
     },
     {
       "path": "src/stream.rs",

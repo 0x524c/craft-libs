@@ -1098,13 +1098,12 @@ fn trapped_and_pdfx_version_are_written_to_info_and_xmp() {
     assert!(!plain.contains("Trapped") && !plain.contains("GTS_PDFX"));
 }
 
-/// Under PDF/A the archival intent names the same profile object as the print intent.
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-#[cfg_attr(not(target_arch = "wasm32"), test)]
-fn pdfa_and_print_intents_share_the_profile() {
+/// A one-page PDF/A document with FOGRA39 print settings and the given PDF/X version.
+fn pdfa_print(version: PdfVersion, archival: Archival, pdfx_version: Option<&str>) -> Result<Vec<u8>, WriteError> {
     let settings = SerializeSettings {
         no_device_cs: true,
-        configuration: craft_pdf::write::configuration(PdfVersion::Pdf17, Some(Archival::A2_B)).unwrap(),
+        configuration: craft_pdf::write::configuration(version, Some(archival)).unwrap(),
+        pdfx_version: pdfx_version.map(str::to_owned),
         ..print::settings(PrintColor::fogra39(FOGRA39)).unwrap()
     };
     let created = Some(backend::metadata::DateTime::new(2026));
@@ -1117,9 +1116,35 @@ fn pdfa_and_print_intents_share_the_profile() {
         surface.finish();
         page.finish();
     }
-    let intents = output_intents(&writer.finish().unwrap());
+    writer.finish()
+}
+
+/// Under PDF/A the archival intent names the same profile object as the print intent.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn pdfa_and_print_intents_share_the_profile() {
+    let intents = output_intents(&pdfa_print(PdfVersion::Pdf17, Archival::A2_B, None).unwrap());
     let subtypes: Vec<_> = intents.iter().map(|i| i.subtype.as_str()).collect();
     assert_eq!(subtypes, ["GTS_PDFA1", "GTS_PDFX"]);
     assert_eq!(intents[0].profile_object, intents[1].profile_object);
     assert!(intents[0].profile == FOGRA39);
+}
+
+/// `pdfxid:GTS_PDFXVersion` needs an XMP extension schema under PDF/A-1 to 3, which krilla
+/// doesn't write, so a PDF/X version fails validation there; PDF/A-4 needs none.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn pdfx_version_is_a_pdf_a_1_to_3_error() {
+    for (version, archival) in [(PdfVersion::Pdf14, Archival::A1_B), (PdfVersion::Pdf17, Archival::A2_B), (PdfVersion::Pdf17, Archival::A3_B)] {
+        let Err(WriteError::Serialization(error)) = pdfa_print(version, archival, Some("PDF/X-4")) else {
+            panic!("{archival:?}: expected a validation error")
+        };
+        let backend::error::KrillaError::Validation(errors) = *error else { panic!("{archival:?}: expected validation errors") };
+        assert!(
+            errors.iter().any(|(error, _)| *error == ValidationError::PdfxVersionWithoutExtensionSchema),
+            "{archival:?}: {errors:?}"
+        );
+    }
+    let bytes = pdfa_print(PdfVersion::Pdf20, Archival::A4, Some("PDF/X-4")).unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains("<pdfxid:GTS_PDFXVersion>PDF/X-4</pdfxid:GTS_PDFXVersion>"));
 }
