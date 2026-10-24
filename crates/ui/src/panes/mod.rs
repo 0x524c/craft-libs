@@ -534,13 +534,19 @@ impl PaneHost {
         }
 
         if content.movable(&s.pane) {
-            self.drag_out(ui.ctx(), &bar, s, edge, rect, bounds, memory, preview, style, requests);
+            // Docked at the host's left or right edge, the pane gets the width the side limits
+            // give its size: a bottom pane's height, not its width.
+            let (side_min, side_max) = self.limits(content, &s.pane, bounds.width());
+            let side_width =
+                s.state.size.filter(|v| v.is_finite()).or(default.filter(|v| v.is_finite())).unwrap_or(side_min).clamp(side_min, side_max);
+            self.drag_out(ui.ctx(), &bar, s, edge, rect, side_width, bounds, memory, preview, style, requests);
         }
         rect
     }
 
     /// A docked pane's title dragged beyond [`DOCK_SNAP`] of the pane: dropped near the host's
-    /// left or right edge it docks there, elsewhere it floats under the pointer.
+    /// left or right edge it docks there `side_width` wide, elsewhere it floats under the
+    /// pointer.
     #[allow(clippy::too_many_arguments)]
     fn drag_out<P: Clone>(
         &self,
@@ -549,6 +555,7 @@ impl PaneHost {
         s: &Shown<P>,
         edge: Edge,
         rect: Rect,
+        side_width: f32,
         bounds: Rect,
         memory: &mut Memory,
         preview: &egui::Painter,
@@ -592,8 +599,8 @@ impl PaneHost {
             return;
         }
         let shape = match target.map(|t| self.side(t)) {
-            Some(Side::Left) => Rect::from_x_y_ranges(bounds.left()..=bounds.left() + rect.width(), bounds.y_range()),
-            Some(_) => Rect::from_x_y_ranges(bounds.right() - rect.width()..=bounds.right(), bounds.y_range()),
+            Some(Side::Left) => Rect::from_x_y_ranges(bounds.left()..=bounds.left() + side_width, bounds.y_range()),
+            Some(_) => Rect::from_x_y_ranges(bounds.right() - side_width..=bounds.right(), bounds.y_range()),
             None => float,
         };
         chrome::drop_preview(preview, shape.shrink(1.0), style.accent, true);

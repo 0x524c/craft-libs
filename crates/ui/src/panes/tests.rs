@@ -175,6 +175,25 @@ fn columns_sit_side_by_side_resize_and_move_to_end() {
 }
 
 #[test]
+fn a_bottom_pane_dragged_to_a_side_previews_the_width_it_docks_at() {
+    let mut app = App::new(&[Pane::Comments]);
+    app.states.insert(Pane::Comments, PaneState::docked(Edge::Bottom, 300.0));
+    let mut h = harness(app);
+    let from = title(&h, Pane::Comments).center();
+    let to = pos2(L + 10.0, 200.0);
+    hold(&mut h, from, to);
+    let previewed = h.output().shapes.iter().any(|clipped| match &clipped.shape {
+        egui::Shape::Rect(shape) => shape.rect.left() == L + 1.0 && shape.rect.width() == 298.0,
+        _ => false,
+    });
+    assert!(previewed, "a 300 pt side pane");
+    send(&mut h, vec![button(to, false)]);
+    h.run_steps(2);
+    assert_eq!(h.state().place(Pane::Comments), Place::Docked(Edge::Start));
+    assert_eq!(edge(&h, Pane::Comments), L + 300.0);
+}
+
+#[test]
 fn title_dragged_out_floats_and_a_drop_near_an_edge_docks() {
     // Drag-out-to-float and the 32 pt edge snap follow wordcraft#2584.
     let mut h = harness(App::new(&[Pane::Styles]));
