@@ -452,7 +452,9 @@ impl Image {
                     Some(cs) => cs.into(),
                 },
                 ImageColorspace::DeviceN => match &self.0.metadata.device_n {
-                    Some(space) => PdfColorSpace::Special(SpecialColorSpace::DeviceN(space.clone())),
+                    Some(space) => {
+                        PdfColorSpace::Special(SpecialColorSpace::DeviceN(space.clone()))
+                    }
                     // `from_custom` refuses a DeviceN image without a space.
                     None => luma::color_space(sc.serialize_settings().no_device_cs).into(),
                 },
@@ -535,8 +537,7 @@ impl Image {
             // marker.
             if let Repr::Jpeg(j) = repr {
                 if j.invert_cmyk {
-                    image_x_object
-                        .decode([1.0, 0.0].repeat(self.0.metadata.num_components()));
+                    image_x_object.decode([1.0, 0.0].repeat(self.0.metadata.num_components()));
                 }
             }
 

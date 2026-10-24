@@ -1,5 +1,5 @@
 diff --git a/src/graphics/image.rs b/src/graphics/image.rs
-index c911f06..d97b8b4 100644
+index c911f06..cf1728d 100644
 --- a/src/graphics/image.rs
 +++ b/src/graphics/image.rs
 @@ -22,8 +22,9 @@ use zune_jpeg::JpegDecoder;
@@ -114,28 +114,31 @@ index c911f06..d97b8b4 100644
          };
  
          Self(Arc::new(ImageRepr {
-@@ -417,6 +443,11 @@ impl Image {
+@@ -417,6 +443,13 @@ impl Image {
                      }
                      Some(cs) => cs.into(),
                  },
 +                ImageColorspace::DeviceN => match &self.0.metadata.device_n {
-+                    Some(space) => PdfColorSpace::Special(SpecialColorSpace::DeviceN(space.clone())),
++                    Some(space) => {
++                        PdfColorSpace::Special(SpecialColorSpace::DeviceN(space.clone()))
++                    }
 +                    // `from_custom` refuses a DeviceN image without a space.
 +                    None => luma::color_space(sc.serialize_settings().no_device_cs).into(),
 +                },
              };
  
              sc.register_colorspace(chunk_container, cs)
-@@ -497,7 +528,7 @@ impl Image {
+@@ -496,8 +529,7 @@ impl Image {
+             // marker.
              if let Repr::Jpeg(j) = repr {
                  if j.invert_cmyk {
-                     image_x_object
+-                    image_x_object
 -                        .decode([1.0, 0.0].repeat(self.color_space().num_components() as usize));
-+                        .decode([1.0, 0.0].repeat(self.0.metadata.num_components()));
++                    image_x_object.decode([1.0, 0.0].repeat(self.0.metadata.num_components()));
                  }
              }
  
-@@ -553,6 +584,7 @@ fn png_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
+@@ -553,6 +585,7 @@ fn png_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
          bits_per_component,
          color_space: image_color_space,
          icc,
@@ -143,7 +146,7 @@ index c911f06..d97b8b4 100644
      })
  }
  
-@@ -619,6 +651,7 @@ fn jpeg_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
+@@ -619,6 +652,7 @@ fn jpeg_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
          bits_per_component: BitsPerComponent::Eight,
          color_space: image_color_space,
          icc,
@@ -151,7 +154,7 @@ index c911f06..d97b8b4 100644
      })
  }
  
-@@ -683,6 +716,7 @@ fn gif_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
+@@ -683,6 +717,7 @@ fn gif_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
          size: (size.width as u32, size.height as u32),
          color_space: ImageColorspace::Rgb,
          icc: None,
@@ -159,7 +162,7 @@ index c911f06..d97b8b4 100644
      })
  }
  
-@@ -702,6 +736,7 @@ fn webp_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
+@@ -702,6 +737,7 @@ fn webp_metadata(data: &[u8]) -> Result<ImageMetadata, String> {
          size,
          color_space,
          icc,
@@ -167,7 +170,7 @@ index c911f06..d97b8b4 100644
      })
  }
  
-@@ -812,6 +847,7 @@ fn get_icc_profile_type(data: &[u8], color_space: ImageColorspace) -> Option<Gen
+@@ -812,6 +848,7 @@ fn get_icc_profile_type(data: &[u8], color_space: ImageColorspace) -> Option<Gen
          ImageColorspace::Rgb => GenericICCProfile::Rgb(ICCProfile::new(data)?),
          ImageColorspace::Luma => GenericICCProfile::Luma(ICCProfile::new(data)?),
          ImageColorspace::Cmyk => GenericICCProfile::Cmyk(ICCProfile::new(data)?),

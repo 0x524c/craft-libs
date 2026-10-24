@@ -734,7 +734,8 @@ fn colorant_names(cs: &Object<'_>) -> (String, Vec<String>) {
 fn device_n_image_writes_one_sample_per_colorant() {
     let space = DeviceNSpace::new([Colorant::Process(Process::Black), spot("Gold", gold())]).unwrap();
     let data = vec![0, 0, 128, 64, 255, 153];
-    let image = Image::from_custom(Samples { data: data.clone(), size: (3, 1), space: ImageColorspace::DeviceN, device_n: Some(space) }, false).unwrap();
+    let image =
+        Image::from_custom(Samples { data: data.clone(), size: (3, 1), space: ImageColorspace::DeviceN, device_n: Some(space) }, false).unwrap();
     let bytes = page_with(|surface| surface.draw_image(image, Size::from_wh(30.0, 10.0).unwrap()));
     let pdf = hayro_syntax::Pdf::new(Arc::new(bytes)).unwrap();
     let page = pdf.pages().iter().next().unwrap();
@@ -1144,10 +1145,7 @@ fn pdfx_version_is_a_pdf_a_1_to_3_error() {
             panic!("{archival:?}: expected a validation error")
         };
         let backend::error::KrillaError::Validation(errors) = *error else { panic!("{archival:?}: expected validation errors") };
-        assert!(
-            errors.iter().any(|(error, _)| *error == ValidationError::PdfxVersionWithoutExtensionSchema),
-            "{archival:?}: {errors:?}"
-        );
+        assert!(errors.iter().any(|(error, _)| *error == ValidationError::PdfxVersionWithoutExtensionSchema), "{archival:?}: {errors:?}");
     }
     let bytes = pdfa_print(PdfVersion::Pdf20, Archival::A4, Some("PDF/X-4")).unwrap();
     assert!(String::from_utf8_lossy(&bytes).contains("<pdfxid:GTS_PDFXVersion>PDF/X-4</pdfxid:GTS_PDFXVersion>"));
