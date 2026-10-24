@@ -741,6 +741,7 @@ dependencies = [
  "log",
  "sys-locale",
  "unic-langid",
+ "unicode-bidi",
 ]
 
 [[package]]
