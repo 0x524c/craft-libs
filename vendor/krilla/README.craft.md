@@ -110,7 +110,9 @@ Validation: ISO 19005-2 and 19005-4 (6.2.4.2) forbid OPM 1 when an ICCBased CMYK
 space is used for a side that overprints. Validated PDF/A export writes all CMYK as
 ICCBased, and the graphics state doesn't know the colors painted under it, so OPM 1 with
 `/op` or `/OP` true under `no_device_cs` registers `ValidationError::OverprintModeIccCmyk`,
-which PDF/A-2, A-3 and A-4 prohibit. PDF/A-1 and PDF/UA allow it.
+which PDF/A-2, A-3 and A-4 prohibit. PDF/A-1 and PDF/UA allow it. ISO 32000-1 (8.6.7)
+applies OPM 1 to DeviceCMYK only, so under `no_device_cs` it has no effect in a PDF 1.7
+reader; `Overprint::nonzero` says so.
 
 Tests: `crates/pdf/tests/print_color.rs`, and the plate-test scenes S01, S03, S04, S12,
 S16, D06 and D10.

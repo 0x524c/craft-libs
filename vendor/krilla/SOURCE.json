@@ -147,7 +147,7 @@
     {
       "path": "src/graphics/blend.rs",
       "upstream_sha256": "f2629743d9e2ea1440763231f3d4cc914224ca238d88fa0630b7c7e9628b58dd",
-      "sha256": "a6b85f891dd879f2159e0cf8d0e33e54a9153bcca22eb145b58f5a9fb2750cc6"
+      "sha256": "a3a014d76a379d378dd6893b3e41688ba2ebd358c1295ed0532a443a143fb5ab"
     },
     {
       "path": "src/graphics/color.rs",
