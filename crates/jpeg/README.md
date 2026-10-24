@@ -57,7 +57,10 @@ if img.damaged { /* warn: part of the image is missing */ }
 - `damaged` is set when entropy-coded data was cut short or corrupt after at least one MCU had
   decoded, or its scans would decode more than 64 passes over the frame's blocks. The rest of
   that scan, and every scan past the budget, is left out; those blocks keep what earlier scans
-  decoded. A stream with no decodable image data is an error.
+  decoded. A stream with no decodable image data is an error. Arithmetic-coded data that stops
+  early at a marker reads as the zero bytes encoders drop at the end of a scan (libjpeg-turbo
+  treats it the same way), so for arithmetic scans only data that runs to the end of the file
+  and a missing restart marker count as damage.
 
 ## Limits
 
@@ -105,6 +108,8 @@ SOF11 (lossless) falls in that range and returns `Unsupported`.
 - `tests/conformance.rs`, on libjpeg-turbo's test images in `tests/data` (provenance and how
   the derived files were made: `tests/data/SOURCE.md`):
   - `testimgari.jpg` (SOF9) decodes to exactly the samples of its jpegtran Huffman transcode.
+  - `whitetail-ari.jpg` (SOF9 from cjpeg, a white lower part that decodes from the zeros
+    supplied at EOI) decodes undamaged and equal to its Huffman transcode.
   - `testorig.jpg` matches `zune-jpeg`, and `testorig12.jpg` matches libjpeg-turbo's 12-bit
     decode, within the float-against-integer IDCT difference (mean under 0.75, max 4).
 - `tests/mutation.rs`: a seeded mutation run (truncations, bit flips, byte and frame-header

@@ -7,10 +7,15 @@ fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
-fn decode_fixture(name: &str) -> Decoded {
+fn decode_clean(name: &str) -> Decoded {
     let img = decode(&fixture(name), &Limits::default(), None).unwrap_or_else(|e| panic!("{name}: {e}"));
-    assert_eq!((img.width, img.height, img.components), (227, 149, 3), "{name}");
     assert!(!img.damaged, "{name}");
+    img
+}
+
+fn decode_fixture(name: &str) -> Decoded {
+    let img = decode_clean(name);
+    assert_eq!((img.width, img.height, img.components), (227, 149, 3), "{name}");
     img
 }
 
@@ -34,6 +39,16 @@ fn arithmetic_coded_image_matches_its_huffman_transcode() {
     let arithmetic = decode_fixture("testimgari.jpg");
     assert!(matches!(huffman.samples, Samples::U8(_)));
     assert!(huffman.samples == arithmetic.samples, "testimgari.jpg decodes differently from testimgari-huffman.jpg");
+}
+
+/// libjpeg's arithmetic encoder drops the trailing zero bytes of a scan, so the white lower
+/// part of whitetail-ari.jpg decodes from zeros supplied at the EOI marker. It must decode
+/// whole and match its Huffman transcode.
+#[test]
+fn arithmetic_white_tail_decodes_from_implied_zeros() {
+    let arithmetic = decode_clean("whitetail-ari.jpg");
+    assert_eq!((arithmetic.width, arithmetic.height, arithmetic.components), (512, 512, 1));
+    assert!(decode_clean("whitetail-huffman.jpg").samples == arithmetic.samples, "whitetail-ari.jpg decodes differently from whitetail-huffman.jpg");
 }
 
 /// The 8-bit path against zune-jpeg. Both use centered linear chroma upsampling; the residual is

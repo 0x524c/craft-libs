@@ -595,45 +595,45 @@ const QE: [(u32, u8, u8, bool); 113] = [
 /// Qe index in bits 0–6 and the MPS in bit 7.
 struct Arith<'a> {
     d: &'a [u8],
+    /// `d` ends at a marker rather than at the end of the file.
+    at_marker: bool,
     pos: usize,
     c: u32,
     a: u32,
     ct: u32,
-    /// Zero bytes fed in since the start or the last restart because the data had ended.
-    pad: u32,
+    /// The decoder needed bytes past the end of the file.
+    eof: bool,
     /// A restart was due but its marker was missing.
     lost: bool,
 }
 
 impl<'a> Arith<'a> {
-    /// The most zero bytes a scan or restart interval may consume past the end of its data.
-    /// The decoder reads two bytes ahead (INITDEC), and encoders drop trailing zero bytes
-    /// (libjpeg's `finish_pass` does, as D.1.8 allows), so a valid stream consumes a few.
-    /// Past that the data was cut short, and the decoder would only decode the zeros.
-    const MAX_PAD: u32 = 8;
-
-    fn new(d: &'a [u8]) -> Self {
-        let mut ar = Arith { d, pos: 0, c: 0, a: 0, ct: 0, pad: 0, lost: false };
+    fn new(d: &'a [u8], at_marker: bool) -> Self {
+        let mut ar = Arith { d, at_marker, pos: 0, c: 0, a: 0, ct: 0, eof: false, lost: false };
         ar.init();
         ar
     }
 
+    /// At a marker the decoder is fed zeros for as long as it asks (D.2.6): encoders drop
+    /// trailing zero bytes (libjpeg's `finish_pass` does, as D.1.8 allows), and a flat tail of
+    /// a few thousand blocks can decode entirely from those zeros. Running out at the end of
+    /// the file is damage.
     fn byte_in(&mut self) {
         let v = next_byte(self.d, &mut self.pos).unwrap_or_else(|| {
-            self.pad = self.pad.saturating_add(1);
+            let at_restart = matches!(self.d.get(self.pos + 1), Some(0xD0..=0xD7));
+            self.eof |= !at_restart && !self.at_marker;
             0
         });
         self.c = self.c.wrapping_add(u32::from(v) << 8);
     }
 
-    /// The scan's data ran out, or a restart marker is missing.
+    /// The data ended without a marker, or a restart marker is missing.
     fn exhausted(&self) -> bool {
-        self.lost || self.pad > Self::MAX_PAD
+        self.lost || self.eof
     }
 
     /// INITDEC (D.2.7).
     fn init(&mut self) {
-        self.pad = 0;
         self.a = 0x10000;
         self.c = 0;
         self.byte_in();
@@ -1037,7 +1037,8 @@ fn parse_scan(seg: &[u8], frame: &Frame) -> Result<Scan, Error> {
 }
 
 /// Decode one scan's entropy-coded data `d`, counting the decoded MCUs in `done`.
-fn decode_scan(frame: &mut Frame, tables: &Tables, scan: &Scan, d: &[u8], done: &mut usize) -> Result<(), Error> {
+/// `at_marker` says whether a marker follows `d` (otherwise it runs to the end of the file).
+fn decode_scan(frame: &mut Frame, tables: &Tables, scan: &Scan, d: &[u8], at_marker: bool, done: &mut usize) -> Result<(), Error> {
     for &(ci, _, _) in &scan.comps {
         let comp = frame.comps.get_mut(ci).ok_or_else(|| err("bad scan component"))?;
         if comp.quant.is_none() {
@@ -1054,7 +1055,7 @@ fn decode_scan(frame: &mut Frame, tables: &Tables, scan: &Scan, d: &[u8], done: 
             (true, _, _) => ArithMode::AcRefine,
         };
         let mut dec = ArithScan {
-            ar: Arith::new(d),
+            ar: Arith::new(d, at_marker),
             mode,
             ss: scan.ss,
             se: scan.se,
@@ -1154,7 +1155,7 @@ fn decode_coefficients(b: &[u8], limits: &Limits) -> Result<(Frame, Tables, bool
                 let end = scan_end(b, i);
                 let data = b.get(i..end).unwrap_or_default();
                 scans += 1;
-                if let Err(e) = decode_scan(f, &tables, &scan, data, &mut mcus) {
+                if let Err(e) = decode_scan(f, &tables, &scan, data, end < b.len(), &mut mcus) {
                     if mcus == 0 {
                         return Err(e);
                     }

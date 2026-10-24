@@ -688,8 +688,9 @@ fn huffman_scan_out_of_data_is_not_clean() {
     assert!(decode(&cut, &Limits::default(), None).unwrap().damaged);
 }
 
-/// Arithmetic data cut short before a valid EOI is reported damaged, and the blocks before the
-/// cut are kept: past the end the decoder is fed zeros, and a restart marker goes missing.
+/// Arithmetic data that runs to the end of the file, or loses a restart marker, is reported
+/// damaged, and the blocks before the cut are kept. Data cut short before EOI with no restart
+/// interval reads as dropped trailing zeros and can't be detected.
 #[test]
 fn arithmetic_scan_out_of_data_is_damaged() {
     let blocks = coefficients(64, 11, 500);
@@ -698,16 +699,29 @@ fn arithmetic_scan_out_of_data_is_damaged() {
         assert_eq!(decoded_blocks(&full), blocks, "ri={ri}");
         let data = last_scan_data(&full);
         let end = full.len() - 2;
-        for cut in [data + (end - data) / 2, data] {
+        for cut in [data + (end - data) / 2, data + 1] {
             let mut s = full[..cut].to_vec();
             if s.last() == Some(&0xFF) {
                 s.pop();
             }
-            s.extend([0xFF, 0xD9]);
-            let (frame, _, damaged) = decode_coefficients(&s, &Limits::default()).unwrap();
-            assert!(damaged, "ri={ri} cut at {}", cut - data);
-            if cut > data {
-                assert_eq!(frame.comps[0].coefs[0], blocks[0], "ri={ri}");
+            for eoi in [false, true] {
+                if eoi && ri == 0 {
+                    continue;
+                }
+                let mut s = s.clone();
+                if eoi {
+                    s.extend([0xFF, 0xD9]);
+                }
+                // With one byte of data the first MCU fails, which is an error, not damage.
+                match decode_coefficients(&s, &Limits::default()) {
+                    Ok((frame, _, damaged)) => {
+                        assert!(damaged, "ri={ri} eoi={eoi} cut at {}", cut - data);
+                        if cut > data + 1 {
+                            assert_eq!(frame.comps[0].coefs[0], blocks[0], "ri={ri} eoi={eoi}");
+                        }
+                    }
+                    Err(_) => assert_eq!(cut, data + 1, "ri={ri} eoi={eoi}"),
+                }
             }
         }
     }
