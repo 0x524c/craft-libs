@@ -72,7 +72,7 @@ pub struct Limits {
     /// Maximum `width * height`.
     pub max_pixels: u64,
     /// Maximum bytes for the decoded output and the decoder's own coefficient and sample
-    /// buffers together.
+    /// buffers together. Totals above `isize::MAX` are rejected whatever this is set to.
     pub max_alloc: u64,
 }
 
@@ -401,8 +401,11 @@ fn parse_frame(marker: u8, seg: &[u8], limits: &Limits) -> Result<Frame, Error> 
         let samples = (mcux * h * 8) as u64 * (mcuy * v * 8) as u64;
         total = total.saturating_add(samples.saturating_mul(8));
     }
-    if total > limits.max_alloc {
-        return Err(Error::LimitExceeded(format!("{total} bytes of decoder buffers and output exceed max_alloc {}", limits.max_alloc)));
+    // No allocation may pass `isize::MAX` bytes, which matters on 32-bit targets when a caller
+    // raises `max_alloc`.
+    let cap = limits.max_alloc.min(isize::MAX as u64);
+    if total > cap {
+        return Err(Error::LimitExceeded(format!("{total} bytes of decoder buffers and output exceed the limit of {cap}")));
     }
     let mut comps = Vec::with_capacity(nf);
     for (id, h, v, tq) in raw {
