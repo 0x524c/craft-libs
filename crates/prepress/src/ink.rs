@@ -359,6 +359,7 @@ impl InkSet {
 
 /// A color as ink tints.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum InkColor {
     /// Tints `0.0..=1.0` of the listed inks; other inks are unspecified (they keep what is
     /// under the paint when it overprints, and are knocked out otherwise). One entry is a

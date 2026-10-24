@@ -53,6 +53,7 @@ const MAX_CONDITION: usize = 160;
 /// The printing condition process color converts to when the page has no usable output
 /// intent.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub enum Fallback {
     /// craft-cms's Coated FOGRA39 profile.
     #[default]
@@ -82,6 +83,7 @@ impl Default for Options {
 
 /// How process color that isn't CMYK already became CMYK.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Conversion {
     /// Through the CMYK profile of the page's or document's output intent (ISO 32000-2
     /// §14.11.5).
@@ -123,14 +125,12 @@ impl Plates {
 
     /// Ink `id`'s tint at pixel (`x`, `y`), 0–255.
     pub fn tint(&self, id: InkId, x: u32, y: u32) -> Option<u8> {
-        if x >= self.width || y >= self.height {
-            return None;
-        }
-        self.plane(id)?.get(y as usize * self.width as usize + x as usize).copied()
+        self.plane(id)?.get(self.index_of(x, y)?).copied()
     }
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error(transparent)]
     Open(#[from] OpenError),
