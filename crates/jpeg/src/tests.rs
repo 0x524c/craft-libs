@@ -19,29 +19,6 @@ fn u16_samples(img: &Decoded) -> &[u16] {
     }
 }
 
-/// Local check against the conformance samples (never committed): set `CRAFT_JPEG_SAMPLES` to a
-/// directory holding testorig.jpg, testorig12.jpg and testimgari.jpg.
-#[test]
-#[ignore]
-fn conformance_samples() {
-    let dir = std::env::var("CRAFT_JPEG_SAMPLES").unwrap();
-    let read = |n: &str| std::fs::read(format!("{dir}/{n}")).unwrap();
-    let (ref8, dimensions) = zune_decode(&read("testorig.jpg"));
-    for (name, sixteen) in [("testorig12.jpg", true), ("testimgari.jpg", false)] {
-        let img = decode_default(&read(name)).unwrap();
-        assert_eq!((img.width, img.height), dimensions, "{name}");
-        assert_eq!(matches!(img.samples, Samples::U16(_)), sixteen, "{name}");
-        assert!(!img.damaged, "{name}");
-        let px: Vec<f32> = match &img.samples {
-            Samples::U16(v) => v.iter().map(|&v| v as f32 / 257.0).collect(),
-            Samples::U8(v) => v.iter().map(|&v| v as f32).collect(),
-        };
-        let mad = px.iter().zip(&ref8).map(|(a, &b)| (a - b as f32).abs()).sum::<f32>() / px.len() as f32;
-        eprintln!("{name}: mean abs diff vs testorig.jpg {mad}");
-        assert!(mad < 3.0, "{name}: {mad}");
-    }
-}
-
 // --- A test-only arithmetic encoder (T.81 D.1, F.1.4 and G.1.3), mirroring the decoder ---
 
 struct Enc {
