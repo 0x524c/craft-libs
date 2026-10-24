@@ -475,9 +475,13 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         ctx.data_mut(|d| d.insert_temp(key, place));
         if report.closed {
-            // Like the bar's ×: its panels close and reopen from the application's menu.
-            self.output.actions.push(Action::CloseWindow { panel: first });
-            return Some(key);
+            // Like the bar's ×: its panels close and reopen from the application's menu. A
+            // window the application would refuse to close stays open.
+            if window.panels().all(|p| self.permissions(p).closable) {
+                self.output.actions.push(Action::CloseWindow { panel: first });
+                return Some(key);
+            }
+            ctx.send_viewport_cmd_to(viewport, ViewportCommand::CancelClose);
         }
         // The layout follows the window's place, once a bar drag is over.
         let known = place.known;

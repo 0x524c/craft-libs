@@ -152,15 +152,27 @@ fn closing_the_os_window_closes_its_panels() {
     let id = window(&d, 5).id;
     let out = d.window_click(id, pos2(230.0, 9.0));
     assert!(out.actions.contains(&Action::CloseWindow { panel: 5 }), "{:?}", out.actions);
+}
 
-    // A panel that may not close keeps the window open.
-    let mut d = driver(layout(true));
-    d.content.fixed = vec![6];
-    let viewport = d.viewport(window(&d, 5).id);
-    d.host().windows.get_mut(&viewport).unwrap().close = true;
-    let out = d.step(vec![]);
-    assert!(out.error.is_some());
-    assert!(d.layout.contains(&5));
+#[test]
+fn the_os_close_of_a_window_that_may_not_close_is_cancelled() {
+    // A panel that may not close, or a locked area.
+    for locked in [false, true] {
+        let mut d = driver(layout(true));
+        if locked {
+            d.locked = true;
+        } else {
+            d.content.fixed = vec![6];
+        }
+        let viewport = d.viewport(window(&d, 5).id);
+        let sent = d.host().commands.len();
+        d.host().windows.get_mut(&viewport).unwrap().close = true;
+        let out = d.step(vec![]);
+        assert!(!out.actions.iter().any(|a| matches!(a, Action::CloseWindow { .. })), "locked {locked}: {:?}", out.actions);
+        assert!(out.error.is_none(), "locked {locked}: {:?}", out.error);
+        assert!(d.host().commands[sent..].contains(&(viewport, ViewportCommand::CancelClose)), "locked {locked}: cancelled");
+        assert!(d.layout.contains(&5) && d.layout.contains(&6));
+    }
 }
 
 #[test]

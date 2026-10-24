@@ -382,7 +382,9 @@ that is not floatable, stays in-window. Floating windows get no taskbar or Alt-T
   buttons, so the corner's grab runs down beside the ×; elsewhere the top band lies over the
   bar's drag area. The OS runs the resize from a band (`ViewportCommand::BeginResize`).
 - **Close.** The bar's × and the OS close request close the window's panels, as the
-  floating window's × does. They reopen from the app's Window menu.
+  floating window's × does. They reopen from the app's Window menu. A window with a panel that
+  may not close, or in a locked area, has no × and answers the OS close request with
+  `ViewportCommand::CancelClose`.
 - **Place.** `Floating::native` is the desktop rect of the window's content (egui's
   `inner_rect`), and the in-window `rect` follows it for builds that draw the window in-window.
   The content is also the window's origin for drags; only `ViewportCommand::OuterPosition`
