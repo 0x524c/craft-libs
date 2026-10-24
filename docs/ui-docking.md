@@ -336,9 +336,18 @@ that is not floatable, stays in-window. Floating windows get no taskbar or Alt-T
   250 ms, so focus moving between the app's own windows does not flicker.
 - **Bar.** Each window has a bar at the top, 18 points high, in the floating title bar's style:
   the title (the shown panel of its first group) and ×. Dragging the bar moves the window. On
-  Windows and Linux the OS frame is off and the window resizes from its edges; on macOS the
-  frame stays with its title bar and buttons hidden, so the OS resizes it. On Wayland, where a
-  window cannot be placed, the bar hands the move to the compositor.
+  Wayland, where a window cannot be placed, the bar hands the move to the compositor. On
+  Windows and Linux the OS frame is off. On macOS the frame stays for its shadow and rounded
+  corners, with its title bar and buttons hidden, and is not resizable: AppKit's resize areas
+  reach well into the content and would take clicks from the ×.
+- **Resize.** A movable window resizes from bands 4 pt deep along its edges. Each corner is an
+  L along both edges, 12 pt long and as deep as the edges. The bands leave out the bar's
+  buttons, which sit 4 pt in from the window's edge so the corner's grab runs down beside
+  them; elsewhere the top band lies over the bar's drag area. The OS runs the resize
+  (`ViewportCommand::BeginResize`), except on macOS, where winit cannot: there the window
+  follows the pointer by `InnerSize` and `OuterPosition`, keeping the opposite edges and the
+  160 by 100 pt minimum, and a window released with too little of its bar on a monitor moves
+  back onto the nearest one, as after a bar drag.
 - **Close.** The bar's × and the OS close request close the window's panels, as the
   floating window's × does. They reopen from the app's Window menu.
 - **Place.** `Floating::native` is the desktop rect of the window's content (egui's

@@ -8,8 +8,8 @@
 use std::{fmt::Debug, hash::Hash};
 
 use egui::{
-    Context, Event, Id, Key, Modifiers, Pos2, Rect, Ui, Vec2, ViewportBuilder, ViewportClass, ViewportCommand, ViewportId, ViewportInfo, WindowLevel,
-    pos2, vec2,
+    Context, CursorIcon, Event, Id, Key, Modifiers, Pos2, Rect, ResizeDirection, Sense, Ui, Vec2, ViewportBuilder, ViewportClass, ViewportCommand,
+    ViewportId, ViewportInfo, WindowLevel, pos2, vec2,
 };
 
 use super::Renderer;
@@ -26,6 +26,14 @@ const MIN_SIZE: [f32; 2] = [160.0, 100.0];
 const HIDE_DELAY: f64 = 0.25;
 /// How long reports of a native window's place may lag a move the dock area commanded.
 const MOVE_WAIT: f64 = 0.5;
+/// How far the resize bands reach into a native window from its edges.
+const EDGE: f32 = 4.0;
+/// How far a corner's grab runs along each of its two edges.
+const CORNER: f32 = 12.0;
+/// The window system runs a resize from our bands (`BeginResize`). winit cannot on macOS, so
+/// there the window follows the pointer by `InnerSize` and `OuterPosition`. Unit tests take
+/// that path on every platform, since the test host carries it out.
+const SYSTEM_RESIZE: bool = !cfg!(any(target_os = "macos", test));
 
 /// A drag of a native window's bar, in the context's data under the area's `"window-drag"`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -41,6 +49,21 @@ pub(in crate::docking) struct WindowDrag {
     /// The drag began on the window's only tab or group, so it docks whatever
     /// [`crate::docking::DockStyle::title_bar_docks`] says.
     pub docks: bool,
+}
+
+/// A resize of a native window from one of its bands where the window system does not run it
+/// ([`SYSTEM_RESIZE`]), in the context's data under the area's `"window-resize"`.
+#[derive(Clone, Copy, Debug)]
+struct WindowResize {
+    /// [`Floating::id`] of the resized window.
+    window: u64,
+    direction: ResizeDirection,
+    /// Desktop rect of the window's content when the drag began.
+    start: [f32; 4],
+    /// Desktop point where the pointer pressed.
+    press: Pos2,
+    /// Desktop rect of the window's content as last commanded.
+    to: [f32; 4],
 }
 
 /// What the dock area knows of a shown native window's place, in the context's data under
@@ -138,10 +161,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         if native {
             self.escape_elsewhere(ctx, None);
-            // A window closed or docked during its own bar drag ends the drag.
-            let key = self.id.with("window-drag");
-            if ctx.data(|d| d.get_temp::<WindowDrag>(key)).is_some_and(|d| !natives.iter().any(|(w, ..)| w.id == d.window)) {
+            // A window closed or docked during its own bar drag or resize ends it.
+            let shown = |window: u64| natives.iter().any(|(w, ..)| w.id == window);
+            let (key, resize_key) = (self.id.with("window-drag"), self.id.with("window-resize"));
+            if ctx.data(|d| d.get_temp::<WindowDrag>(key)).is_some_and(|d| !shown(d.window)) {
                 ctx.data_mut(|d| d.remove::<WindowDrag>(key));
+            }
+            if ctx.data(|d| d.get_temp::<WindowResize>(resize_key)).is_some_and(|r| !shown(r.window)) {
+                ctx.data_mut(|d| d.remove::<WindowResize>(resize_key));
             }
             self.map_desktop(ctx, &natives, visibility.0);
             // The main window owns drags of the panels it draws.
@@ -238,8 +265,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                     && let Some(native) = window.native.filter(|native| differs(*native, place.known))
                 {
                     let target = kept_reachable(native, &self.monitors);
-                    ctx.send_viewport_cmd_to(viewport, ViewportCommand::OuterPosition(pos2(target[0], target[1]) - frame));
-                    ctx.send_viewport_cmd_to(viewport, ViewportCommand::InnerSize(vec2(target[2], target[3])));
+                    place_window(ctx, viewport, target, frame);
                     (place.known, place.pending) = (target, Some(now + MOVE_WAIT));
                 }
                 place
@@ -269,9 +295,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             .with_min_inner_size(MIN_SIZE)
             .with_window_level(WindowLevel::AlwaysOnTop)
             .with_taskbar(false);
-        // The bar replaces the OS title bar. macOS keeps its frame for edge resizing.
+        // The bar replaces the OS title bar. macOS keeps the frame for its shadow and rounded
+        // corners, but not its resizing: AppKit's resize areas reach into the content over the
+        // bar's × and take the pointer from it. The bands resize the window instead.
         #[cfg(target_os = "macos")]
-        let builder = builder.with_titlebar_shown(false).with_title_shown(false).with_fullsize_content_view(true).with_titlebar_buttons_shown(false);
+        let builder = builder
+            .with_titlebar_shown(false)
+            .with_title_shown(false)
+            .with_fullsize_content_view(true)
+            .with_titlebar_buttons_shown(false)
+            .with_resizable(false);
         #[cfg(not(target_os = "macos"))]
         let builder = builder.with_decorations(false);
         if toggled || (info.is_none() && !visible) {
@@ -284,17 +317,17 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let report = ctx.show_viewport_immediate(viewport, builder, |ui, class| {
             let full = ui.max_rect();
             ui.painter().rect_filled(full, 0.0, self.style.floating_background);
-            self.native_bar(ui, window);
+            let buttons = self.native_bar(ui, window);
             let body = Rect::from_min_max(pos2(full.left(), (full.top() + BAR_HEIGHT).min(full.bottom())), full.max);
             self.floating_body(ui, window, body, full);
-            #[cfg(not(target_os = "macos"))]
-            if window.panels().all(|p| self.permissions(p).movable) {
-                resize_edges(ui, self.id.with(("native-edges", window.id)), full);
-            }
-            // An embedded fallback reads the main window's input: its close request, place and
-            // keys are not this window's.
+            // An embedded fallback reads the main window's input: its close request, place,
+            // keys and resizes are not this window's.
             if !matches!(class, ViewportClass::Immediate | ViewportClass::Deferred) {
                 return Report::default();
+            }
+            if window.panels().all(|p| self.permissions(p).movable) {
+                self.resize_edges(ui, window.id, full, &buttons);
+                self.follow_window_resize(ui, window.id);
             }
             let mut surface = Surface {
                 window: window.id,
@@ -371,10 +404,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 
     /// The bar at the top of a native window: its title and ×. Dragging it moves the window.
-    fn native_bar(&mut self, ui: &mut Ui, window: &Floating<P>) {
-        let Some(first) = window.panels().next().cloned() else { return };
+    /// Returns the rects of its buttons.
+    fn native_bar(&mut self, ui: &mut Ui, window: &Floating<P>) -> Vec<Rect> {
+        let Some(first) = window.panels().next().cloned() else { return Vec::new() };
         let full = ui.max_rect();
+        let style = ChromeStyle::from_dock(self.style);
         let rect = Rect::from_min_size(full.min, vec2(full.width(), BAR_HEIGHT.min(full.height())));
+        ui.painter().rect_filled(rect, 0.0, style.title_background);
+        // The buttons keep clear of the side's resize band, so the corner's grab runs down
+        // beside them.
+        let rect = if style.right_to_left { rect.with_min_x(rect.left() + EDGE) } else { rect.with_max_x(rect.right() - EDGE) };
         let movable = window.panels().all(|p| self.permissions(p).movable);
         let closable = self.style.close_button && window.panels().all(|p| self.permissions(p).closable);
         let (move_label, close_label) = (self.style.move_window_label.clone(), self.style.close_window_label.clone());
@@ -383,15 +422,14 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         if closable {
             bar = bar.close(&close_label);
         }
-        let response = bar.show(ui, rect, &ChromeStyle::from_dock(self.style));
-        if let Some(close) = response.close
-            && close.clicked()
-        {
+        let response = bar.show(ui, rect, &style);
+        if response.close.as_ref().is_some_and(|close| close.clicked()) {
             self.output.actions.push(Action::CloseWindow { panel: first });
         }
         if movable && response.bar.drag_started() {
             self.start_window_drag(ui, window.id, false);
         }
+        response.close.iter().chain(&response.menu).map(|r| r.rect).collect()
     }
 
     /// After a native window's tree drew: a drag of its only tab, or of its only group, moves
@@ -499,6 +537,62 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         self.cross.release = Some((drag, pointer));
     }
 
+    /// The resize bands of a movable native window. Drawn after its content, so they take the
+    /// pointer at its edges; the bar's `buttons` are left out.
+    fn resize_edges(&mut self, ui: &Ui, window: u64, full: Rect, buttons: &[Rect]) {
+        let id = self.id.with(("native-edges", window));
+        for (i, (direction, band)) in resize_bands(full, buttons).into_iter().enumerate() {
+            let response = ui.interact(band, id.with(i), Sense::drag()).on_hover_cursor(resize_cursor(direction));
+            if response.drag_started() {
+                self.start_window_resize(ui, window, direction);
+            }
+        }
+    }
+
+    /// Start a resize: by the window system where it runs one, else by following the pointer
+    /// from the place the window system reports.
+    fn start_window_resize(&mut self, ui: &Ui, window: u64, direction: ResizeDirection) {
+        let press = ui.input(|i| i.pointer.press_origin().or(i.pointer.latest_pos()));
+        let content = ui.input(|i| placed(i.viewport()));
+        match (SYSTEM_RESIZE, content, press) {
+            (false, Some(start), Some(press)) => {
+                let resize = WindowResize { window, direction, start, press: pos2(start[0], start[1]) + press.to_vec2(), to: start };
+                ui.ctx().data_mut(|d| d.insert_temp(self.id.with("window-resize"), resize));
+            }
+            _ => ui.ctx().send_viewport_cmd(ViewportCommand::BeginResize(direction)),
+        }
+    }
+
+    /// Size and move the window while the button is held, the edges opposite the grabbed band
+    /// in place, no smaller than [`MIN_SIZE`]. Released, a window left with too little of its
+    /// bar on a monitor goes back onto the nearest, as after a bar drag.
+    fn follow_window_resize(&mut self, ui: &Ui, window: u64) {
+        let key = self.id.with("window-resize");
+        let Some(mut resize) = ui.ctx().data(|d| d.get_temp::<WindowResize>(key)).filter(|r| r.window == window) else { return };
+        ui.ctx().set_cursor_icon(resize_cursor(resize.direction));
+        let content = ui.input(|i| content_of(i.viewport()));
+        let frame = content.map_or(Vec2::ZERO, |(_, frame)| frame);
+        // As in a bar drag: a pointer move is relative to where the window system reports the
+        // window now.
+        let moved = ui.input(|i| i.events.iter().rev().find_map(|e| if let Event::PointerMoved(p) = e { Some(*p) } else { None }));
+        let mut to = resize.to;
+        if let (Some((origin, _)), Some(local)) = (content, moved.filter(|p| p.is_finite())) {
+            to = resized(resize.start, resize.direction, origin + local.to_vec2() - resize.press, MIN_SIZE);
+        }
+        let over = !ui.input(|i| i.pointer.primary_down()) || !self.cross.focused;
+        if over {
+            to = kept_reachable(to, &self.monitors);
+            ui.ctx().data_mut(|d| d.remove::<WindowResize>(key));
+        }
+        if differs(to, resize.to) {
+            place_window(ui.ctx(), ui.ctx().viewport_id(), to, frame);
+            resize.to = to;
+            if !over {
+                ui.ctx().data_mut(|d| d.insert_temp(key, resize));
+            }
+        }
+    }
+
     /// Keys, text and clipboard events the window's widgets left over, for the application's
     /// shortcuts. Nothing while a widget of the window has keyboard focus: its keys are its own.
     fn forward_events(&mut self, ui: &Ui) {
@@ -519,30 +613,94 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     }
 }
 
-/// Bands along the edges and corners of an undecorated window that resize it.
-#[cfg(not(target_os = "macos"))]
-fn resize_edges(ui: &Ui, id: Id, rect: Rect) {
-    use egui::{CursorIcon as C, ResizeDirection as D, Sense};
-    const EDGE: f32 = 4.0;
-    let (e, c) = (EDGE, EDGE * 2.0);
-    let (l, r, t, b) = (rect.left(), rect.right(), rect.top(), rect.bottom());
-    let zones = [
-        (D::NorthWest, Rect::from_min_max(pos2(l, t), pos2(l + c, t + c)), C::ResizeNorthWest),
-        (D::NorthEast, Rect::from_min_max(pos2(r - c, t), pos2(r, t + c)), C::ResizeNorthEast),
-        (D::SouthWest, Rect::from_min_max(pos2(l, b - c), pos2(l + c, b)), C::ResizeSouthWest),
-        (D::SouthEast, Rect::from_min_max(pos2(r - c, b - c), pos2(r, b)), C::ResizeSouthEast),
-        (D::North, Rect::from_min_max(pos2(l + c, t), pos2(r - c, t + e)), C::ResizeNorth),
-        (D::South, Rect::from_min_max(pos2(l + c, b - e), pos2(r - c, b)), C::ResizeSouth),
-        (D::West, Rect::from_min_max(pos2(l, t + c), pos2(l + e, b - c)), C::ResizeWest),
-        (D::East, Rect::from_min_max(pos2(r - e, t + c), pos2(r, b - c)), C::ResizeEast),
+/// Move and size a native window so its content is the desktop rect `to`. The size goes
+/// first, so the move puts the top-left corner in place whichever corner the window system
+/// keeps on a resize (AppKit's frame origin is the bottom left).
+fn place_window(ctx: &Context, viewport: ViewportId, to: [f32; 4], frame: Vec2) {
+    ctx.send_viewport_cmd_to(viewport, ViewportCommand::InnerSize(vec2(to[2], to[3])));
+    ctx.send_viewport_cmd_to(viewport, ViewportCommand::OuterPosition(pos2(to[0], to[1]) - frame));
+}
+
+/// The bands along the edges of a native window's content `rect` that resize it: an L at each
+/// corner, [`EDGE`] deep and [`CORNER`] along both edges, and the edges between them. They
+/// leave out the bar's `buttons`, which take their own clicks.
+pub(in crate::docking) fn resize_bands(rect: Rect, buttons: &[Rect]) -> Vec<(ResizeDirection, Rect)> {
+    use ResizeDirection as D;
+    let (l, r, t, b, e, c) = (rect.left(), rect.right(), rect.top(), rect.bottom(), EDGE, CORNER);
+    let band = |x0: f32, y0: f32, x1: f32, y1: f32| Rect::from_min_max(pos2(x0, y0), pos2(x1, y1));
+    let bands = [
+        (D::NorthWest, band(l, t, l + c, t + e)),
+        (D::NorthWest, band(l, t, l + e, t + c)),
+        (D::NorthEast, band(r - c, t, r, t + e)),
+        (D::NorthEast, band(r - e, t, r, t + c)),
+        (D::SouthWest, band(l, b - e, l + c, b)),
+        (D::SouthWest, band(l, b - c, l + e, b)),
+        (D::SouthEast, band(r - c, b - e, r, b)),
+        (D::SouthEast, band(r - e, b - c, r, b)),
+        (D::North, band(l + c, t, r - c, t + e)),
+        (D::South, band(l + c, b - e, r - c, b)),
+        (D::West, band(l, t + c, l + e, b - c)),
+        (D::East, band(r - e, t + c, r, b - c)),
     ];
-    for (i, (direction, zone, cursor)) in zones.into_iter().enumerate() {
-        if !zone.is_positive() {
-            continue;
+    let mut out = Vec::new();
+    for (direction, band) in bands {
+        let mut pieces = vec![band];
+        for button in buttons {
+            pieces = pieces.into_iter().flat_map(|piece| outside(piece, *button)).collect();
         }
-        let response = ui.interact(zone, id.with(i), Sense::drag()).on_hover_cursor(cursor);
-        if response.drag_started() {
-            ui.ctx().send_viewport_cmd(ViewportCommand::BeginResize(direction));
-        }
+        out.extend(pieces.into_iter().filter(|p| p.is_positive()).map(|p| (direction, p)));
+    }
+    out
+}
+
+/// The parts of `rect` outside `hole`: up to four rects.
+fn outside(rect: Rect, hole: Rect) -> Vec<Rect> {
+    let overlap = rect.intersect(hole);
+    if !overlap.is_positive() {
+        return vec![rect];
+    }
+    [
+        Rect::from_min_max(rect.min, pos2(rect.right(), overlap.top())),
+        Rect::from_min_max(pos2(rect.left(), overlap.bottom()), rect.max),
+        Rect::from_min_max(pos2(rect.left(), overlap.top()), overlap.left_bottom()),
+        Rect::from_min_max(overlap.right_top(), pos2(rect.right(), overlap.bottom())),
+    ]
+    .into_iter()
+    .filter(|r| r.is_positive())
+    .collect()
+}
+
+/// The desktop rect `start` with the edges `direction` names moved by `delta`, the opposite
+/// edges kept, and no smaller than `min`.
+pub(in crate::docking) fn resized(start: [f32; 4], direction: ResizeDirection, delta: Vec2, min: [f32; 2]) -> [f32; 4] {
+    use ResizeDirection as D;
+    let [x, y, w, h] = start;
+    let (mut left, mut top, mut right, mut bottom) = (x, y, x + w, y + h);
+    if matches!(direction, D::West | D::NorthWest | D::SouthWest) {
+        left = (left + delta.x).min(right - min[0]);
+    }
+    if matches!(direction, D::East | D::NorthEast | D::SouthEast) {
+        right = (right + delta.x).max(left + min[0]);
+    }
+    if matches!(direction, D::North | D::NorthWest | D::NorthEast) {
+        top = (top + delta.y).min(bottom - min[1]);
+    }
+    if matches!(direction, D::South | D::SouthWest | D::SouthEast) {
+        bottom = (bottom + delta.y).max(top + min[1]);
+    }
+    [left, top, right - left, bottom - top]
+}
+
+fn resize_cursor(direction: ResizeDirection) -> CursorIcon {
+    use {CursorIcon as C, ResizeDirection as D};
+    match direction {
+        D::North => C::ResizeNorth,
+        D::South => C::ResizeSouth,
+        D::East => C::ResizeEast,
+        D::West => C::ResizeWest,
+        D::NorthEast => C::ResizeNorthEast,
+        D::NorthWest => C::ResizeNorthWest,
+        D::SouthEast => C::ResizeSouthEast,
+        D::SouthWest => C::ResizeSouthWest,
     }
 }

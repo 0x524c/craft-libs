@@ -1,9 +1,9 @@
 //! Floating windows in their own OS windows (feature `native-windows`), drawn by the driver's
 //! stand-in for OS windows.
 
-use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, ViewportCommand, epaint::ClippedShape, pos2, vec2};
+use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, Vec2, ViewportCommand, epaint::ClippedShape, pos2, vec2};
 
-use super::render::{DragPointer, WindowDrag, floats_shown};
+use super::render::{DragPointer, WindowDrag, floats_shown, resize_bands, resized};
 use super::testing::DockDriver;
 use super::{Action, DockContent, Floating, Hit, Layout, Monitor, Node, Permissions, Placement, Target};
 use crate::layout::{SplitAxis, SplitSize};
@@ -997,4 +997,90 @@ fn a_drag_ends_when_its_native_window_or_panel_goes() {
     let tab = d.hit(&Hit::Tab(1)).unwrap().center();
     let out = d.drag(tab, pos2(600.0, 300.0));
     assert!(matches!(out.actions.as_slice(), [Action::Move { panel: 1, anchor: 3 | 4, .. }]), "{:?}", out.actions);
+}
+
+/// Press at `from` in the native window of panel 5, move the pointer by `by` on the desktop
+/// and release. Returns the window's OS rect and the driver.
+fn resize_by(from: Pos2, by: Vec2) -> (Rect, DockDriver<u32, Content>) {
+    let mut d = driver(layout(true));
+    let id = window(&d, 5).id;
+    let press = os_window(&d, 5).map_or(Pos2::ZERO, |(rect, _)| rect.min) + from.to_vec2();
+    d.window_step(id, vec![Event::PointerMoved(from), button(from, true)]);
+    // The pointer is where it was moved on the desktop, wherever the window is now.
+    let local = |d: &DockDriver<u32, Content>, step: Vec2| d.window_local(id, press + step).unwrap_or_default();
+    for step in [vec2(3.0, 3.0), by] {
+        let pos = local(&d, step);
+        d.window_step(id, vec![Event::PointerMoved(pos)]);
+    }
+    let pos = local(&d, by);
+    d.window_step(id, vec![Event::PointerMoved(pos), button(pos, false)]);
+    d.step(vec![]);
+    (os_window(&d, 5).map_or(Rect::NOTHING, |(rect, _)| rect), d)
+}
+
+#[test]
+fn the_bars_close_button_wins_over_the_resize_bands() {
+    let mut d = driver(layout(true));
+    let id = window(&d, 5).id;
+    let viewport = d.viewport(id);
+    // The × of the 240 pt wide window spans 217..235 across and the whole bar down. Its top
+    // right is next to the window's top-right corner, but it closes the window.
+    let out = d.window_click(id, pos2(234.0, 1.0));
+    assert!(out.actions.contains(&Action::CloseWindow { panel: 5 }), "{:?}", out.actions);
+    assert!(!d.host().commands.iter().any(|(v, c)| *v == viewport && matches!(c, ViewportCommand::InnerSize(_))), "not resized");
+
+    // Beside it, at the window's edges, the bands resize the window from (400, 130), 240 by
+    // 300, keeping the opposite edges.
+    let rect = |x0: f32, y0: f32, x1: f32, y1: f32| Rect::from_min_max(pos2(x0, y0), pos2(x1, y1));
+    let (resized, d) = resize_by(pos2(238.0, 2.0), vec2(20.0, 20.0));
+    assert_eq!(resized, rect(400.0, 150.0, 660.0, 430.0), "the top-right corner");
+    assert_eq!(window(&d, 5).native, Some([400.0, 150.0, 260.0, 280.0]), "the layout follows");
+    assert_eq!(resize_by(pos2(238.0, 15.0), vec2(20.0, 20.0)).0, rect(400.0, 130.0, 660.0, 430.0), "the right edge beside the ×");
+    assert_eq!(resize_by(pos2(120.0, 1.0), vec2(20.0, -20.0)).0, rect(400.0, 110.0, 640.0, 430.0), "the top edge above the bar");
+    assert_eq!(resize_by(pos2(2.0, 298.0), vec2(-20.0, 20.0)).0, rect(380.0, 130.0, 640.0, 450.0), "the bottom-left corner");
+    assert_eq!(resize_by(pos2(2.0, 150.0), vec2(200.0, 0.0)).0, rect(480.0, 130.0, 640.0, 430.0), "no narrower than 160");
+    // Inside a corner's L, the bar moves the window.
+    let (moved, _) = resize_by(pos2(10.0, 10.0), vec2(20.0, 20.0));
+    assert_eq!(moved, rect(420.0, 150.0, 660.0, 450.0));
+}
+
+#[test]
+fn resize_bands_are_a_few_points_deep_and_leave_out_the_bar_buttons() {
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(240.0, 300.0));
+    let close = Rect::from_center_size(pos2(226.0, 9.0), vec2(18.0, 18.0));
+    let bands = resize_bands(rect, &[close]);
+    let at = |p: Pos2| bands.iter().find(|(_, band)| band.contains(p)).map(|(direction, _)| *direction);
+    for (_, band) in &bands {
+        assert!(!band.intersect(close).is_positive(), "{band:?} covers the ×");
+        assert!(band.width().min(band.height()) <= 4.0, "{band:?} is deeper than an edge band");
+    }
+    // Each edge resizes along its whole length, outside the ×, from 12 pt corners.
+    use egui::ResizeDirection as D;
+    // Which of an edge's three parts `v` is in: the first corner, the edge, the last corner.
+    let part = |v: f32, length: f32| usize::from(v >= 12.0) + usize::from(v > length - 12.0);
+    for i in 0..240 {
+        let x = i as f32 + 0.5;
+        let top = [D::NorthWest, D::North, D::NorthEast][part(x, 240.0)];
+        assert_eq!(at(pos2(x, 0.5)), (!close.contains(pos2(x, 0.5))).then_some(top), "top at {x}");
+        assert_eq!(at(pos2(x, 299.5)), Some([D::SouthWest, D::South, D::SouthEast][part(x, 240.0)]), "bottom at {x}");
+    }
+    for i in 0..300 {
+        let y = i as f32 + 0.5;
+        assert_eq!(at(pos2(0.5, y)), Some([D::NorthWest, D::West, D::SouthWest][part(y, 300.0)]), "left at {y}");
+        assert_eq!(at(pos2(239.5, y)), Some([D::NorthEast, D::East, D::SouthEast][part(y, 300.0)]), "right at {y}");
+    }
+    assert_eq!(at(pos2(6.0, 6.0)), None, "a corner is an L along its edges");
+    assert_eq!(at(pos2(120.0, 4.5)), None, "the bar below the top band");
+}
+
+#[test]
+fn a_manual_resize_keeps_the_opposite_edges_and_the_minimum_size() {
+    use egui::ResizeDirection as D;
+    let (start, min) = ([100.0, 50.0, 300.0, 200.0], [160.0, 100.0]);
+    // Right edge 400, bottom 250.
+    assert_eq!(resized(start, D::NorthWest, vec2(-20.0, -10.0), min), [80.0, 40.0, 320.0, 210.0]);
+    assert_eq!(resized(start, D::East, vec2(30.0, 99.0), min), [100.0, 50.0, 330.0, 200.0]);
+    assert_eq!(resized(start, D::South, vec2(30.0, -20.0), min), [100.0, 50.0, 300.0, 180.0]);
+    assert_eq!(resized(start, D::SouthWest, vec2(500.0, -500.0), min), [240.0, 50.0, 160.0, 100.0]);
+    assert_eq!(resized(start, D::NorthEast, vec2(-500.0, 500.0), min), [100.0, 150.0, 160.0, 100.0]);
 }
