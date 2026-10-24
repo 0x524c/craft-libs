@@ -161,6 +161,35 @@ fn double_click_on_a_tab_of_a_minimized_group_ends_expanded() {
 }
 
 #[test]
+fn double_click_on_the_active_tab_of_a_minimized_group_or_window_ends_expanded() {
+    let window = Floating { minimized: true, ..Floating::single(vec![5, 6], 1, [80.0, 70.0, 300.0, 220.0]) };
+    let mut d = Driver::new(Layout { root: Some(tabs(&[1], 0)), floating: vec![window] });
+    let active = d.tab(6).center();
+    d.click(active);
+    d.click(active);
+    assert!(!d.layout.floating[0].minimized);
+
+    let mut layout = docked();
+    let Some(Node::Split { first, .. }) = &mut layout.root else { panic!() };
+    let group = Group { minimized: true, ..Group::new(vec![2, 3], 1) };
+    **first = Node::Dock { side: Side::Start, columns: vec![Column::new(vec![group], 240.0)] };
+    let mut d = Driver::new(layout);
+    let minimized = |d: &Driver| {
+        let Some(Node::Split { first, .. }) = &d.layout.root else { panic!() };
+        let Node::Dock { columns, .. } = &**first else { panic!() };
+        columns[0].groups[0].minimized
+    };
+    let active = d.tab(3).center();
+    d.click(active);
+    d.click(active);
+    assert!(!minimized(&d));
+    d.wait();
+    d.click(active);
+    d.click(active);
+    assert!(minimized(&d));
+}
+
+#[test]
 fn a_clicked_tab_shows_no_focus_outline_but_tab_key_focus_does() {
     let mut d = Driver::new(frames());
     let accent = d.ctx.global_style().visuals.selection.stroke.color;
