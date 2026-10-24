@@ -218,9 +218,14 @@ A flyout fits its content the same way, without the title bar.
   window side: top and bottom, and left and right with `side_edge_zones`. It takes a quarter of
   the window and is offered only when every frame keeps its minimum. Past the band, a frame's own
   side zones apply.
-- A divider resizes only the frames that touch it; every other frame keeps its size. It stops
-  when a frame touching it reaches its minimum. Where a divider ends on another divider, a
-  four-way handle (`Divider::Intersection`) moves both.
+- A dragged divider grows the frames that touch it on one side, up to their maximums. On the
+  other side the frame touching it shrinks to its minimum, then the next frame along the same
+  axis, and so on: the divider stops when every frame on that side is at its minimum. Frames
+  side by side across the axis shrink together, and the next frame gives way once one of them
+  is at its minimum. The line of frames ends at a split across the axis or at a dock; every
+  other frame keeps its size. Dividers between stacked panels and between the groups of a dock
+  column work the same way. Where a divider ends on another divider, a four-way handle
+  (`Divider::Intersection`) moves both.
 - Every frame has the same minimum, `DockStyle::min_pane` (plus its tab strip), unless its panels
   ask for more through `PanelLimits::min`. Frames have no maximum unless every panel in them asks
   for one through `PanelLimits::max`: a panel without a maximum lifts the maximum of the panels it

@@ -8,7 +8,7 @@ use std::{fmt::Debug, hash::Hash};
 
 use egui::{Context, Key, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 
-use super::{GroupKind, Renderer};
+use super::{GroupKind, Renderer, RowItem, row_drag, row_range};
 use crate::docking::{
     Action, Column, DockEvent, DockStyle, Group, GroupDrag, GroupGesture, Node, Placement, Side, Target,
     dock_model::Unit,
@@ -144,7 +144,15 @@ pub(in crate::docking) fn fit_widths(columns: &[(f32, Option<f32>)], room: f32) 
 impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
     /// A horizontal split with a dock child: the dock takes its columns' width on its physical
     /// edge, the sibling the rest. False when neither child is a dock.
-    pub(super) fn dock_split(&mut self, ui: &mut Ui, first: &Node<P>, second: &Node<P>, rect: Rect, path: &mut Vec<bool>) -> bool {
+    pub(super) fn dock_split(
+        &mut self,
+        ui: &mut Ui,
+        first: &Node<P>,
+        second: &Node<P>,
+        rect: Rect,
+        path: &mut Vec<bool>,
+        root: (&Node<P>, Rect),
+    ) -> bool {
         let (dock_first, side, columns, other) = match (first, second) {
             (Node::Dock { side, columns }, other) => (true, *side, columns, other),
             (other, Node::Dock { side, columns }) => (false, *side, columns, other),
@@ -153,7 +161,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         let (dock, rest, room) = dock_rects(side, columns, other, rect, self.style, &*self.content);
         self.dock(ui, side, columns, dock, room);
         path.push(dock_first);
-        self.node(ui, other, rest, path);
+        self.node(ui, other, rest, path, root);
         path.pop();
         true
     }
@@ -360,16 +368,18 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             push(&mut self.dock_targets, DockTarget::GroupBand { anchor: last.clone(), below: true }, band, horizontal_line(top, xs));
         }
         // Height dividers between an open group and the next open one, after the groups so
-        // their hit areas win at the boundary. Both groups' heights are saved.
+        // their hit areas win at the boundary. The heights of the groups a drag changes are
+        // saved: the upper group, and the lower groups that give way in turn, or the reverse.
         let open: Vec<usize> = (0..column.groups.len()).filter(|i| column.groups.get(*i).is_some_and(|g| !g.minimized)).collect();
-        for pair in open.windows(2) {
-            let &[i, j] = pair else { continue };
-            let (Some(upper), Some(lower), Some(rect)) = (column.groups.get(i), column.groups.get(j), rects.get(i)) else { continue };
-            let (Some(a), Some(b), Some(first), Some(second)) = (heights.get(i), heights.get(j), upper.panels.first(), lower.panels.first()) else {
-                continue;
-            };
-            let (lo, hi) = (self.group_min(upper), a + b - self.group_min(lower));
-            let hi = hi.max(lo);
+        let row: Vec<RowItem> = open
+            .iter()
+            .filter_map(|i| Some(RowItem { size: *heights.get(*i)?, min: self.group_min(column.groups.get(*i)?), max: f32::INFINITY }))
+            .collect();
+        for (index, pair) in open.windows(2).enumerate() {
+            let &[i, _] = pair else { continue };
+            let (Some(upper), Some(rect), Some(a)) = (column.groups.get(i), rects.get(i), heights.get(i)) else { continue };
+            let Some(first) = upper.panels.first() else { continue };
+            let (lo, hi) = row_range(&row, index);
             let divider = Rect::from_x_y_ranges(rect.x_range(), (rect.bottom() - 1.0)..=(rect.bottom() + 1.0));
             let response = ResizeHandle::new(
                 self.id.with(("group-resize", Some(first))),
@@ -378,13 +388,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
                 &self.style.resize_label,
                 self.handle_style(),
             )
-            .value(*a, lo..=hi)
+            .value(*a, (a + lo)..=(a + hi))
             .show(ui);
             self.register_interaction(ui.ctx(), response.response.id);
-            let next = (a + response.delta).clamp(lo, hi);
-            if response.delta != 0.0 && next != *a {
-                self.output.actions.push(Action::ResizeGroup { panel: first.clone(), height: Some(next) });
-                self.output.actions.push(Action::ResizeGroup { panel: second.clone(), height: Some(a + b - next) });
+            if response.delta == 0.0 {
+                continue;
+            }
+            for ((group, item), next) in open.iter().filter_map(|g| column.groups.get(*g)).zip(&row).zip(row_drag(&row, index, response.delta)) {
+                if let Some(panel) = group.panels.first().filter(|_| next != item.size) {
+                    self.output.actions.push(Action::ResizeGroup { panel: panel.clone(), height: Some(next) });
+                }
             }
         }
     }

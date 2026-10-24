@@ -653,6 +653,17 @@ fn stack_dividers_resize_adjacent_open_bodies_by_pointer_and_keyboard() {
     let Node::Stack { entries } = layout.root.as_ref().unwrap() else { panic!() };
     assert!(entries[0].height.unwrap() > after_pointer);
     assert!((entries[0].height.unwrap() + entries[2].height.unwrap() - 300.0).abs() < 0.001);
+    // Dragged past the next body's minimum, the one after it gives way too, down to the same
+    // minimum; the closed entry keeps its height.
+    let start = ctx.read_response(id).unwrap().rect.center();
+    step(&ctx, &mut layout, vec![Event::PointerMoved(start), pointer_button(start, true)]);
+    step(&ctx, &mut layout, vec![Event::PointerMoved(start + vec2(0.0, 600.0))]);
+    step(&ctx, &mut layout, vec![pointer_button(start + vec2(0.0, 600.0), false)]);
+    let Node::Stack { entries } = layout.root.as_ref().unwrap() else { panic!() };
+    let heights = entries.iter().map(|entry| entry.height.unwrap()).collect::<Vec<_>>();
+    assert!((heights[2] - heights[3]).abs() < 0.01 && heights[3] < 120.0, "{heights:?}");
+    assert!((heights[0] + heights[2] + heights[3] - 420.0).abs() < 0.01, "{heights:?}");
+    assert_eq!(heights[1], 91.0);
 }
 
 #[test]

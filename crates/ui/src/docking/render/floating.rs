@@ -116,7 +116,7 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
             (_, true) => {}
             (root, false) => {
                 let outer = self.tree.replace((key, frame));
-                self.node(ui, root, body, &mut Vec::new());
+                self.node(ui, root, body, &mut Vec::new(), (root, body));
                 self.tree = outer;
             }
         }

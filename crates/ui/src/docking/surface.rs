@@ -829,7 +829,7 @@ impl<'a, P: Clone + Eq + Hash + Debug + Send + Sync + 'static> DockArea<'a, P> {
             tree: None,
         };
         if let Some(root) = &view.root {
-            renderer.node(ui, root, rect, &mut Vec::new());
+            renderer.node(ui, root, rect, &mut Vec::new(), (root, rect));
             ui.allocate_rect(rect, Sense::hover());
         }
         renderer.flyout(ui.ctx());
