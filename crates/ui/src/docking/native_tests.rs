@@ -860,6 +860,43 @@ fn the_only_tab_of_a_native_window_docks_it_with_title_bar_docks_off() {
 }
 
 #[test]
+fn the_only_tab_of_a_native_window_fills_and_joins_a_frame_bodys_center() {
+    let mut layout = layout(false);
+    layout.floating.push(Floating::single(vec![7], 0, [300.0, 80.0, 240.0, 200.0]));
+    let style = |s: &mut super::DockStyle| {
+        s.side_edge_zones = true;
+        s.title_bar_docks = false;
+        s.float_hint = false;
+    };
+    let mut d = DockDriver::new(layout, Content::default()).with_style(style).with_native_host(ORIGIN);
+    let id = window(&d, 7).id;
+    // The middle of frame [3, 4], in the main window.
+    let middle = pos2(600.0, 300.0);
+    let from = pos2(15.0, TAB_ROW);
+    d.window_step(id, vec![Event::PointerMoved(from), button(from, true)]);
+    d.window_step(id, vec![Event::PointerMoved(from + vec2(8.0, 6.0))]);
+    for _ in 0..2 {
+        let local = d.window_local(id, ORIGIN + middle.to_vec2()).unwrap();
+        d.window_step(id, vec![Event::PointerMoved(local)]);
+    }
+    // The center rectangle is the only zone around the pointer: outlined and filled.
+    let zone = |filled: bool| {
+        d.shapes().iter().any(|clipped| match &clipped.shape {
+            egui::Shape::Path(path) => {
+                path.closed && (path.fill != Color32::TRANSPARENT) == filled && Rect::from_points(&path.points).contains(middle)
+            }
+            _ => false,
+        })
+    };
+    assert!(zone(false), "outlined");
+    assert!(zone(true), "filled");
+    let local = d.window_local(id, ORIGIN + middle.to_vec2()).unwrap();
+    let out = d.window_step(id, vec![button(local, false)]);
+    assert!(matches!(window_move(&out), Some(Target::At { anchor: 3 | 4, placement: Placement::Split(super::Zone::Center) })), "{:?}", out.actions);
+    assert!(in_root(&d, 7));
+}
+
+#[test]
 fn a_native_window_forwards_no_keys_while_one_of_its_widgets_has_focus() {
     let mut d = driver(layout(true));
     (d.content.text, d.content.focus_text) = (Some(5), true);

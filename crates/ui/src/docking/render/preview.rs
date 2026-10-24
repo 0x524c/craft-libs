@@ -116,7 +116,8 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
 
     /// The valid target under the pointer for a whole group. A target holding the group
     /// itself is a no-op proposal; a target the model would reject is no target. A window
-    /// moving live looks through itself and does not split frames or join a body's center.
+    /// moving live looks through itself and does not split frames or, moved by its bar, join
+    /// a body's center.
     pub(super) fn group_proposal(&self, drag: &GroupDrag<P>, pointer: Pos2) -> Option<DropProposal<P>> {
         let window = drag.gesture == GroupGesture::Window;
         if let Some(proposal) = self.extra_proposal(&drag.members, pointer, window) {
@@ -148,14 +149,16 @@ impl<P: Clone + Eq + Hash + Debug + Send + Sync + 'static> Renderer<'_, P> {
         }
         let proposal = self.resolve_roomy(&drag.panel, pointer, std::slice::from_ref(target), |to| group_action(drag, to))?;
         // A window moving live splits only groups of other floating windows. A native
-        // window's bar also takes the main window's frame edges, but not a body's center.
+        // window's bar also takes the main window's frame edges, but not a body's center. A
+        // native window moved by its only tab or group joins a body's center too, as that tab
+        // or group drag would.
         let into_window = matches!(self.place(&proposal.anchor), Some(Place::Floating { .. }));
         #[cfg(feature = "native-windows")]
-        let edges = self.cross.bar;
+        let (edges, joins) = (self.cross.bar, self.cross.docks);
         #[cfg(not(feature = "native-windows"))]
-        let edges = false;
+        let (edges, joins) = (false, false);
         let split = match proposal.placement {
-            Placement::Split(Zone::Center) => true,
+            Placement::Split(Zone::Center) => !joins,
             Placement::Split(_) => !edges,
             _ => false,
         };
